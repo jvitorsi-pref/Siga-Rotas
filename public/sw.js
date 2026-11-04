@@ -19,15 +19,17 @@
    ficam no IndexedDB, que é do aplicativo (`core/armazenamentoLocal.js`).
    ========================================================================== */
 
-const CACHE = 'santo-andre-campo-v1';
+const CACHE = 'siga-rotas-v4';
 
 /** Arquivos do esqueleto do aplicativo. */
 const ESQUELETO = [
   '/',
   '/index.html',
   '/styles.css',
+  '/logo-siga-app.png',
   '/app.js',
   '/coletaUI.js',
+  '/planoPersistido.js',
   '/navegacaoUI.js',
   '/manifest.webmanifest',
   '/vendor/ol/ol.js',
@@ -42,6 +44,7 @@ const ESQUELETO = [
   '/core/instrucoes.js',
   '/core/navegacao.js',
   '/core/coleta.js',
+  '/core/recuperacaoColeta.js',
   '/core/armazenamentoLocal.js',
 ];
 

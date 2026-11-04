@@ -20,6 +20,7 @@ import {
   TouchableOpacity,
   Keyboard,
 } from 'react-native';
+import { podeDescerParada } from '../utils/controlesTrajeto.js';
 import { TIPOS } from '../core/pontoTrajeto.js';
 import { TEXTO_ESTADO, classeEstado } from '../utils/formatters.js';
 import { COLORS } from '../theme/colors';
@@ -27,6 +28,7 @@ import { COLORS } from '../theme/colors';
 export function PointCard({
   ponto,
   totalPontos,
+  circuito = false,
   isPicking,
   onChangeCodigo,
   onValidateCodigo,
@@ -85,7 +87,7 @@ export function PointCard({
   const estadoText = ponto.mensagem || TEXTO_ESTADO[ponto.status] || '';
 
   const canMoveUp = isParada && ponto.indice > 1;
-  const canMoveDown = isParada && ponto.indice < totalPontos - 2;
+  const canMoveDown = podeDescerParada(ponto, totalPontos, circuito);
   const hasCoord = ponto.latitude != null && ponto.longitude != null;
 
   return (

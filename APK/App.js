@@ -14,7 +14,7 @@
  *  • Sincronização direta com o GeoServer WFS da Prefeitura + snapshot offline.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
   View,
@@ -37,6 +37,9 @@ import {
   podeCalcular,
   STATUS,
 } from './src/core/pontoTrajeto.js';
+import { NavigationPanel } from './src/components/NavigationPanel.js';
+import { criarFonteGPSReal } from './src/services/nativeLocation.js';
+import { criarNavegacaoMobile } from './src/services/mobileNavigationService.js';
 import { mobileNetworkService } from './src/services/mobileNetworkService.js';
 import {
   parseCoords,
@@ -47,15 +50,19 @@ import {
 import { PointCard } from './src/components/PointCard.js';
 import { RouteResultPanel } from './src/components/RouteResultPanel.js';
 import { RoadNetworkMap } from './src/components/RoadNetworkMap.js';
+import { trechosParaMapa } from './src/map/routePresentation.js';
+import { inverterTrajeto } from './src/utils/controlesTrajeto.js';
 import { COLORS } from './src/theme/colors.js';
 
-function criarListaInicial() {
+function criarListaInicial(circuito = false) {
   const lista = criarListaPontos();
+  lista.circuito = circuito;
   adicionarPonto(lista, {});
-  adicionarPonto(lista, {});
+  if (!circuito) adicionarPonto(lista, {});
   return {
     pontos: lista.pontos.map((p) => ({ ...p })),
     sequencia: lista.sequencia,
+    circuito: lista.circuito,
   };
 }
 
@@ -65,6 +72,7 @@ export default function App() {
   // Estado da lista de pontos (A, B, C, D…)
   const [lista, setLista] = useState(() => criarListaInicial());
   const [pickingId, setPickingId] = useState(null);
+  const [modoOrdem, setModoOrdem] = useState('otimizada');
 
   // Estado da rede viária
   const [networkFeatures, setNetworkFeatures] = useState([]);
@@ -72,6 +80,27 @@ export default function App() {
   // Estado do cálculo de rota
   const [calculating, setCalculating] = useState(false);
   const [routeResult, setRouteResult] = useState(null);
+  const [navigation, setNavigation] = useState(null);
+  const [navigationCenter, setNavigationCenter] = useState(null);
+  const navigationRef = useRef(null);
+  const calculoRef = useRef(0);
+  if (!navigationRef.current) navigationRef.current = criarNavegacaoMobile({
+    calcularRotaParadas: (pontos, options) => mobileNetworkService.calcularRotaParadas(pontos, options),
+    criarFonteGPS: criarFonteGPSReal,
+    aoMudar: setNavigation,
+    aoRecalcular: setRouteResult,
+  });
+  const [visibilidade, setVisibilidade] = useState({ rota: null, ocultos: [] });
+  const ocultos = useMemo(() => visibilidade.rota === routeResult ? visibilidade.ocultos : [], [visibilidade, routeResult]);
+  const routeSegments = useMemo(() => trechosParaMapa((routeResult?.legs || []).map((leg, indice) => ({
+    ...leg, situacao: navigation ? (navigation.concluida || indice < navigation.trechoAtual ? 'percorrido' : indice === navigation.trechoAtual ? 'atual' : null) : null,
+  })), ocultos), [routeResult, ocultos, navigation?.trechoAtual, navigation?.execucao, navigation?.concluida]);
+  const toggleSegment = (indice) => setVisibilidade((anterior) => {
+    const atuais = anterior.rota === routeResult ? anterior.ocultos : [];
+    return { rota: routeResult, ocultos: atuais.includes(indice)
+      ? atuais.filter((i) => i !== indice) : [...atuais, indice] };
+  });
+  const restoreSegments = () => setVisibilidade({ rota: routeResult, ocultos: [] });
   const [routeError, setRouteError] = useState(null);
   const [partialGeometry, setPartialGeometry] = useState(null);
 
@@ -93,8 +122,17 @@ export default function App() {
     return {
       pontos: l.pontos.map((p) => ({ ...p })),
       sequencia: l.sequencia,
+      circuito: l.circuito,
     };
   };
+
+  // Edição invalida navegação/plano e respostas de cálculo anteriores.
+  useEffect(() => {
+    calculoRef.current++;
+    navigationRef.current.encerrar();
+    setRouteResult(null); setRouteError(null); setPartialGeometry(null); setCalculating(false); setNavigationCenter(null);
+  }, [lista, modoOrdem]);
+  useEffect(() => () => { calculoRef.current++; navigationRef.current.descartar(); }, []);
 
   // Carregamento inicial da rede viária e assinatura de atualizações
   useEffect(() => {
@@ -337,20 +375,18 @@ export default function App() {
 
   const handleSwap = () => {
     Keyboard.dismiss();
-    setLista((atual) => {
-      if (atual.pontos.length < 2) return atual;
-      const copia = cloneLista(atual);
-      copia.pontos.reverse();
-      rotularPontos(copia);
-      return cloneLista(copia);
-    });
+    if (lista.circuito) {
+      setStatus('No circuito a origem é fixa: não há o que inverter.', 'idle');
+      return;
+    }
+    setLista(inverterTrajeto);
     setStatus('Trajeto invertido.', 'idle');
   };
 
   const handleClear = () => {
     Keyboard.dismiss();
     setPickingId(null);
-    setLista(criarListaInicial());
+    setLista(criarListaInicial(lista.circuito));
     setRouteResult(null);
     setRouteError(null);
     setPartialGeometry(null);
@@ -373,6 +409,8 @@ export default function App() {
       return;
     }
 
+    navigationRef.current.encerrar();
+    const requestId = ++calculoRef.current;
     setCalculating(true);
     setStatus('Calculando a rota…', 'busy');
     setRouteResult(null);
@@ -387,7 +425,10 @@ export default function App() {
     }));
 
     try {
-      const data = await mobileNetworkService.calcularRotaParadas(pontosPayload);
+      const data = await mobileNetworkService.calcularRotaParadas(pontosPayload, {
+        modo: modoOrdem, circular: lista.circuito === true,
+      });
+      if (requestId !== calculoRef.current) return;
       if (!data.ok) {
         setRouteError({
           title: reasonTitle(data.reason),
@@ -404,13 +445,14 @@ export default function App() {
       const d = formatDistanceParts(data.distance);
       setStatus(`Rota calculada: ${d.v} ${d.u}.`, 'ok');
     } catch (err) {
+      if (requestId !== calculoRef.current) return;
       setRouteError({
         title: 'Falha no cálculo',
         message: err.message,
       });
       setStatus('Falha ao calcular a rota.', 'err');
     } finally {
-      setCalculating(false);
+      if (requestId === calculoRef.current) setCalculating(false);
     }
   };
 
@@ -510,6 +552,14 @@ export default function App() {
               features={networkFeatures}
               markers={lista.pontos}
               routeGeometry={activeRouteGeometry}
+              routeSegments={routeSegments}
+              navigationPosition={navigation?.posicao}
+              centerRequest={navigationCenter}
+              isSimulating={navigation?.modo === 'simulacao'}
+              isGPS={navigation?.modo === 'gps'}
+              suppressRouteFit={!!navigation}
+              onToggleSegment={toggleSegment}
+              onRestoreSegments={restoreSegments}
               pickingPoint={pickingPoint}
               onCancelPick={() => {
                 setPickingId(null);
@@ -535,6 +585,7 @@ export default function App() {
                   key={p.id}
                   ponto={p}
                   totalPontos={lista.pontos.length}
+                  circuito={lista.circuito}
                   isPicking={pickingId === p.id}
                   onChangeCodigo={handleChangeCodigo}
                   onValidateCodigo={handleValidateCodigo}
@@ -546,6 +597,30 @@ export default function App() {
                   onRemove={handleRemoveStop}
                   onSubmitCalculate={handleCalculate}
                 />
+              ))}
+
+              <Text style={styles.blockTitle}>Tipo de trajeto</Text>
+              {[false, true].map((circuito) => (
+                <TouchableOpacity key={String(circuito)} style={styles.btnGhost}
+                  accessibilityRole="radio" accessibilityState={{ checked: !!lista.circuito === circuito }}
+                  onPress={() => {
+                    setLista((atual) => cloneLista({ ...atual, circuito }));
+                    setRouteResult(null); setPartialGeometry(null); setRouteError(null);
+                  }}>
+                  <Text style={styles.btnGhostText}>{!!lista.circuito === circuito ? '● ' : '○ '}{circuito ? 'Circuito — retorno à origem' : 'Ida e volta — destino livre'}</Text>
+                </TouchableOpacity>
+              ))}
+              <Text style={[styles.blockTitle, { marginTop: 14 }]}>Ordem do trajeto</Text>
+              {[
+                ['otimizada', 'Menor rota total'],
+                ['saida_curta', 'Menor rota total (saída curta)'],
+                ['usuario', 'Ordem do usuário'],
+              ].map(([modo, titulo]) => (
+                <TouchableOpacity key={modo} style={styles.btnGhost}
+                  accessibilityRole="radio" accessibilityState={{ checked: modoOrdem === modo }}
+                  onPress={() => { setModoOrdem(modo); setRouteResult(null); setPartialGeometry(null); setRouteError(null); }}>
+                  <Text style={styles.btnGhostText}>{modoOrdem === modo ? '● ' : '○ '}{titulo}</Text>
+                </TouchableOpacity>
               ))}
 
               <TouchableOpacity
@@ -567,7 +642,9 @@ export default function App() {
 
               <View style={styles.secondaryButtonsRow}>
                 <TouchableOpacity
-                  style={[styles.btnGhost, styles.btnHalf]}
+                  style={[styles.btnGhost, styles.btnHalf, lista.circuito && styles.btnDisabled]}
+                  disabled={lista.circuito}
+                  accessibilityHint={lista.circuito ? 'A origem do circuito é fixa' : 'Trocar origem e destino'}
                   onPress={handleSwap}
                 >
                   <Text style={styles.btnGhostText}>⇅ Inverter</Text>
@@ -582,9 +659,21 @@ export default function App() {
               </View>
             </View>
 
+            <NavigationPanel estado={navigation} controller={navigationRef.current}
+              podeIniciar={!!routeResult?.ok} onStart={(modo) => navigationRef.current.iniciar(routeResult, modo)}
+              onCenter={() => {
+                if (navigation?.posicao) {
+                  setNavigationCenter({ ...navigation.posicao });
+                  if (layoutMode === 'panel') setLayoutMode('split');
+                }
+              }} />
+
             {/* Bloco de Resultado da Rota */}
             <RouteResultPanel
               routeResult={routeResult}
+              routeSegments={routeSegments}
+              onToggleSegment={toggleSegment}
+              onRestoreSegments={restoreSegments}
               routeError={routeError}
             />
           </ScrollView>

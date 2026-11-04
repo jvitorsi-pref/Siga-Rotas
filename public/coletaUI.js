@@ -36,10 +36,11 @@ import {
   detectarDuplicado,
   montarLocalizacaoResidencia,
 } from '../core/coleta.js';
+import { prepararRetomadaSimulada } from '../core/recuperacaoColeta.js';
 import { criarSimulador, VELOCIDADES } from '../core/simulador.js';
 import { criarFonteGPS } from '../core/fonteGPS.js';
 import { planoDeNavegacao } from '../core/navegacao.js';
-import { criarPonto, rotularPontos } from '../core/pontoTrajeto.js';
+import { persistirPlanoAtivo, assinaturaPlanejador } from './planoPersistido.js';
 
 const CHAVE_DISPOSITIVO = 'santo-andre:dispositivo';
 
@@ -191,12 +192,14 @@ export function criarInterfaceColeta(app) {
   /* ─────────────── Armazenamento local ─────────────── */
 
   let armazenamento = null;
+  let revisaoAbertura = 0;
   let persistenciaReal = true;
   let coleta = null;
   let sessaoRecuperada = null;
   let simulador = null; // modo de teste (posição fictícia)
   let planoSimulacaoAtual = null; // geometria usada pelo simulador
   let velocidadeSim = 1;
+  let distanciaRetomada = 0;
   let modoColetaAtual = FONTE.GPS;
 
   async function abrirArmazenamento() {
@@ -229,14 +232,6 @@ export function criarInterfaceColeta(app) {
     const simulando = modoColetaAtual === FONTE.SIMULACAO;
     if (els.bannerSim) els.bannerSim.hidden = !simulando;
     if (els.sim) els.sim.hidden = !simulando;
-  }
-
-  /** Monta o plano de navegação para o simulador (rota atual ou salva). */
-  async function planoParaSimulacao() {
-    if (app.rotaAtual && app.rotaAtual.ok) return planoDeNavegacao(app.rotaAtual);
-    const salvas = await armazenamento.listarRotas();
-    if (salvas.length) return planoDeNavegacao(salvas[salvas.length - 1]);
-    return null;
   }
 
   function atualizarSimulador() {
@@ -435,6 +430,14 @@ export function criarInterfaceColeta(app) {
     const ativa = estado === ESTADO_COLETA.ATIVA;
     const pausada = estado === ESTADO_COLETA.PAUSADA;
 
+    // Fonte de uma sessão é imutável, inclusive enquanto está pausada.
+    if (els.modos) {
+      els.modos.querySelectorAll('input[name="campomodo"]').forEach((radio) => {
+        radio.disabled = ativa || pausada;
+        if (ativa || pausada) radio.checked = radio.value === e.fonte;
+      });
+    }
+    if (ativa || pausada) atualizarModoColeta();
     if (els.iniciar) els.iniciar.hidden = ativa || pausada;
     if (els.pausar) els.pausar.hidden = !ativa;
     if (els.retomar) els.retomar.hidden = !pausada;
@@ -469,37 +472,8 @@ export function criarInterfaceColeta(app) {
       mostrarAviso('Calcule uma rota antes de salvá-la.', 'alerta');
       return;
     }
-    const pontos = (app.state.lista.pontos || []).map((p) => ({
-      rotulo: p.rotulo,
-      latitude: p.latitude,
-      longitude: p.longitude,
-      enderecoDigital: p.enderecoDigital || null,
-    }));
-    // **versão da rota**: se já existe uma rota salva com a mesma sequência e
-    // a mesma distância, trata-se da mesma rota revisada (versão + 1);
-    // caso contrário, é uma nova versão 1. A versão fica registrada junto da
-    // sessão de coleta, para saber qual plano o agente estava usando.
-    const chave = (rota.sequenciaCompleta || []).join('|');
-    const salvas = await armazenamento.listarRotas();
-    const mesma = salvas.find(
-      (r) =>
-        (r.sequenciaCompleta || []).join('|') === chave &&
-        Math.abs((r.distance || 0) - (rota.distance || 0)) < 0.01,
-    );
-    const registro = await armazenamento.salvarRota({
-      id: mesma ? mesma.id : undefined,
-      versao: mesma ? (mesma.versao || 1) + 1 : 1,
-      modo: rota.modo,
-      circular: rota.circular === true,
-      pontos,
-      sequencia: rota.sequencia || [],
-      sequenciaCompleta: rota.sequenciaCompleta || [],
-      legs: rota.legs || [],
-      geometry: rota.geometry || [],
-      streets: rota.streets || [],
-      distance: rota.distance || 0,
-      agenteId: idAgente(),
-      dispositivoId: idDispositivo(),
+    const registro = await persistirPlanoAtivo(armazenamento, rota, rota.pontos || app.state.lista.pontos, {
+      agenteId: idAgente(), dispositivoId: idDispositivo(),
     });
     mostrarAviso('Rota salva no dispositivo (' + registro.id + ').', 'ok');
     status('Rota planejada salva no dispositivo.', 'ok');
@@ -508,21 +482,16 @@ export function criarInterfaceColeta(app) {
   }
 
   async function abrirRota(id) {
+    const revisao = ++revisaoAbertura;
+    const assinatura = assinaturaPlanejador(app.state);
+    const ativa = app.rotaAtual;
     const rota = await armazenamento.obterRota(id);
-    if (!rota) return;
-    // repõe os pontos do trajeto e desenha a geometria salva
-    const lista = app.state.lista;
-    lista.pontos = (rota.pontos || []).map((p) =>
-      criarPonto({
-        rotulo: p.rotulo,
-        latitude: p.latitude,
-        longitude: p.longitude,
-        enderecoDigital: p.enderecoDigital || '',
-      }),
-    );
-    lista.circuito = rota.circular === true;
-    rotularPontos(lista);
-    if (typeof app.renderizarPontos === 'function') app.renderizarPontos();
+    if (!rota || revisao !== revisaoAbertura) return;
+    if (assinaturaPlanejador(app.state) !== assinatura || app.rotaAtual !== ativa) {
+      mostrarAviso('O planejamento mudou enquanto a rota era carregada. Abra novamente para confirmar a substituição.', 'alerta');
+      return;
+    }
+    app.abrirPlanoSalvo(rota);
     desenharPlanoSalvo(rota);
     // enquadra a rota recuperada (a geometria salva está em EPSG:4326)
     const feats = planoSource.getFeatures();
@@ -549,9 +518,14 @@ export function criarInterfaceColeta(app) {
 
   async function iniciarColeta() {
     const fonte = modoColeta();
+    const rota = app.rotaAtual;
+    if (app.state.rotaAtual && !rota) {
+      mostrarAviso('O planejamento foi alterado. Calcule ou abra a rota novamente antes de iniciar a coleta.', 'alerta');
+      return;
+    }
     if (fonte === FONTE.SIMULACAO) {
       // o simulador percorre a geometria da rota: sem rota não há plano
-      planoSimulacaoAtual = await planoParaSimulacao();
+      planoSimulacaoAtual = rota?.ok ? planoDeNavegacao(rota) : null;
       if (!planoSimulacaoAtual) {
         mostrarAviso(
           'A simulação precisa de uma rota: calcule a rota (ou recupere uma rota salva) ' +
@@ -561,22 +535,19 @@ export function criarInterfaceColeta(app) {
         return;
       }
     }
-    const rota = app.rotaAtual;
-    const plano = rota && rota.ok
-      ? {
-          id: (await armazenamento.listarRotas()).length ? null : null,
-          versao: 1,
-          modo: rota.modo,
-          circular: rota.circular === true,
-          sequencia: rota.sequenciaCompleta || [],
-        }
-      : null;
-    // se há uma rota salva correspondente, ela é a "versão da rota" usada
-    if (plano) {
-      const salvas = await armazenamento.listarRotas();
-      const idSalva = salvas.length ? salvas[salvas.length - 1].id : null;
-      plano.id = idSalva;
-      plano.versao = salvas.length ? salvas[salvas.length - 1].versao || 1 : 1;
+    const assinatura = assinaturaPlanejador(app.state);
+    let plano = null;
+    if (rota?.ok) {
+      // Persiste exatamente o plano ativo, nunca o último item da listagem.
+      const registro = await persistirPlanoAtivo(armazenamento, rota, rota.pontos || app.state.lista.pontos, {
+        agenteId: idAgente(), dispositivoId: idDispositivo(),
+      });
+      if (app.rotaAtual !== rota || assinaturaPlanejador(app.state) !== assinatura) {
+        mostrarAviso('O planejamento mudou durante a gravação. Inicie a coleta novamente.', 'alerta');
+        return;
+      }
+      plano = { id: registro.id, versao: registro.versao, modo: registro.modo,
+        circular: registro.circular, sequencia: registro.sequenciaCompleta };
     }
     const r = await coleta.iniciar({ rota: plano, fonte });
     if (!r.ok) {
@@ -594,6 +565,36 @@ export function criarInterfaceColeta(app) {
       status('Coleta de campo iniciada.', 'ok');
     }
     atualizarSimulador();
+  }
+
+  async function retomarColeta() {
+    if (coleta.estado.fonte === FONTE.SIMULACAO && !simulador) {
+      const preparo = await prepararRetomadaSimulada(armazenamento, coleta.estado);
+      if (!preparo.ok) {
+        mostrarAviso(preparo.message, 'alerta');
+        return;
+      }
+      planoSimulacaoAtual = preparo.plano;
+      distanciaRetomada = preparo.distancia;
+    }
+    await coleta.retomar();
+    renderizarEstadoColeta();
+  }
+
+  // Falhas de escrita ficam visíveis e podem ser tentadas de novo sem
+  // esvaziar o lote nem encerrar uma sessão ainda não persistida.
+  let acaoEmAndamento = false;
+  async function executarAcao(acao) {
+    if (acaoEmAndamento) {
+      mostrarAviso('Aguarde a operação em andamento antes de iniciar outra.', 'info');
+      return;
+    }
+    acaoEmAndamento = true;
+    try { await acao(); }
+    catch (erro) {
+      mostrarAviso('Não foi possível concluir: ' + erro.message + '. Os dados pendentes permanecem em memória; tente novamente antes de fechar o aplicativo.', 'alerta');
+      renderizarEstadoColeta();
+    } finally { acaoEmAndamento = false; }
   }
 
   async function encerrarColeta() {
@@ -734,6 +735,12 @@ export function criarInterfaceColeta(app) {
       // o controlador passa a "adotar" a sessão: os pontos já gravados
       // permanecem e "Retomar" continua exatamente a mesma coleta
       await coleta.adota(sessaoRecuperada.id);
+      modoColetaAtual = coleta.estado.fonte;
+      if (els.modos) els.modos.querySelectorAll('input[name="campomodo"]').forEach((radio) => {
+        radio.checked = radio.value === modoColetaAtual;
+      });
+      atualizarModoColeta();
+      renderizarEstadoColeta();
       const pontos = await armazenamento.listarPontos(sessaoRecuperada.id);
       desenharTrilha(pontos);
       if (els.estado) {
@@ -756,19 +763,19 @@ export function criarInterfaceColeta(app) {
 
   /* ─────────────── Eventos ─────────────── */
 
-  if (els.salvarRota) els.salvarRota.addEventListener('click', () => void salvarRota());
+  if (els.salvarRota) els.salvarRota.addEventListener('click', () => void executarAcao(salvarRota));
 
   if (els.rotas) {
     els.rotas.addEventListener('click', (ev) => {
       const botao = ev.target.closest('button[data-acao]');
       if (!botao) return;
       const id = botao.getAttribute('data-rota');
-      if (botao.getAttribute('data-acao') === 'abrir') void abrirRota(id);
-      else void excluirRota(id);
+      if (botao.getAttribute('data-acao') === 'abrir') void executarAcao(() => abrirRota(id));
+      else void executarAcao(() => excluirRota(id));
     });
   }
 
-  if (els.iniciar) els.iniciar.addEventListener('click', () => void iniciarColeta());
+  if (els.iniciar) els.iniciar.addEventListener('click', () => void executarAcao(iniciarColeta));
   if (els.marcarResidencia)
     els.marcarResidencia.addEventListener('click', () => void marcarResidencia());
 
@@ -823,12 +830,12 @@ export function criarInterfaceColeta(app) {
       }
     });
   if (els.pausar)
-    els.pausar.addEventListener('click', () => void coleta.pausar().then(renderizarEstadoColeta));
+    els.pausar.addEventListener('click', () => void executarAcao(() => coleta.pausar().then(renderizarEstadoColeta)));
   if (els.retomar)
     els.retomar.addEventListener('click', () =>
-      void coleta.retomar().then(renderizarEstadoColeta),
+      void executarAcao(retomarColeta),
     );
-  if (els.encerrar) els.encerrar.addEventListener('click', () => void encerrarColeta());
+  if (els.encerrar) els.encerrar.addEventListener('click', () => void executarAcao(encerrarColeta));
 
   if (els.capturar)
     els.capturar.addEventListener('click', () => void capturarLocalizacao());
@@ -858,15 +865,19 @@ export function criarInterfaceColeta(app) {
         // a fonte da posição é escolhida aqui: **nunca** se mistura GPS
         // real com simulação — são fontes diferentes, com sinalização
         // própria em cada ponto gravado
-        criarFonte: (handlers) => {
-          if (modoColetaAtual === FONTE.SIMULACAO) {
+        criarFonte: (handlers, contexto) => {
+          if (contexto.fonte === FONTE.SIMULACAO) {
+            if (!planoSimulacaoAtual) throw new Error('Plano da simulação indisponível');
             simulador = criarSimulador({
               plano: planoSimulacaoAtual,
               velocidadeMultiplicador: velocidadeSim,
               aoAtualizar: handlers.aoAtualizar,
             });
+            if (distanciaRetomada) simulador.iniciarEm(distanciaRetomada);
+            distanciaRetomada = 0;
             return simulador;
           }
+          simulador = null;
           return criarFonteGPS(handlers);
         },
         aoMudar: (e) => {

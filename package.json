@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server/index.js --port 8094",
     "dev": "node --watch server/index.js --port 8094",
-    "test": "node --test test/",
+    "test": "node --test test/*.test.js",
     "fetch": "node tools/fetch-network.js",
     "inspect": "node tools/inspect-layer.js",
     "report": "node tools/report-network.js",

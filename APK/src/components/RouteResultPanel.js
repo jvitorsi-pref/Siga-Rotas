@@ -15,7 +15,7 @@ import {
 import { formatDistanceParts, formatStreetLength } from '../utils/formatters.js';
 import { COLORS } from '../theme/colors';
 
-export function RouteResultPanel({ routeResult, routeError }) {
+export function RouteResultPanel({ routeResult, routeError, routeSegments = [], onToggleSegment, onRestoreSegments }) {
   const [streetsOpen, setStreetsOpen] = useState(true);
 
   if (!routeResult && !routeError) return null;
@@ -57,7 +57,7 @@ export function RouteResultPanel({ routeResult, routeError }) {
         <StatRow label="Trechos" value={String(legs.length)} />
         <StatRow
           label="Sequência"
-          value={(routeResult.sequencia || []).join(' → ') || '—'}
+          value={(routeResult.sequenciaCompleta || routeResult.sequencia || []).join(' → ') || '—'}
         />
         <StatRow
           label="Logradouros oficiais"
@@ -74,7 +74,13 @@ export function RouteResultPanel({ routeResult, routeError }) {
             ? `Acesso à rede: ${Math.round(l.origem.distanceToNetwork * 100) / 100} m`
             : '';
           return (
-            <View key={`leg-${idx}`} style={styles.legCard}>
+            <TouchableOpacity key={`leg-${idx}`}
+              accessibilityRole="button"
+              accessibilityLabel={`${routeSegments[idx]?.visivel === false ? 'Mostrar' : 'Ocultar'} trecho ${l.de} para ${l.para}`}
+              accessibilityState={{ selected: routeSegments[idx]?.visivel !== false }}
+              onPress={() => onToggleSegment?.(idx)}
+              style={[styles.legCard, { borderLeftWidth: 3.5, borderLeftColor: routeSegments[idx]?.cor || l.cor || COLORS.route }, routeSegments[idx]?.visivel === false && { opacity: 0.5 }]}>
+              <Text style={styles.legAccess}>{l.retorno ? 'Retorno à origem · ' : ''}{routeSegments[idx]?.visivel === false ? 'Oculto — toque para mostrar' : 'Toque para ocultar no mapa'}</Text>
               <View style={styles.legTopRow}>
                 <Text style={styles.legBadge}>{l.de}</Text>
                 <Text style={styles.legArrow}>→</Text>
@@ -84,10 +90,16 @@ export function RouteResultPanel({ routeResult, routeError }) {
                 </Text>
               </View>
               {acesso ? <Text style={styles.legAccess}>{acesso}</Text> : null}
-            </View>
+            </TouchableOpacity>
           );
         })}
       </View>
+
+      {routeSegments.some((t) => !t.visivel) && (
+        <TouchableOpacity style={styles.summaryHeader} accessibilityRole="button" onPress={onRestoreSegments}>
+          <Text style={styles.summaryTitle}>Mostrar todos os trechos</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Lista numerada dos logradouros percorridos */}
       <TouchableOpacity

@@ -248,3 +248,11 @@ test('armazenamento: identificadores são únicos e prefixados', () => {
   }
   assert.equal(ids.size, 500);
 });
+
+test('regressão F01: GeoJSON da API sobrevive à persistência e reabertura', async () => {
+  const repo = novoArmazenamento();
+  const coordinates = [[-46.5, -23.7], [-46.51, -23.71]];
+  await repo.salvarRota(rotaDeExemplo({ geometry: { type: 'LineString', coordinates } }));
+  const reaberto = criarArmazenamento({ adaptador: repo.adaptador });
+  assert.deepEqual((await reaberto.obterRota('rta_teste')).geometry, coordinates);
+});

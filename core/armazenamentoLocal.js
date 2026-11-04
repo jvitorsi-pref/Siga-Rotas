@@ -417,7 +417,12 @@ export function criarArmazenamento(opcoes = {}) {
         sequencia: rota.sequencia || [],
         sequenciaCompleta: rota.sequenciaCompleta || [],
         legs: Array.isArray(rota.legs) ? rota.legs : [],
-        geometry: Array.isArray(rota.geometry) ? rota.geometry : [],
+        // Esquema v1 guarda coordenadas; aceita também o GeoJSON da API.
+        geometry: Array.isArray(rota.geometry)
+          ? rota.geometry
+          : rota.geometry?.type === 'LineString' && Array.isArray(rota.geometry.coordinates)
+            ? rota.geometry.coordinates
+            : [],
         streets: Array.isArray(rota.streets) ? rota.streets : [],
         distance: Number.isFinite(rota.distance) ? rota.distance : 0,
         agenteId: rota.agenteId || null,

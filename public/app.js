@@ -25,6 +25,7 @@ import {
   TIPOS,
   STATUS,
 } from '../core/pontoTrajeto.js';
+import { prepararPlanoSalvo, assinaturaPlanejador } from './planoPersistido.js';
 import { coresDosTrechos } from '../core/coresTrechos.js';
 import { criarInterfaceNavegacao } from './navegacaoUI.js?v=20261028-5';
 import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
@@ -33,6 +34,14 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
   'use strict';
 
   const ol = window.ol;
+  document.querySelectorAll('[data-layout-mode]').forEach((button) => {
+    button.addEventListener('click', () => {
+      document.querySelector('.app').dataset.layout = button.dataset.layoutMode;
+      document.querySelectorAll('[data-layout-mode]').forEach((item) => {
+        item.setAttribute('aria-pressed', String(item === button));
+      });
+    });
+  });
 
   /** Aplica alfa a uma cor hexadecimal (usada no destaque da navegação). */
   function corComAlfa(hex, alfa) {
@@ -119,6 +128,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
       maxZoom: 19,
     }),
   });
+  new ResizeObserver(() => map.updateSize()).observe(document.querySelector('.map-wrap'));
 
   // ── Camada da rede viária ──────────────────────────────────────────────
   //
@@ -231,7 +241,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
       const kind = feature.get('kind'); // 'origin' | 'parada' | 'destino'
       const rotulo = feature.get('rotulo') || '';
       const color =
-        kind === 'origin' ? '#2ea043' : kind === 'destino' ? '#f85149' : '#1f6feb';
+        kind === 'origin' ? '#2ea043' : kind === 'destino' ? '#f85149' : '#045127';
       return new ol.style.Style({
         image: new ol.style.Circle({
           radius: 8,
@@ -852,7 +862,12 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
 
   /* ─────────────── Cálculo da rota ─────────────── */
 
+  let revisaoCalculo = 0;
+  let assinaturaRota = null;
   async function calculate() {
+    const revisao = ++revisaoCalculo;
+    const assinatura = assinaturaPlanejador(state);
+    state.rotaAtual = null;
     const verificacao = podeCalcular(state.lista);
     if (!verificacao.ok) {
       showError('Pontos incompletos', verificacao.mensagem);
@@ -882,6 +897,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
         }),
       });
       const data = await res.json();
+      if (revisao !== revisaoCalculo || assinaturaPlanejador(state) !== assinatura) return;
 
       if (!data.ok) {
         showError(reasonTitle(data.reason), data.message || 'Não foi possível calcular a rota.');
@@ -900,10 +916,11 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
       const d = formatDistance(data.distance);
       setStatus('Rota calculada: ' + d.v + ' ' + d.u + '.', 'ok');
     } catch (err) {
+      if (revisao !== revisaoCalculo || assinaturaPlanejador(state) !== assinatura) return;
       showError('Falha de comunicação', err.message);
       setStatus('Falha ao consultar o servidor.', 'err');
     } finally {
-      els.calc.disabled = false;
+      if (revisao === revisaoCalculo) els.calc.disabled = false;
     }
   }
 
@@ -1167,6 +1184,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
 
     // a rota atual é o PLANO da navegação ativa
     state.rotaAtual = data;
+    assinaturaRota = assinaturaPlanejador(state);
     // a interface de coleta precisa saber que há uma rota para salvar
     if (window.__app && window.__app.coleta) window.__app.coleta.aoCalcularRota(data);
     if (els.startNav) els.startNav.hidden = false;
@@ -1549,11 +1567,27 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     // ganchos usados pela interface de coleta de campo (restaurar uma rota
     // salva repõe a lista de pontos e redesenha o painel)
     renderizarPontos,
+    abrirPlanoSalvo(registro) {
+      const plano = prepararPlanoSalvo(registro); // valida tudo antes de alterar estado
+      revisaoCalculo++; // uma resposta de rede antiga não pode substituir o plano aberto
+      els.calc.disabled = false;
+      stopPicking();
+      state.lista = plano.lista;
+      state.circuito = plano.circuito;
+      state.modo = plano.modo;
+      document.querySelectorAll('input[name="tipo"]').forEach(r => { r.checked = r.value === (plano.circuito ? 'circuito' : 'ida'); });
+      document.querySelectorAll('input[name="modo"]').forEach(r => { r.checked = r.value === plano.modo; });
+      els.swap.disabled = plano.circuito;
+      els.swap.title = plano.circuito ? 'No circuito a origem é fixa: não há o que inverter' : 'Trocar origem e destino';
+      renderizarPontos();
+      showRoute(plano.rota);
+      return plano.rota;
+    },
     ajustarEnquadramento,
   };
   // a rota atual é lida sempre do estado (nunca fica desatualizada)
   Object.defineProperty(window.__app, 'rotaAtual', {
-    get: () => state.rotaAtual,
+    get: () => state.rotaAtual && assinaturaRota === assinaturaPlanejador(state) ? state.rotaAtual : null,
   });
 
   // Interface de navegação ativa (GPS real + modo de teste). É criada
