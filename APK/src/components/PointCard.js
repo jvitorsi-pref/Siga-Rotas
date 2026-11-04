@@ -1,3 +1,4 @@
+import { papelPontoCircuito } from '../utils/planejamentoCircuito.js';
 /**
  * CARTÃO DE PONTO DO TRAJETO (ORIGEM, PARADA OU DESTINO)
  * ======================================================
@@ -28,7 +29,7 @@ import { COLORS } from '../theme/colors';
 export function PointCard({
   ponto,
   totalPontos,
-  circuito = false,
+  circuito = true,
   isPicking,
   onChangeCodigo,
   onValidateCodigo,
@@ -44,11 +45,7 @@ export function PointCard({
   const isDestino = ponto.tipo === TIPOS.DESTINO;
   const isParada = ponto.tipo === TIPOS.PARADA;
 
-  const roleLabel = isOrigem
-    ? 'Origem'
-    : isDestino
-      ? 'Destino'
-      : `Parada ${ponto.rotulo}`;
+  const roleLabel = papelPontoCircuito(ponto);
 
   const accentColor = isOrigem
     ? COLORS.origin

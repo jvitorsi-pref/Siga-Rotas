@@ -43,63 +43,17 @@
         Lista dinâmica de pontos: A (origem), B, C, … (paradas) e o destino.
         Cada ponto aceita o Endereço Digital (CEP Digital de Santo André) ou,
         como alternativa, coordenadas decimais / seleção no mapa.
-        No modo "circuito" não há card de destino: o retorno à origem é
+        Não há card de destino separado: A é origem e destino, e o retorno é
         automático.
       -->
       <div id="points" class="points"></div>
 
-      <!--
-        Tipo de trajeto:
-          • "Ida e volta"   — A → B → C → D (destino livre);
-          • "Circuito"      — A → B → C → D → A (linha de ônibus): o
-            retorno à origem é calculado automaticamente.
-      -->
-      <fieldset class="modes" id="tipos">
-        <legend>Tipo de trajeto</legend>
-        <label class="mode">
-          <input type="radio" name="tipo" value="ida" checked />
-          <span><b>Ida e volta</b><i>A → paradas → destino</i></span>
-        </label>
-        <label class="mode">
-          <input type="radio" name="tipo" value="circuito" />
-          <span><b>Circuito</b><i>A → paradas → A (linha de ônibus)</i></span>
-        </label>
-      </fieldset>
-
-      <!--
-        Duas opções de rota:
-          • "Menor rota"      — a ordem de visita é OTIMIZADA (TSP sobre o
-            fecho métrico da rede);
-          • "Ordem do usuário" — a sequência dos pontos é respeitada como o
-            usuário informou.
-        A prioridade vem do escopo: por padrão a aplicação entrega a menor
-        rota (pedido explícito), e a ordem do usuário continua disponível.
-      -->
-      <fieldset class="modes" id="modes">
-        <legend>Ordem do trajeto</legend>
-        <label class="mode">
-          <input type="radio" name="modo" value="otimizada" checked />
-          <span><b>Menor rota total</b><i>minimiza a distância total do circuito, com o retorno à origem (TSP)</i></span>
-        </label>
-        <label class="mode">
-          <input type="radio" name="modo" value="saida_curta" />
-          <span><b>Menor rota total (saída curta)</b><i>mesmo total mínimo; em caso de empate, prefere a primeira perna mais curta a partir da origem</i></span>
-        </label>
-        <label class="mode">
-          <input type="radio" name="modo" value="usuario" />
-          <span><b>Ordem do usuário</b><i>respeita a sequência A → B → C…</i></span>
-        </label>
-        <p class="modes__nota" id="modes-nota">
-          Na <b>menor rota total</b> a ordem final é recalculada para somar a
-          menor distância possível — incluindo o <b>retorno à origem</b> no
-          circuito; na <b>ordem do usuário</b> ela é exatamente a que você
-          arrastar aqui.
-        </p>
-      </fieldset>
+      <p class="modes__nota">A é a origem e o destino. O retorno a A é automático.
+        Calcular rota respeita a ordem dos cards; Calcular rota otimizada busca a menor distância total do circuito.</p>
 
       <button id="add-stop" class="btn btn--ghost btn--block" type="button">+ Adicionar parada</button>
       <button id="calc" class="btn btn--primary btn--block" type="button">Calcular rota</button>
-      <button id="swap" class="btn btn--ghost btn--block" type="button" title="Trocar origem e destino">⇅ Inverter</button>
+      <button id="calc-optimized" class="btn btn--primary btn--block" type="button">Calcular rota otimizada</button>
       <button id="clear" class="btn btn--ghost btn--block" type="button">Limpar</button>
     </section>
 
@@ -315,10 +269,10 @@
       <div><span class="swatch swatch--axis"></span> Eixo viário oficial</div>
       <div><span class="swatch swatch--axis-unofficial"></span> Eixo não oficializado</div>
       <div><span class="swatch swatch--route"></span> Rota calculada</div>
-      <div id="legend-return" hidden><span class="swatch swatch--route-return"></span> Retorno à origem</div>
-      <div><span class="swatch swatch--origin"></span> Origem (A)</div>
+      <div id="legend-return"><span class="swatch swatch--route-return"></span> Retorno a A</div>
+      <div><span class="swatch swatch--origin"></span> Origem e destino (A)</div>
       <div><span class="swatch swatch--stop"></span> Parada intermediária</div>
-      <div id="legend-dest"><span class="swatch swatch--dest"></span> Destino</div>
+      <div id="legend-dest" hidden><span class="swatch swatch--dest"></span> Destino</div>
       <div id="legend-trechos" class="legend__trechos" hidden>
         <div class="legend__titulo">
           <span>Trechos da rota</span>

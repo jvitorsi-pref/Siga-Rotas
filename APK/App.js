@@ -28,7 +28,6 @@ import {
 } from 'react-native';
 
 import {
-  criarListaPontos,
   adicionarPonto,
   removerPonto,
   atualizarPonto,
@@ -51,28 +50,15 @@ import { PointCard } from './src/components/PointCard.js';
 import { RouteResultPanel } from './src/components/RouteResultPanel.js';
 import { RoadNetworkMap } from './src/components/RoadNetworkMap.js';
 import { trechosParaMapa } from './src/map/routePresentation.js';
-import { inverterTrajeto } from './src/utils/controlesTrajeto.js';
+import { criarListaCircuito, opcoesCalculoCircuito } from './src/utils/planejamentoCircuito.js';
 import { COLORS } from './src/theme/colors.js';
-
-function criarListaInicial(circuito = false) {
-  const lista = criarListaPontos();
-  lista.circuito = circuito;
-  adicionarPonto(lista, {});
-  if (!circuito) adicionarPonto(lista, {});
-  return {
-    pontos: lista.pontos.map((p) => ({ ...p })),
-    sequencia: lista.sequencia,
-    circuito: lista.circuito,
-  };
-}
 
 export default function App() {
   const mapRef = useRef(null);
 
   // Estado da lista de pontos (A, B, C, D…)
-  const [lista, setLista] = useState(() => criarListaInicial());
+  const [lista, setLista] = useState(criarListaCircuito);
   const [pickingId, setPickingId] = useState(null);
-  const [modoOrdem, setModoOrdem] = useState('otimizada');
 
   // Estado da rede viária
   const [networkFeatures, setNetworkFeatures] = useState([]);
@@ -131,7 +117,7 @@ export default function App() {
     calculoRef.current++;
     navigationRef.current.encerrar();
     setRouteResult(null); setRouteError(null); setPartialGeometry(null); setCalculating(false); setNavigationCenter(null);
-  }, [lista, modoOrdem]);
+  }, [lista]);
   useEffect(() => () => { calculoRef.current++; navigationRef.current.descartar(); }, []);
 
   // Carregamento inicial da rede viária e assinatura de atualizações
@@ -373,20 +359,10 @@ export default function App() {
     setStatus('Parada adicionada. Informe o Endereço Digital ou selecione no mapa.', 'idle');
   };
 
-  const handleSwap = () => {
-    Keyboard.dismiss();
-    if (lista.circuito) {
-      setStatus('No circuito a origem é fixa: não há o que inverter.', 'idle');
-      return;
-    }
-    setLista(inverterTrajeto);
-    setStatus('Trajeto invertido.', 'idle');
-  };
-
   const handleClear = () => {
     Keyboard.dismiss();
     setPickingId(null);
-    setLista(criarListaInicial(lista.circuito));
+    setLista(criarListaCircuito());
     setRouteResult(null);
     setRouteError(null);
     setPartialGeometry(null);
@@ -395,7 +371,7 @@ export default function App() {
 
   // ─────────────── Cálculo da rota ───────────────
 
-  const handleCalculate = async () => {
+  const handleCalculate = async (modo = 'usuario') => {
     Keyboard.dismiss();
     const verificacao = podeCalcular(lista);
     if (!verificacao.ok) {
@@ -426,7 +402,7 @@ export default function App() {
 
     try {
       const data = await mobileNetworkService.calcularRotaParadas(pontosPayload, {
-        modo: modoOrdem, circular: lista.circuito === true,
+        ...opcoesCalculoCircuito(modo),
       });
       if (requestId !== calculoRef.current) return;
       if (!data.ok) {
@@ -595,33 +571,11 @@ export default function App() {
                   onMoveUp={handleMoveUp}
                   onMoveDown={handleMoveDown}
                   onRemove={handleRemoveStop}
-                  onSubmitCalculate={handleCalculate}
+                  onSubmitCalculate={() => handleCalculate('usuario')}
                 />
               ))}
 
-              <Text style={styles.blockTitle}>Tipo de trajeto</Text>
-              {[false, true].map((circuito) => (
-                <TouchableOpacity key={String(circuito)} style={styles.btnGhost}
-                  accessibilityRole="radio" accessibilityState={{ checked: !!lista.circuito === circuito }}
-                  onPress={() => {
-                    setLista((atual) => cloneLista({ ...atual, circuito }));
-                    setRouteResult(null); setPartialGeometry(null); setRouteError(null);
-                  }}>
-                  <Text style={styles.btnGhostText}>{!!lista.circuito === circuito ? '● ' : '○ '}{circuito ? 'Circuito — retorno à origem' : 'Ida e volta — destino livre'}</Text>
-                </TouchableOpacity>
-              ))}
-              <Text style={[styles.blockTitle, { marginTop: 14 }]}>Ordem do trajeto</Text>
-              {[
-                ['otimizada', 'Menor rota total'],
-                ['saida_curta', 'Menor rota total (saída curta)'],
-                ['usuario', 'Ordem do usuário'],
-              ].map(([modo, titulo]) => (
-                <TouchableOpacity key={modo} style={styles.btnGhost}
-                  accessibilityRole="radio" accessibilityState={{ checked: modoOrdem === modo }}
-                  onPress={() => { setModoOrdem(modo); setRouteResult(null); setPartialGeometry(null); setRouteError(null); }}>
-                  <Text style={styles.btnGhostText}>{modoOrdem === modo ? '● ' : '○ '}{titulo}</Text>
-                </TouchableOpacity>
-              ))}
+              <Text style={styles.circuitHint}>A é a origem e o destino. O retorno a A é automático.</Text>
 
               <TouchableOpacity
                 style={styles.btnGhost}
@@ -633,23 +587,23 @@ export default function App() {
               <TouchableOpacity
                 style={[styles.btnPrimary, calculating && styles.btnDisabled]}
                 disabled={calculating}
-                onPress={handleCalculate}
+                onPress={() => handleCalculate('usuario')}
               >
                 <Text style={styles.btnPrimaryText}>
                   {calculating ? 'Calculando rota…' : 'Calcular rota'}
                 </Text>
               </TouchableOpacity>
 
-              <View style={styles.secondaryButtonsRow}>
-                <TouchableOpacity
-                  style={[styles.btnGhost, styles.btnHalf, lista.circuito && styles.btnDisabled]}
-                  disabled={lista.circuito}
-                  accessibilityHint={lista.circuito ? 'A origem do circuito é fixa' : 'Trocar origem e destino'}
-                  onPress={handleSwap}
-                >
-                  <Text style={styles.btnGhostText}>⇅ Inverter</Text>
-                </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btnPrimary, calculating && styles.btnDisabled]}
+                disabled={calculating}
+                accessibilityHint="Otimiza a distância total, incluindo o retorno a A"
+                onPress={() => handleCalculate('otimizada')}
+              >
+                <Text style={styles.btnPrimaryText}>Calcular rota otimizada</Text>
+              </TouchableOpacity>
 
+              <View style={styles.secondaryButtonsRow}>
                 <TouchableOpacity
                   style={[styles.btnGhost, styles.btnHalf]}
                   onPress={handleClear}
@@ -784,6 +738,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
+  circuitHint: { color: COLORS.muted, marginBottom: 12 },
   blockTitle: {
     fontSize: 11,
     textTransform: 'uppercase',

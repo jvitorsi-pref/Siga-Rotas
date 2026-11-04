@@ -491,7 +491,12 @@ export function criarInterfaceColeta(app) {
       mostrarAviso('O planejamento mudou enquanto a rota era carregada. Abra novamente para confirmar a substituição.', 'alerta');
       return;
     }
-    app.abrirPlanoSalvo(rota);
+    const planoAtivo = app.abrirPlanoSalvo(rota);
+    if (planoAtivo === null) {
+      planoSource.clear();
+      mostrarAviso('Pontos recuperados de um plano antigo. Calcule o circuito para incluir o retorno a A.', 'info');
+      return;
+    }
     desenharPlanoSalvo(rota);
     // enquadra a rota recuperada (a geometria salva está em EPSG:4326)
     const feats = planoSource.getFeatures();

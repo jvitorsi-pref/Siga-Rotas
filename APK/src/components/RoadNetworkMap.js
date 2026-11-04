@@ -198,15 +198,11 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
           </View>
           <View style={styles.legendRow}>
             <View style={[styles.swatchDot, { backgroundColor: COLORS.origin }]} />
-            <Text style={styles.legendText}>Origem (A)</Text>
+            <Text style={styles.legendText}>Origem e destino (A)</Text>
           </View>
           <View style={styles.legendRow}>
             <View style={[styles.swatchDot, { backgroundColor: COLORS.stop }]} />
             <Text style={styles.legendText}>Parada intermediária</Text>
-          </View>
-          <View style={styles.legendRow}>
-            <View style={[styles.swatchDot, { backgroundColor: COLORS.dest }]} />
-            <Text style={styles.legendText}>Destino</Text>
           </View>
           {!!routeSegments?.length && (
             <Text style={styles.legendText}>{routeSegments.filter((t) => t.visivel).length}/{routeSegments.length} trechos visíveis</Text>
