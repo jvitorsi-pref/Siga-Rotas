@@ -1,5 +1,8 @@
 # Unificação Web / Android — acompanhamento
 
+> **Escopo ativo revisado pelo usuário:** coleta de dados de localização adiada. O foco passa a ser o planejamento e os recursos já disponíveis. Novos trajetos são somente circuitos, com A como origem e destino; as ações são **Calcular rota** (ordem dos cards) e **Calcular rota otimizada** (menor distância total). Esta decisão substitui as referências anteriores a seletores de tipo/ordem e à prioridade de implementar coleta nativa.
+
+
 Referências fixas: **APK = visual; Web = funcionalidades**. Trabalho em andamento, não aceite final.
 
 ## Etapa 1 — auditoria comparativa do código ativo
@@ -327,3 +330,49 @@ A suíte cobre identidade de plano, geometria diferente com mesma distância/seq
 Arquivos desta rodada: novos `public/planoPersistido.js` e `test/planoPersistido.test.js`; alterados `public/app.js`, `public/coletaUI.js`, `public/sw.js` e documentação/inventário. **Nenhuma nova alteração no core ou APK nesta rodada.** Exportação Hermes/autolinking reportados na seção GPS são da rodada anterior, não uma nova execução Android aqui.
 
 F05/F06 estão corrigidos em código Web e cobertos por regressões, mas ainda exigem confirmação no navegador com persistência real. F07 permanece parcial: resolução de endereços e outros callbacks/ciclo de vida requerem revisão adicional; não se afirma que toda edição encerre automaticamente uma navegação em curso. Coleta/persistência nativas e demais pendências de offline/sync/aparelho permanecem abertas. **Produto não concluído.**
+
+
+## Continuação — circuitos obrigatórios e dois botões de cálculo
+
+### Alterações de interface (Web e APK)
+
+- Removidos os seletores de tipo de trajeto e ordem do trajeto. Removido o controle de inversão: A permanece fixo.
+- Lista inicial e Limpar deixam somente o card A, identificado como **Origem e destino**. Adicionar parada continua criando B, C, D etc.; todas as demais posições são paradas editáveis/removíveis/reordenáveis, inclusive a última. Não é criado card duplicado para o retorno a A. É necessário adicionar e resolver ao menos uma parada para calcular.
+- **Calcular rota** chama explicitamente `modo: usuario, circular: true`; **Calcular rota otimizada**, imediatamente abaixo, chama `modo: otimizada, circular: true`. Enter e os recálculos automáticos do planejador usam ordem do usuário, sem reaproveitar uma seleção de otimização anterior.
+- Ambos os botões ficam bloqueados durante o cálculo. A otimização não reordena nem apaga os cards: a sequência aplicada aparece no resultado e nos trechos. O retorno é incluído no objetivo e na distância calculada pelo motor original.
+- Legendas passam a identificar A como origem e destino; não mostram um destino independente em vermelho. No Web, a legenda de circuito é inicializada antes da primeira rota.
+- Novo contrato puro `public/planejamentoCircuito.js`, reexportado no APK, compartilha lista inicial, rótulo dos cards e opções dos dois comandos, sem duplicar regras do motor.
+- Compatibilidade com planos antigos: abrir um plano não circular recupera os pontos como circuito, mas **não usa sua geometria aberta como circuito pronto**. Exige cálculo para obter o retorno pela rede. A pequena adaptação em `coletaUI.js` apenas impede anunciar/desenhar esse plano legado como ativo; não implementa recursos novos de coleta.
+- Service worker v5 inclui o novo módulo. Paleta, componentes e identidade visual existentes foram mantidos.
+
+### Evidências desta rodada
+
+| Verificação | Resultado |
+|---|---|
+| `npm test` | **273/273**, sem falhas/ignorados |
+| `npm test --prefix APK` | **119/119**, sem falhas/ignorados |
+| Cenários compartilhados | 5 por plataforma: inicialização/limpeza, edição das paradas, comandos, rota manual e otimizada no grafo |
+| Integração dos comandos | 3 testes por plataforma: bindings e execução dos handlers reais com dependências injetadas |
+| Regressões de plano salvo | Atualizadas para circuito obrigatório; novo caso impede mostrar plano aberto como circuito pronto |
+| Exportação Android/Hermes | **604 módulos**, bundle **9,1 MB**, sucesso |
+| Inventário | **118 arquivos**, **21 protegidos**, **3 exceções históricas aprovadas**, **0 não aprovadas** |
+| `git diff --check` | Sem erros |
+
+**Navegador real:** Chromium headless com Playwright, servido pelo aplicativo em 8094. Validada inicialização com A, ausência dos seletores antigos, criação de B/C/D, legendas, cliques nos dois botões e payloads enviados à API real, manutenção dos quatro cards e Limpar retornando a um único card A. Capturas em 1440×1000 e 390×844; zero erros JavaScript nesse fluxo.
+
+No mesmo cenário de coordenadas do snapshot viário real:
+
+| Comando | Sequência resultante | Distância total com retorno |
+|---|---|---|
+| Calcular rota | A → B → C → D → A | **431,7316 m** |
+| Calcular rota otimizada | A → C → D → B → A | **315,0886 m** |
+
+Coordenadas [longitude, latitude]: A [-46.50761262, -23.71127804], B [-46.50668913, -23.7124069], C [-46.50720399, -23.71174796], D [-46.50691357, -23.71219929]. Logs/capturas locais: `/home/user/circuito-browser.log`, `/home/user/circuito-web-desktop.png`, `/home/user/circuito-web-mobile.png`. São evidências de um fluxo Web, não prova de todos os recursos nem equivalência visual com Android.
+
+**Motor preservado:** nenhum arquivo de core/server foi alterado nesta rodada. Opções históricas, incluindo trajetos abertos e saída curta, permanecem no motor/API para compatibilidade e nas regressões de núcleo; não são oferecidas nos novos controles. Não houve mudança de algoritmo, limites de otimização, A*, geometria ou distâncias.
+
+### Pendências sob o escopo revisado
+
+- **Coleta de dados de localização adiada por solicitação expressa.** Não foi removido o código histórico, mas integração/persistência/coleta nativas não são a prioridade da continuação.
+- APK exportado, mas sem compilação Gradle/instalação/gestos em aparelho nesta rodada. O teste Web não homologa a WebView Android.
+- Demais etapas de paridade dos recursos disponíveis, proteções assíncronas restantes, offline e homologação visual continuam abertas. A conclusão destas alterações de planejamento não significa conclusão de toda a unificação.

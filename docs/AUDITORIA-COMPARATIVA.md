@@ -1,6 +1,9 @@
 # Etapa 1 — auditoria comparativa Web / APK
 
-**Atualização de implementação:** F01–F06/F08 receberam correções de integração; M02/M03/M06 e F10 receberam adaptação da cartografia. Navegação simulada e adaptador GPS nativo foreground foram integrados em código no APK. F05/F06 agora têm hidratação centralizada no Web e vínculo por snapshot exato/ID e versão explícitos; F07 recebeu proteções parciais nas duas plataformas. GPS em aparelho, coleta nativa e homologação visual seguem pendentes. A matriz abaixo preserva o retrato histórico da auditoria. Consulte [UNIFICACAO.md](UNIFICACAO.md) para limites e resultados atuais (**264 Web / 111 APK**) e as exceções exatas de coleta/persistência na proteção do núcleo.
+**Atualização de implementação:** F01–F06/F08 receberam correções de integração; M02/M03/M06 e F10 receberam adaptação da cartografia. Navegação simulada e adaptador GPS nativo foreground foram integrados em código no APK. F05/F06 agora têm hidratação centralizada no Web e vínculo por snapshot exato/ID e versão explícitos; F07 recebeu proteções parciais nas duas plataformas. GPS em aparelho, coleta nativa e homologação visual seguem pendentes. A matriz abaixo preserva o retrato histórico da auditoria. Consulte [UNIFICACAO.md](UNIFICACAO.md) para limites e resultados atuais (**273 Web / 119 APK**) e as exceções exatas de coleta/persistência na proteção do núcleo.
+
+**Revisão de escopo posterior:** coleta de localização fica adiada. As interfaces atuais passam a oferecer somente circuitos (A como origem e destino), com **Calcular rota** para ordem do usuário e **Calcular rota otimizada** para menor distância total. Seletores de tipo/ordem e inversão saíram da UI por decisão do usuário; as capacidades do motor foram preservadas. A matriz histórica abaixo não deve ser confundida com os controles atuais. Ver evidências da rodada de circuitos em `UNIFICACAO.md`.
+
 
 Data: 04/11/2026. Referência de entrada: commit `449746b985e23ba2517df55ae67d98751c4e168c`.
 

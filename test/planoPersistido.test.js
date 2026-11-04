@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { criarArmazenamento, criarAdaptadorMemoria } from '../core/armazenamentoLocal.js';
+import { opcoesCalculoCircuito } from '../public/planejamentoCircuito.js';
 import { snapshotPlano, persistirPlanoAtivo, prepararPlanoSalvo, assinaturaPlanejador } from '../public/planoPersistido.js';
 import { prepararRetomadaSimulada } from '../core/recuperacaoColeta.js';
 import { podeCalcular, criarPonto, rotularPontos } from '../core/pontoTrajeto.js';
@@ -76,23 +77,21 @@ function hookAbrir(ctx){
  const text=appSource.slice(start,end).trim().replace(/^abrirPlanoSalvo/, 'function abrirPlanoSalvo').replace(/,$/,'');
  return new Function(...Object.keys(ctx),'let revisaoCalculo=0;'+text+';return abrirPlanoSalvo;')(...Object.values(ctx));
 }
-test('gancho real de abertura sincroniza radios, inversão, painel e navegação com o estado',()=>{
- const state={lista:{pontos:[]},circuito:false,modo:'usuario'},els={calc:{disabled:true},swap:{}},calls=[];
- const tipo=[{value:'ida',checked:true},{value:'circuito',checked:false}],modo=['usuario','otimizada','saida_curta'].map(value=>({value}));
- const abrir=hookAbrir({state,els,prepararPlanoSalvo,document:{querySelectorAll:s=>s.includes('tipo')?tipo:modo},stopPicking:()=>calls.push('stop'),renderizarPontos:()=>calls.push('render'),showRoute:r=>{state.rotaAtual=r;calls.push('show');}});
+test('gancho de abertura mantém circuitos e exige recálculo de plano legado aberto',()=>{
+ const state={lista:{pontos:[]},circuito:false,modo:'usuario'},els={calc:{disabled:true},calcOptimized:{},resultBlock:{},startNav:{}},calls=[];
+ const abrir=hookAbrir({state,els,prepararPlanoSalvo,stopPicking:()=>calls.push('stop'),renderizarPontos:()=>{state.lista.pontos.forEach((p,i)=>{p.tipo=i===0?'origem':'parada';});calls.push('render');},showRoute:r=>{state.rotaAtual=r;calls.push('show');},routeSource:{clear:()=>calls.push('clear')},window:{__app:{nav:{encerrar:()=>calls.push('encerrar')}}},setStatus:()=>{}});
  abrir({...rota(),circular:true,modo:'saida_curta'});
- assert.equal(state.circuito,true);assert.equal(state.lista.circuito,true);assert.equal(state.modo,'saida_curta');assert.equal(state.rotaAtual.ok,true);
- assert.equal(els.swap.disabled,true);assert.equal(tipo[0].checked,false);assert.equal(tipo[1].checked,true);assert.equal(modo[2].checked,true);assert.deepEqual(calls,['stop','render','show']);
- abrir(rota());assert.equal(els.swap.disabled,false);assert.equal(tipo[0].checked,true);assert.equal(state.lista.pontos.at(-1).tipo,'destino');
+ assert.equal(state.circuito,true);assert.equal(state.lista.circuito,true);assert.equal(state.modo,'saida_curta');assert.equal(state.rotaAtual.ok,true);assert.deepEqual(calls,['stop','render','show']);
+ assert.equal(abrir(rota()),null);assert.equal(state.circuito,true);assert.equal(state.rotaAtual,null);assert.equal(state.lista.pontos.at(-1).tipo,'parada');assert.equal(els.startNav.hidden,true);assert.ok(calls.includes('encerrar'));
  const before=state.lista;assert.throws(()=>abrir({...rota(),legs:[]}));assert.equal(state.lista,before);
 });
 function calculo(ctx){
- const start=appSource.indexOf('  async function calculate()');const end=appSource.indexOf('  function reasonTitle',start);
+ const start=appSource.indexOf('  async function calculate(');const end=appSource.indexOf('  function reasonTitle',start);
  return new Function(...Object.keys(ctx),'let revisaoCalculo=0;'+appSource.slice(start,end)+';return calculate;')(...Object.values(ctx));
 }
 function contextoCalculo(){
- const state={lista:{pontos:rota().pontos},modo:'usuario',circuito:false},pending=[],shown=[],errors=[],els={calc:{disabled:false}};
- const run=calculo({state,els,assinaturaPlanejador,podeCalcular:()=>({ok:true}),setStatus:()=>{},routeSource:{clear(){}},fetch:()=>new Promise((resolve,reject)=>pending.push({resolve,reject})),showRoute:r=>shown.push(r),showError:(...e)=>errors.push(e),desenharRota:()=>{},atualizarLegenda:()=>{},formatDistance:n=>({v:n,u:'m'}),reasonTitle:()=> 'erro'});
+ const state={lista:{pontos:rota().pontos},modo:'usuario',circuito:false},pending=[],shown=[],errors=[],els={calc:{disabled:false},calcOptimized:{disabled:false}};
+ const run=calculo({state,els,assinaturaPlanejador,opcoesCalculoCircuito,podeCalcular:()=>({ok:true}),setStatus:()=>{},routeSource:{clear(){}},fetch:()=>new Promise((resolve,reject)=>pending.push({resolve,reject})),showRoute:r=>shown.push(r),showError:(...e)=>errors.push(e),desenharRota:()=>{},atualizarLegenda:()=>{},formatDistance:n=>({v:n,u:'m'}),reasonTitle:()=> 'erro'});
  return {state,pending,shown,errors,els,run};
 }
 test('respostas de cálculos concorrentes fora de ordem não substituem a mais recente',async()=>{
@@ -117,7 +116,7 @@ function abrirUI(ctx){
 }
 test('abrirRota real aplica o plano ao estado completo em vez de apenas desenhar a geometria',async()=>{
  const r=repo();const registro=await persistirPlanoAtivo(r,{...rota(),modo:'saida_curta',circular:true});
- const state={lista:{pontos:[]},circuito:false,modo:'usuario'},els={calc:{},swap:{}};
+ const state={lista:{pontos:[]},circuito:false,modo:'usuario'},els={calc:{},calcOptimized:{}};
  const app={state,rotaAtual:null};
  app.abrirPlanoSalvo=hookAbrir({state,els,prepararPlanoSalvo,document:{querySelectorAll:()=>[]},stopPicking:()=>{},renderizarPontos:()=>{},showRoute:r=>{state.rotaAtual=r;app.rotaAtual=r;}});
  const abrir=abrirUI({app,armazenamento:r,assinaturaPlanejador,criarPonto,rotularPontos,mostrarAviso:()=>{},desenharPlanoSalvo:()=>{},planoSource:{getFeatures:()=>[]},status:()=>{}});
@@ -147,4 +146,11 @@ test('abrir um ID explícito preserva esse ID/versão mesmo com outro plano de c
 test('planejamento editado com rota visível obsoleta não inicia coleta silenciosamente sem vínculo',async()=>{
  const r=repo(),app={rotaAtual:null,state:{rotaAtual:rota(),lista:{pontos:rota().pontos},modo:'otimizada',circuito:false}};
  const c=contexto(r,app);await iniciarUI(c.ctx)();assert.equal(c.calls.length,0);assert.match(c.avisos[0],/planejamento foi alterado/);
+});
+
+test('plano antigo aberto recupera pontos mas não é desenhado nem anunciado como circuito pronto',async()=>{
+ const r=repo(),registro=await persistirPlanoAtivo(r,rota()),avisos=[];let desenhou=false,limpou=false;
+ const app={state:{lista:{pontos:[]},modo:'usuario',circuito:true},rotaAtual:null,abrirPlanoSalvo:()=>null};
+ const abrir=abrirUI({app,armazenamento:r,assinaturaPlanejador,mostrarAviso:t=>avisos.push(t),desenharPlanoSalvo:()=>{desenhou=true;},planoSource:{clear(){limpou=true;},getFeatures:()=>[]},status:()=>{}});
+ await abrir(registro.id);assert.equal(desenhou,false);assert.equal(limpou,true);assert.match(avisos[0],/Calcule o circuito/);
 });

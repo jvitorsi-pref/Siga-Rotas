@@ -12,7 +12,6 @@
    ========================================================================== */
 
 import {
-  criarListaPontos,
   adicionarPonto,
   removerPonto,
   atualizarPonto,
@@ -25,6 +24,7 @@ import {
   TIPOS,
   STATUS,
 } from '../core/pontoTrajeto.js';
+import { criarListaCircuito, opcoesCalculoCircuito, papelPontoCircuito } from './planejamentoCircuito.js';
 import { prepararPlanoSalvo, assinaturaPlanejador } from './planoPersistido.js';
 import { coresDosTrechos } from '../core/coresTrechos.js';
 import { criarInterfaceNavegacao } from './navegacaoUI.js?v=20261028-5';
@@ -61,11 +61,11 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     // ativa usa como plano; null quando não há rota
     rotaAtual: null,
     // lista de pontos do trajeto (origem, paradas, destino)
-    lista: criarListaPontos(),
+    lista: criarListaCircuito(),
     // modo da rota: 'otimizada' (menor rota) | 'usuario' (ordem definida)
-    modo: 'otimizada',
-    // tipo de trajeto: 'ida' (A → … → destino) | 'circuito' (A → … → A)
-    circuito: false,
+    modo: 'usuario',
+    // Todos os novos planejamentos são circuitos A → paradas → A.
+    circuito: true,
     // id do ponto que está sendo arrastado no painel (reordenação)
     arrastandoId: null,
     // trechos desenhados no mapa (um por trecho da rota): cada um pode ser
@@ -78,8 +78,6 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
 
   const els = {
     points: $('#points'),
-    modes: $('#modes'),
-    tipos: $('#tipos'),
     legendReturn: $('#legend-return'),
     legendDest: $('#legend-dest'),
     legendTrechos: $('#legend-trechos'),
@@ -89,7 +87,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     addStop: $('#add-stop'),
     dragHint: $('#drag-hint'),
     calc: $('#calc'),
-    swap: $('#swap'),
+    calcOptimized: $('#calc-optimized'),
     clear: $('#clear'),
     resultBlock: $('#result-block'),
     distanceValue: $('#distance-value'),
@@ -449,17 +447,11 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     return 'erro';
   }
 
-  /** Cria a lista inicial: origem (A) e destino (D). */
+  /** Cria A, origem e destino fixo do circuito. */
   function inicializarPontos() {
-    state.lista = criarListaPontos();
-    state.lista.circuito = state.circuito === true;
-    if (state.circuito) {
-      // no circuito basta a origem: as paradas são adicionadas depois
-      adicionarPonto(state.lista, {});
-    } else {
-      adicionarPonto(state.lista, {});
-      adicionarPonto(state.lista, {});
-    }
+    state.lista = criarListaCircuito();
+    state.circuito = true;
+    state.modo = 'usuario';
     renderizarPontos();
   }
 
@@ -471,14 +463,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     els.points.innerHTML = state.lista.pontos
       .map((p) => {
         const circuito = state.lista.circuito === true;
-        const papel =
-          p.tipo === TIPOS.ORIGEM
-            ? circuito
-              ? 'Origem · início e fim'
-              : 'Origem'
-            : p.tipo === TIPOS.DESTINO
-              ? 'Destino'
-              : 'Parada ' + p.rotulo;
+        const papel = papelPontoCircuito(p);
         const coord =
           p.latitude != null && p.longitude != null
             ? p.longitude.toFixed(6) + ', ' + p.latitude.toFixed(6)
@@ -864,7 +849,10 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
 
   let revisaoCalculo = 0;
   let assinaturaRota = null;
-  async function calculate() {
+  async function calculate(modo = 'usuario') {
+    state.modo = opcoesCalculoCircuito(modo).modo;
+    state.circuito = true;
+    state.lista.circuito = true;
     const revisao = ++revisaoCalculo;
     const assinatura = assinaturaPlanejador(state);
     state.rotaAtual = null;
@@ -876,6 +864,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     }
 
     els.calc.disabled = true;
+    els.calcOptimized.disabled = true;
     setStatus(state.circuito ? 'Calculando o circuito…' : 'Calculando a rota…', 'busy');
     routeSource.clear();
 
@@ -892,8 +881,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           pontos,
-          modo: state.modo,
-          circular: state.circuito === true,
+          ...opcoesCalculoCircuito(modo),
         }),
       });
       const data = await res.json();
@@ -920,7 +908,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
       showError('Falha de comunicação', err.message);
       setStatus('Falha ao consultar o servidor.', 'err');
     } finally {
-      if (revisao === revisaoCalculo) els.calc.disabled = false;
+      if (revisao === revisaoCalculo) { els.calc.disabled = false; els.calcOptimized.disabled = false; }
     }
   }
 
@@ -1458,53 +1446,8 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     }
   });
 
-  els.calc.addEventListener('click', calculate);
-
-  // seletor do TIPO de trajeto (ida e volta × circuito fechado)
-  els.tipos.addEventListener('change', (ev) => {
-    const alvo = ev.target;
-    if (!alvo || alvo.name !== 'tipo') return;
-    const circuito = alvo.value === 'circuito';
-    if (circuito === state.circuito) return;
-    state.circuito = circuito;
-    // a lista passa a descrever um circuito: some o card de destino e o
-    // retorno à origem passa a ser automático
-    state.lista.circuito = circuito;
-    rotularPontos(state.lista);
-    renderizarPontos();
-    atualizarLegenda();
-    // no circuito a origem é fixa: inverter não se aplica
-    els.swap.disabled = circuito;
-    els.swap.title = circuito
-      ? 'No circuito a origem é fixa: não há o que inverter'
-      : 'Trocar origem e destino';
-    routeSource.clear();
-    setStatus(
-      circuito
-        ? 'Circuito: a rota fechará na origem (A → paradas → A). O retorno é automático.'
-        : 'Ida e volta: a rota vai da origem ao destino.',
-      'idle',
-    );
-  });
-
-  // seletor de ordem do trajeto
-  els.modes.addEventListener('change', (ev) => {
-    const alvo = ev.target;
-    if (alvo && alvo.name === 'modo') {
-      state.modo =
-        alvo.value === 'otimizada'
-          ? 'otimizada'
-          : alvo.value === 'saida_curta'
-            ? 'saida_curta'
-            : 'usuario';
-      setStatus(
-        state.modo === 'otimizada'
-          ? 'Modo: menor rota (a ordem das paradas será otimizada).'
-          : 'Modo: ordem do usuário (A → B → C… como você informou).',
-        'idle'
-      );
-    }
-  });
+  els.calc.addEventListener('click', () => calculate('usuario'));
+  els.calcOptimized.addEventListener('click', () => calculate('otimizada'));
 
   els.addStop.addEventListener('click', () => {
     adicionarPonto(state.lista, {});
@@ -1517,21 +1460,6 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     );
     const ultima = els.points.querySelector('.point:last-child .point__codigo');
     if (ultima) ultima.focus();
-  });
-
-  els.swap.addEventListener('click', () => {
-    if (state.circuito) {
-      setStatus('No circuito a origem é fixa: não há o que inverter.', 'idle');
-      return;
-    }
-    const pontos = state.lista.pontos;
-    if (pontos.length < 2) return;
-    // inverte o trajeto inteiro: o destino vira origem e vice-versa, e as
-    // paradas intermediárias mantêm a ordem (C → B → A vira A → B → C)
-    pontos.reverse();
-    rotularPontos(state.lista);
-    renderizarPontos();
-    setStatus('Trajeto invertido.', 'idle');
   });
 
   els.clear.addEventListener('click', () => {
@@ -1572,14 +1500,22 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
       revisaoCalculo++; // uma resposta de rede antiga não pode substituir o plano aberto
       els.calc.disabled = false;
       stopPicking();
+      els.calcOptimized.disabled = false;
       state.lista = plano.lista;
-      state.circuito = plano.circuito;
+      state.lista.circuito = true;
+      state.circuito = true;
       state.modo = plano.modo;
-      document.querySelectorAll('input[name="tipo"]').forEach(r => { r.checked = r.value === (plano.circuito ? 'circuito' : 'ida'); });
-      document.querySelectorAll('input[name="modo"]').forEach(r => { r.checked = r.value === plano.modo; });
-      els.swap.disabled = plano.circuito;
-      els.swap.title = plano.circuito ? 'No circuito a origem é fixa: não há o que inverter' : 'Trocar origem e destino';
       renderizarPontos();
+      if (!plano.circuito) {
+        // Plano antigo aberto não contém retorno: nunca inventar a geometria faltante.
+        state.rotaAtual = null;
+        routeSource.clear();
+        els.resultBlock.hidden = true;
+        els.startNav.hidden = true;
+        window.__app.nav?.encerrar(true);
+        setStatus('Pontos recuperados. Calcule o circuito para incluir o retorno a A.', 'idle');
+        return null;
+      }
       showRoute(plano.rota);
       return plano.rota;
     },
@@ -1613,6 +1549,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
   }
 
   inicializarPontos();
+  atualizarLegenda();
   setStatus('Carregando a rede viária…', 'busy');
   loadNetwork();
 })();

@@ -19,7 +19,7 @@
    ficam no IndexedDB, que é do aplicativo (`core/armazenamentoLocal.js`).
    ========================================================================== */
 
-const CACHE = 'siga-rotas-v4';
+const CACHE = 'siga-rotas-v5';
 
 /** Arquivos do esqueleto do aplicativo. */
 const ESQUELETO = [
@@ -30,6 +30,7 @@ const ESQUELETO = [
   '/app.js',
   '/coletaUI.js',
   '/planoPersistido.js',
+  '/planejamentoCircuito.js',
   '/navegacaoUI.js',
   '/manifest.webmanifest',
   '/vendor/ol/ol.js',

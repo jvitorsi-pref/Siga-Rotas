@@ -12,7 +12,7 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 
 | Arquivo | Linhas | Situação | Exports / reexports |
 |---|---:|---|---|
-| `APK/App.js` | 856 | Alterado | — |
+| `APK/App.js` | 811 | Alterado | — |
 | `APK/android/app/src/main/AndroidManifest.xml` | 34 | Alterado | — |
 | `APK/app.json` | 45 | Alterado | — |
 | `APK/eas.json` | 27 | Igual à base | — |
@@ -20,8 +20,8 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `APK/package.json` | 33 | Alterado | — |
 | `APK/src/components/NavigationPanel.js` | 89 | Novo | NavigationPanel |
 | `APK/src/components/NetworkDiagnosticsPanel.js` | 272 | Igual à base | NetworkDiagnosticsPanel |
-| `APK/src/components/PointCard.js` | 342 | Alterado | PointCard |
-| `APK/src/components/RoadNetworkMap.js` | 355 | Alterado | RoadNetworkMap |
+| `APK/src/components/PointCard.js` | 339 | Alterado | PointCard |
+| `APK/src/components/RoadNetworkMap.js` | 351 | Alterado | RoadNetworkMap |
 | `APK/src/components/RouteResultPanel.js` | 355 | Alterado | RouteResultPanel |
 | `APK/src/core/config.js` | 3 | Alterado | → ../../../core/config.js |
 | `APK/src/core/enderecoDigital.js` | 3 | Alterado | → ../../../core/enderecoDigital.js |
@@ -43,6 +43,8 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `APK/src/theme/colors.js` | 33 | Igual à base | COLORS |
 | `APK/src/utils/controlesTrajeto.js` | 13 | Novo | podeDescerParada, inverterTrajeto |
 | `APK/src/utils/formatters.js` | 139 | Igual à base | numeroDe, parseCoords, formatCoord, formatDistanceParts, formatStreetLength, TEXTO_ESTADO, classeEstado, reasonTitle |
+| `APK/src/utils/planejamentoCircuito.js` | 2 | Novo | — |
+| `APK/test/circuitoUI.test.js` | 24 | Novo | — |
 | `APK/test/controlesTrajeto.test.js` | 33 | Novo | — |
 | `APK/test/enderecoDigital.test.js` | 514 | Igual à base | — |
 | `APK/test/fidelity.test.js` | 416 | Igual à base | — |
@@ -73,19 +75,22 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `core/spatialIndex.js` | 147 | Igual à base | GridIndex, computeBBox |
 | `core/wfs.js` | 528 | Igual à base | WfsError, parseServiceException, fetchNetwork, describeLayer, checkForUpdates |
 | `package.json` | 49 | Alterado | — |
-| `public/app.js` | 1619 | Alterado | — |
-| `public/coletaUI.js` | 977 | Alterado | criarInterfaceColeta |
-| `public/index.html` | 428 | Alterado | — |
+| `public/app.js` | 1556 | Alterado | — |
+| `public/coletaUI.js` | 982 | Alterado | criarInterfaceColeta |
+| `public/index.html` | 382 | Alterado | — |
 | `public/manifest.webmanifest` | 29 | Alterado | — |
 | `public/navegacaoUI.js` | 668 | Igual à base | criarInterfaceNavegacao |
+| `public/planejamentoCircuito.js` | 16 | Novo | criarListaCircuito, opcoesCalculoCircuito, papelPontoCircuito |
 | `public/planoPersistido.js` | 56 | Novo | assinaturaPlanejador, snapshotPlano, persistirPlanoAtivo, prepararPlanoSalvo |
 | `public/styles.css` | 1334 | Alterado | — |
-| `public/sw.js` | 107 | Alterado | — |
+| `public/sw.js` | 108 | Alterado | — |
 | `server/index.js` | 445 | Igual à base | parsePoint, createServer |
 | `server/networkService.js` | 561 | Igual à base | SNAPSHOT_PATH, NetworkService |
 | `test/api.test.js` | 166 | Igual à base | — |
 | `test/armazenamentoLocal.test.js` | 259 | Alterado | — |
 | `test/caminhoMinimo.test.js` | 376 | Igual à base | — |
+| `test/cenariosCircuito.js` | 45 | Novo | testarCircuitos |
+| `test/circuitoUI.test.js` | 26 | Novo | — |
 | `test/circular.test.js` | 400 | Igual à base | — |
 | `test/coleta.test.js` | 615 | Alterado | — |
 | `test/coresTrechos.test.js` | 213 | Igual à base | — |
@@ -98,7 +103,7 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `test/ordemParadas.test.js` | 450 | Igual à base | — |
 | `test/otimizacaoAuditoria.test.js` | 331 | Igual à base | — |
 | `test/paridade.test.js` | 50 | Novo | — |
-| `test/planoPersistido.test.js` | 151 | Novo | — |
+| `test/planoPersistido.test.js` | 157 | Novo | — |
 | `test/recuperacaoColeta.test.js` | 27 | Novo | — |
 | `test/router.test.js` | 508 | Igual à base | — |
 | `test/update.test.js` | 397 | Igual à base | — |
