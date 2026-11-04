@@ -1,0 +1,31 @@
+{
+  "name": "roteamento-viario-santo-andre-apk",
+  "version": "1.0.0",
+  "description": "Aplicativo React Native (Android APK) do simulador de rotas viárias a pé de Santo André/SP (camada siga:SIGA_EIXO_LOG_OFICIAL_E_NAO).",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "android:go": "expo start --android",
+    "prebuild:android": "expo prebuild --platform android",
+    "apk:debug": "cd android && gradlew.bat assembleDebug",
+    "apk:release": "cd android && gradlew.bat assembleRelease",
+    "eas:apk": "eas build --platform android --profile preview",
+    "test": "node --test test/",
+    "ios": "expo run:ios"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "1.23.1",
+    "expo": "~52.0.0",
+    "expo-asset": "~11.0.5",
+    "expo-status-bar": "~2.0.0",
+    "react": "18.3.1",
+    "react-native": "0.76.3",
+    "react-native-webview": "13.12.2"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@react-native-community/cli": "latest"
+  }
+}
