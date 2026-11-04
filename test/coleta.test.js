@@ -502,3 +502,113 @@ test('residência: permissão negada vira mensagem clara', async () => {
   assert.equal(r.motivo, 'PERMISSION_DENIED');
   assert.match(r.message, /Permissão/i);
 });
+
+test('regressão F02: adotar sessão restaura fonte, contadores e contexto da fábrica', async () => {
+  const armazenamento = criarArmazenamento({ adaptador: criarAdaptadorMemoria() });
+  await armazenamento.salvarSessao({ id: 'ses_sim', fonte: FONTE.SIMULACAO, estado: 'ativa', rotaId: 'r1', versaoRota: 3 });
+  await armazenamento.adicionarPontos('ses_sim', [
+    { id: 'p1', ordem: 4, latitude: -23.7, longitude: -46.5, timestamp: 1700000000000, simulado: true, fonte: FONTE.SIMULACAO, tipo: TIPO_PONTO.ESTIMADO },
+  ]);
+  let contexto;
+  const coleta = criarColeta({ armazenamento, criarFonte: (_handlers, ctx) => {
+    contexto = ctx;
+    return { iniciar() {}, parar() {} };
+  } });
+  await coleta.adota('ses_sim');
+  assert.equal(coleta.estado.fonte, FONTE.SIMULACAO);
+  assert.equal(coleta.estado.estimados, 1);
+  await coleta.retomar();
+  assert.equal(contexto.fonte, FONTE.SIMULACAO);
+  assert.equal(contexto.rotaId, 'r1');
+  assert.equal(contexto.versaoRota, 3);
+  const p = await coleta.registrarManual(posicao(-23.701, -46.5, { simulado: true }));
+  assert.equal(p.ponto.ordem, 5, 'a ordem não deve retroceder para o total de pontos');
+  await coleta.encerrar();
+});
+
+test('regressão F03: estimativa de lacuna simulada preserva a proveniência', async () => {
+  const { coleta, armazenamento, fonte } = setup();
+  await coleta.iniciar({ fonte: FONTE.SIMULACAO });
+  fonte.emitir(posicao(-23.7, -46.5, { simulado: true }));
+  fonte.emitir(posicao(-23.701, -46.5, { simulado: true, timestamp: 1700000060000 }));
+  await coleta.pausar();
+  const pontos = await armazenamento.listarPontos(coleta.estado.sessaoId);
+  assert.equal(pontos.length, 3);
+  assert.equal(pontos[1].tipo, TIPO_PONTO.ESTIMADO);
+  assert.ok(pontos.every(p => p.simulado && p.fonte === FONTE.SIMULACAO));
+});
+
+test('regressão F04: falha transitória de escrita retém lote e ordem sem duplicar', async () => {
+  const { coleta, fonte, armazenamento } = setup();
+  const salvar = armazenamento.adicionarPontos.bind(armazenamento);
+  let rejeitar;
+  let iniciar;
+  const iniciou = new Promise(resolve => { iniciar = resolve; });
+  let chamadas = 0;
+  armazenamento.adicionarPontos = async (...args) => {
+    if (++chamadas === 1) {
+      iniciar();
+      await new Promise((_resolve, reject) => { rejeitar = reject; });
+    }
+    return salvar(...args);
+  };
+  await coleta.iniciar();
+  fonte.emitir(posicao(-23.7, -46.5));
+  await iniciou;
+  fonte.emitir(posicao(-23.7005, -46.5, { timestamp: 1700000010000 }));
+  rejeitar(new Error('quota temporária'));
+  await coleta.pausar();
+  const pontos = await armazenamento.listarPontos(coleta.estado.sessaoId);
+  assert.deepEqual(pontos.map(p => p.ordem), [1, 2]);
+  assert.equal(new Set(pontos.map(p => p.id)).size, 2);
+  assert.ok(coleta.estado.avisos.some(a => /quota temporária/.test(a.texto)));
+});
+
+test('regressão F04: falha persistente não encerra nem descarta a coleta', async () => {
+  const { coleta, fonte, armazenamento } = setup({ lote: 10 });
+  const salvar = armazenamento.adicionarPontos.bind(armazenamento);
+  await coleta.iniciar();
+  fonte.emitir(posicao(-23.7, -46.5));
+  armazenamento.adicionarPontos = async () => { throw new Error('disco cheio'); };
+  await assert.rejects(() => coleta.encerrar(), /disco cheio/);
+  assert.notEqual(coleta.estado.estado, ESTADO_COLETA.ENCERRADA);
+  assert.equal(fonte.chamadas.paradas, 1, 'fonte é desligada antes de aguardar escrita');
+  armazenamento.adicionarPontos = salvar;
+  await coleta.encerrar();
+  assert.equal((await armazenamento.listarPontos(coleta.estado.sessaoId)).length, 1);
+});
+
+test('coleta: uma sessão pausada não pode ser substituída por nova sessão', async () => {
+  const { coleta, armazenamento } = setup();
+  await coleta.iniciar();
+  const id = coleta.estado.sessaoId;
+  await coleta.pausar();
+  assert.equal((await coleta.iniciar()).ok, false);
+  assert.equal(coleta.estado.sessaoId, id);
+  assert.equal((await armazenamento.listarSessoes()).length, 1);
+});
+
+for (const fonteSessao of [FONTE.GPS, FONTE.SIMULACAO]) {
+  test(`coleta recusa leitura e registro manual de fonte incompatível (${fonteSessao})`, async () => {
+    const { coleta, fonte, armazenamento } = setup();
+    await coleta.iniciar({ fonte: fonteSessao });
+    const p = posicao(-23.7, -46.5, { simulado: fonteSessao !== FONTE.SIMULACAO });
+    fonte.emitir(p);
+    assert.equal((await coleta.registrarManual(p)).motivo, 'FONTE_INCOMPATIVEL');
+    await coleta.encerrar();
+    assert.equal((await armazenamento.listarPontos(coleta.estado.sessaoId)).length, 0);
+  });
+}
+
+test('coleta: falha ao persistir encerramento mantém sessão recuperável e permite retry', async () => {
+  const { coleta, armazenamento, fonte } = setup();
+  await coleta.iniciar();
+  fonte.emitir(posicao(-23.7, -46.5));
+  const salvar = armazenamento.salvarSessao.bind(armazenamento);
+  armazenamento.salvarSessao = async () => { throw new Error('metadados indisponíveis'); };
+  await assert.rejects(() => coleta.encerrar(), /metadados indisponíveis/);
+  assert.equal(coleta.estado.estado, ESTADO_COLETA.PAUSADA);
+  armazenamento.salvarSessao = salvar;
+  assert.equal((await coleta.encerrar()).ok, true);
+  assert.equal((await armazenamento.listarPontos(coleta.estado.sessaoId)).length, 1);
+});

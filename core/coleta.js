@@ -217,6 +217,13 @@ export function criarColeta(opcoes = {}) {
       return null;
     }
 
+    if ((posicao.simulado === true) !== (fontePosicao === FONTE.SIMULACAO)) {
+      estado.descartados += 1;
+      avisar('Leitura descartada: a fonte não corresponde à sessão de coleta.', 'alerta');
+      emitir();
+      return null;
+    }
+
     const t = Number.isFinite(posicao.timestamp) ? posicao.timestamp : agora();
 
     // ── baixa precisão: fora do trajeto (contada e informada) ──
@@ -248,6 +255,7 @@ export function criarColeta(opcoes = {}) {
         const meio = {
           latitude: (anterior.lat + posicao.latitude) / 2,
           longitude: (anterior.lon + posicao.longitude) / 2,
+          simulado: fontePosicao === FONTE.SIMULACAO,
         };
         const tsMeio = anterior.t + (t - anterior.t) / 2;
         const p = montarPonto(meio, TIPO_PONTO.ESTIMADO, MOTIVO.LACUNA, ++contadorOrdem, tsMeio);
@@ -318,32 +326,40 @@ export function criarColeta(opcoes = {}) {
     return ponto;
   }
 
-  async function gravarBuffer() {
-    if (!estado.sessaoId || !buffer.length) return 0;
-    const lote = buffer;
-    buffer = [];
-    const n = await armazenamento.adicionarPontos(estado.sessaoId, lote);
-    return n;
+  // Todas as escritas (inclusive manuais, pausa e encerramento) usam a
+  // mesma fila. Retém o lote se a transação falhar; novos pontos continuam
+  // atrás dele, com os mesmos IDs e ordens para a próxima tentativa.
+  let filaGravacao = Promise.resolve();
+  function gravarBuffer() {
+    const tarefa = filaGravacao.then(async () => {
+      if (!estado.sessaoId || !buffer.length) return 0;
+      const lote = buffer;
+      const sessaoId = estado.sessaoId;
+      buffer = [];
+      try {
+        return await armazenamento.adicionarPontos(sessaoId, lote);
+      } catch (erro) {
+        buffer = [...lote, ...buffer];
+        throw erro;
+      }
+    });
+    // A falha não envenena a fila; o chamador ainda recebe a rejeição.
+    filaGravacao = tarefa.catch(() => {});
+    return tarefa;
   }
 
-  /**
-   * Grava o que está no buffer sem travar a leitura do GPS: as gravações
-   * ficam em fila (uma por vez) para que dois pontos nunca disputem a mesma
-   * transação do IndexedDB. Uma falha de gravação vira aviso — o ponto
-   * **não** é descartado silenciosamente.
-   */
-  let filaGravacao = Promise.resolve();
   function enfileirarGravacao() {
-    filaGravacao = filaGravacao
-      .then(() => gravarBuffer())
-      .catch((e) => {
-        avisar(descreverErroArmazenamento(e), 'alerta');
-      });
-    return filaGravacao;
+    return gravarBuffer().catch((e) => {
+      avisar(descreverErroArmazenamento(e), 'alerta');
+      emitir();
+    });
   }
 
   function criarFonteInterna(handlers) {
-    if (criarFonte) return criarFonte(handlers);
+    if (criarFonte) return criarFonte(handlers, {
+      fonte: fontePosicao, sessaoId: estado.sessaoId,
+      rotaId: estado.rotaId, versaoRota: estado.versaoRota,
+    });
     return criarFonteGPS(handlers);
   }
 
@@ -358,7 +374,7 @@ export function criarColeta(opcoes = {}) {
      *   - `rota`: { id, versao, modo, circular, sequencia } — o plano em uso
      */
     async iniciar(opcoes = {}) {
-      if (estado.estado === ESTADO_COLETA.ATIVA) {
+      if (estado.estado === ESTADO_COLETA.ATIVA || estado.estado === ESTADO_COLETA.PAUSADA) {
         return { ok: false, motivo: 'JA_ATIVA', message: 'Já existe uma coleta em andamento.' };
       }
       const rota = opcoes.rota || null;
@@ -384,6 +400,7 @@ export function criarColeta(opcoes = {}) {
       estado.estado = ESTADO_COLETA.ATIVA;
       estado.inicio = agora();
       estado.ultimoEm = agora();
+      estado.ultimaPosicao = null;
       estado.pontos = 0;
       estado.descartados = 0;
       estado.repetidos = 0;
@@ -421,10 +438,11 @@ export function criarColeta(opcoes = {}) {
       if (estado.estado !== ESTADO_COLETA.ATIVA) {
         return { ok: false, motivo: 'NAO_ATIVA' };
       }
-      await filaGravacao;
-      await gravarBuffer();
-      if (fonte && typeof fonte.parar === 'function') fonte.parar();
+      // Para a fonte antes de aguardar I/O, evitando novas leituras no flush.
       estado.estado = ESTADO_COLETA.PAUSADA;
+      if (fonte && typeof fonte.parar === 'function') fonte.parar();
+      emitir();
+      await gravarBuffer();
       await api._persistirEstado();
       emitir();
       return { ok: true };
@@ -435,8 +453,7 @@ export function criarColeta(opcoes = {}) {
       if (estado.estado !== ESTADO_COLETA.PAUSADA) {
         return { ok: false, motivo: 'NAO_PAUSADA' };
       }
-      estado.estado = ESTADO_COLETA.ATIVA;
-      await api._persistirEstado();
+      await gravarBuffer();
       if (!fonte) {
         fonte = criarFonteInterna({
           aoAtualizar: (p) => processarLeitura(p),
@@ -450,7 +467,16 @@ export function criarColeta(opcoes = {}) {
           aoEstado: () => emitir(),
         });
       }
-      fonte.iniciar();
+      estado.estado = ESTADO_COLETA.ATIVA;
+      try {
+        await api._persistirEstado();
+        fonte.iniciar();
+      } catch (erro) {
+        estado.estado = ESTADO_COLETA.PAUSADA;
+        if (fonte && typeof fonte.parar === 'function') fonte.parar();
+        emitir();
+        throw erro;
+      }
       emitir();
       return { ok: true };
     },
@@ -460,11 +486,19 @@ export function criarColeta(opcoes = {}) {
       if (estado.estado === ESTADO_COLETA.INATIVA || estado.estado === ESTADO_COLETA.ENCERRADA) {
         return { ok: false, motivo: 'NAO_ATIVA' };
       }
-      await filaGravacao;
+      const estavaAtiva = estado.estado === ESTADO_COLETA.ATIVA;
+      estado.estado = ESTADO_COLETA.PAUSADA;
+      if (estavaAtiva && fonte && typeof fonte.parar === 'function') fonte.parar();
+      emitir();
       await gravarBuffer();
-      if (fonte && typeof fonte.parar === 'function') fonte.parar();
       estado.estado = ESTADO_COLETA.ENCERRADA;
-      await api._persistirEstado();
+      try {
+        await api._persistirEstado();
+      } catch (erro) {
+        estado.estado = ESTADO_COLETA.PAUSADA;
+        emitir();
+        throw erro;
+      }
       emitir();
       return { ok: true, pontos: estado.pontos, distancia: estado.distancia };
     },
@@ -472,6 +506,10 @@ export function criarColeta(opcoes = {}) {
     /** Grava um ponto manualmente (quando o agente marca uma parada). */
     async registrarManual(posicao) {
       if (!estado.sessaoId) return { ok: false, motivo: 'SEM_SESSAO' };
+      if (!posicaoValida(posicao)) return { ok: false, motivo: 'COORDENADA_INVALIDA' };
+      if ((posicao.simulado === true) !== (fontePosicao === FONTE.SIMULACAO)) {
+        return { ok: false, motivo: 'FONTE_INCOMPATIVEL' };
+      }
       const ponto = montarPonto(posicao, TIPO_PONTO.MEDIDO, MOTIVO.MANUAL, ++contadorOrdem);
       buffer.push(ponto);
       estado.pontos += 1;
@@ -489,22 +527,36 @@ export function criarColeta(opcoes = {}) {
      * @param {string} sessaoId
      */
     async adota(sessaoId) {
+      if (estado.estado === ESTADO_COLETA.ATIVA || estado.estado === ESTADO_COLETA.PAUSADA) {
+        return { ok: false, motivo: 'JA_ATIVA' };
+      }
       const sessao = await armazenamento.obterSessao(sessaoId);
       if (!sessao) return { ok: false, motivo: 'NAO_ENCONTRADA' };
+      const pontos = await armazenamento.listarPontos(sessao.id);
+      fonte = null;
+      fontePosicao = sessao.fonte === FONTE.SIMULACAO ? FONTE.SIMULACAO : FONTE.GPS;
+      estado.fonte = fontePosicao;
       estado.sessaoId = sessao.id;
       estado.estado = ESTADO_COLETA.PAUSADA;
       estado.rotaId = sessao.rotaId || null;
       estado.versaoRota = sessao.versaoRota || null;
-      estado.pontos = sessao.pontos || 0;
+      estado.pontos = pontos.length;
+      estado.estimados = pontos.filter((p) => p.tipo === TIPO_PONTO.ESTIMADO).length;
+      estado.descartados = estado.repetidos = estado.baixaPrecisao = estado.saltos = 0;
+      estado.sinalPerdido = false;
+      estado.avisos = [];
       estado.inicio = sessao.iniciadaEm ? Date.parse(sessao.iniciadaEm) : null;
-      contadorOrdem = sessao.pontos || 0;
-      ultimoAceito = null;
+      contadorOrdem = pontos.reduce((max, p) => Math.max(max, p.ordem || 0), 0);
+      const ultimo = pontos.at(-1);
+      estado.ultimoEm = ultimo?.timestamp ?? null;
+      // Não apresentar uma posição antiga como leitura atual após reinício.
+      estado.ultimaPosicao = null;
+      ultimoAceito = ultimo ? { lat: ultimo.latitude, lon: ultimo.longitude, t: ultimo.timestamp } : null;
       buffer = [];
       // a distância é **recalculada** a partir dos pontos já gravados: o
       // valor guardado na sessão pode estar defasado (a sessão só é
       // gravada ao pausar/encerrar) e a medida do trajeto não pode depender
       // do momento em que o aplicativo caiu
-      const pontos = await armazenamento.listarPontos(sessao.id);
       estado.distancia = distanciaAcumulada(pontos);
       emitir();
       return { ok: true, sessao, pontos: pontos.length };

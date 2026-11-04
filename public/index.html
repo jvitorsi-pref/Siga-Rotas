@@ -10,7 +10,7 @@
   href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111827'/%3E%3Cpath d='M8 25V13l8-6 8 6v12' fill='none' stroke='%23ffc233' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='19' r='2.4' fill='%23ffc233'/%3E%3C/svg%3E"
 />
 <link rel="stylesheet" href="vendor/ol/ol.css" />
-<link rel="stylesheet" href="styles.css?v=20261029-1" />
+<link rel="stylesheet" href="styles.css?v=20261104-1" />
 <!--
   Aplicativo instalável (PWA): o manifesto habilita a instalação na tela
   inicial e o Service Worker (public/sw.js) permite abrir o aplicativo sem
@@ -19,20 +19,22 @@
   porque têm dados grandes e mudam com frequência.
 -->
 <link rel="manifest" href="manifest.webmanifest" />
-<meta name="theme-color" content="#111827" />
+<meta name="theme-color" content="#045127" />
 </head>
 <body>
-<div class="app">
+<div class="app" data-layout="split">
+  <header class="app-header">
+    <img src="logo-siga-app.png" width="163" height="40" alt="SIGA APP" />
+    <nav class="mode-switch" aria-label="Visualização">
+      <button type="button" data-layout-mode="split" aria-pressed="true">Dividido</button>
+      <button type="button" data-layout-mode="map" aria-pressed="false">Mapa</button>
+      <button type="button" data-layout-mode="panel" aria-pressed="false">Painel</button>
+    </nav>
+  </header>
 
   <!-- ─────────────── Painel lateral ─────────────── -->
   <aside class="panel">
-    <header class="panel__head">
-      <h1>Roteamento viário<br /><span>Santo André &middot; a pé</span></h1>
-      <p class="panel__sub">
-        Fonte: <code>siga:SIGA_EIXO_LOG_OFICIAL_E_NAO</code><br />
-        GeoServer da Prefeitura de Santo André
-      </p>
-    </header>
+
 
     <section class="block">
       <div class="block__title">Pontos do trajeto</div>
