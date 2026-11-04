@@ -1,0 +1,46 @@
+{
+  "name": "motor-roteamento-viario-santo-andre",
+  "version": "1.0.0",
+  "description": "Motor de roteamento viário (apenas a pé) para o município de Santo André/SP, alimentado pela camada WFS siga:SIGA_EIXO_LOG_OFICIAL_E_NAO do GeoServer da Prefeitura.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test test/",
+    "fetch": "node tools/fetch-network.js",
+    "inspect": "node tools/inspect-layer.js",
+    "report": "node tools/report-network.js",
+    "validate": "node tools/validate-routes.js 400",
+    "fidelity": "node tools/audit-fidelity.js 250",
+    "validar:mapa": "node tools/validar-mapa.mjs",
+    "diagnose": "node tools/diagnose-connections.js",
+    "updates": "node -e \"fetch('http://localhost:8080/api/updates',{method:'POST'}).then(r=>r.json()).then(j=>console.log(JSON.stringify(j,null,2)))\"",
+    "validar:paradas": "node tools/validar-paradas.mjs",
+    "validar:otimizacao": "node tools/validar-otimizacao.mjs",
+    "validar:circular": "node tools/validar-circular.mjs",
+    "validar:trechos": "node tools/validar-trechos-coloridos.mjs",
+    "validar:tsp": "node tools/validar-otimizacao.js 6",
+    "auditar:otimizacao": "node tools/auditar-otimizacao.js",
+    "auditar:caminho-minimo": "node tools/auditar-caminho-minimo.js 600",
+    "validar:navegacao": "node tools/validar-navegacao.mjs",
+    "validar:offline": "node tools/validar-offline.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "roteamento",
+    "santo-andre",
+    "geoserver",
+    "wfs",
+    "openlayers",
+    "grafos",
+    "a-star"
+  ],
+  "license": "MIT",
+  "private": true,
+  "devDependencies": {
+    "playwright": "^1.49.1"
+  }
+}

@@ -1,0 +1,770 @@
+/* ==========================================================================
+   Motor de roteamento viário de Santo André — interface
+   ========================================================================== */
+
+:root {
+  --bg: #0f1419;
+  --panel: #161b22;
+  --panel-2: #1c232c;
+  --border: #2a323d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #2f81f7;
+  --accent-strong: #1f6feb;
+  --origin: #2ea043;
+  --stop: #1f6feb;
+  --dest: #f85149;
+  --axis: #3f4a5a;
+  --axis-unofficial: #b45309;
+  --route: #ffc233;
+  --route-return: #ff9f1c;
+  --ok: #2ea043;
+  --warn: #d29922;
+  --err: #f85149;
+  --radius: 8px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ─────────────── Painel ─────────────── */
+
+.panel {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 0 0 12px;
+}
+
+.panel__head {
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #1b222b 0%, var(--panel) 100%);
+}
+.panel__head h1 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  line-height: 1.25;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.panel__head h1 span {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+}
+.panel__sub {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.panel__sub code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #b7c0ca;
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.block {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.block__title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 650;
+  margin-bottom: 12px;
+}
+
+/* Campos */
+
+.field { margin-bottom: 14px; }
+.field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 5px;
+  color: #c9d1d9;
+}
+.field__row { display: flex; gap: 6px; }
+.field input {
+  flex: 1;
+  min-width: 0;
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 9px 11px;
+  font-family: var(--mono);
+  font-size: 13px;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.field input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(47, 129, 247, .18);
+}
+.field input.invalid {
+  border-color: var(--err);
+  box-shadow: 0 0 0 3px rgba(248, 81, 73, .15);
+}
+.hint {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pick {
+  width: 40px;
+  flex: none;
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+  transition: all .15s;
+}
+.pick:hover { color: var(--text); border-color: #444c56; }
+.pick.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Botões */
+
+.btn {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, opacity .15s;
+}
+.btn + .btn { margin-top: 7px; }
+.btn:hover { background: #222a34; }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+.btn--primary {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #fff;
+  margin-top: 4px;
+}
+.btn--primary:hover { background: #2b7bf3; }
+.btn--ghost {
+  background: transparent;
+  font-weight: 500;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.btn--ghost:hover { color: var(--text); background: var(--panel-2); }
+
+/* Resultado */
+
+.distance {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 4px;
+}
+.distance__value {
+  font-size: 30px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+  color: var(--route);
+  font-variant-numeric: tabular-nums;
+}
+.distance__value.is-error { color: var(--err); font-size: 16px; }
+.distance__unit { font-size: 15px; color: var(--muted); font-weight: 500; }
+
+.stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 14px;
+  font-size: 12px;
+  margin: 10px 0;
+}
+.stats dt, .stats .k { color: var(--muted); }
+.stats dd, .stats .v {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: #c9d1d9;
+  text-align: right;
+  word-break: break-word;
+}
+.muted { color: var(--muted); }
+
+details { margin-top: 12px; }
+summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+  padding: 4px 0;
+}
+summary:hover { color: var(--text); }
+.count {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 7px;
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+.streets {
+  list-style: none;
+  counter-reset: s;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.streets li {
+  counter-increment: s;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 0;
+  border-bottom: 1px dashed #222a34;
+  font-size: 12.5px;
+}
+.streets li::before {
+  content: counter(s);
+  flex: none;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 10.5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+}
+.streets .name { flex: 1; }
+.streets .len {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.streets .tag {
+  font-size: 9.5px;
+  border-radius: 3px;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.streets .tag--unofficial { color: #d29922; border-color: #4a3a12; }
+
+/* Rodapé / status */
+
+.panel__foot {
+  margin-top: auto;
+  padding: 12px 20px 4px;
+  border-top: 1px solid var(--border);
+}
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.status::before {
+  content: "";
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.status--idle { color: var(--muted); }
+.status--busy { color: var(--accent); }
+.status--ok { color: var(--ok); }
+.status--err { color: var(--err); }
+.status--busy::before { animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+/* Mensagens de erro */
+
+.alert {
+  border-radius: var(--radius);
+  border: 1px solid;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  margin-bottom: 10px;
+}
+.alert--error { background: rgba(248,81,73,.09); border-color: rgba(248,81,73,.4); color: #ffb4ae; }
+.alert--warn  { background: rgba(210,153,34,.09); border-color: rgba(210,153,34,.4); color: #e3c168; }
+.alert--info  { background: rgba(47,129,247,.08); border-color: rgba(47,129,247,.35); color: #a5c9ff; }
+.alert strong { display: block; margin-bottom: 3px; }
+
+/* ─────────────── Mapa ─────────────── */
+
+.map-wrap { position: relative; }
+.map { position: absolute; inset: 0; background: #0d1117; }
+
+.ol-zoom { top: 12px; right: 12px; left: auto; }
+.ol-zoom button {
+  background: var(--panel) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  font-size: 17px !important;
+}
+.ol-zoom button:hover { background: var(--panel-2) !important; }
+.ol-attribution { display: none; }
+
+.legend {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  background: rgba(22, 27, 34, .93);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 11.5px;
+  display: grid;
+  gap: 6px;
+  backdrop-filter: blur(6px);
+  z-index: 5;
+}
+.legend div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #c9d1d9;
+  min-height: 14px;
+  line-height: 1.35;
+}
+.legend div[hidden] { display: none; }
+.swatch { width: 18px; height: 3px; border-radius: 2px; flex: none; }
+.swatch--axis {
+  background: var(--axis);
+  height: 3px;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9);
+}
+.swatch--axis-unofficial {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--axis-unofficial) 0 5px,
+    transparent 5px 8px
+  );
+  height: 3px;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9);
+}
+.swatch--route {
+  /* a rota é desenhada com UM TOM POR TRECHO: o degradê indica isso */
+  background: linear-gradient(
+    90deg,
+    #1d4ed8 0 33%,
+    #15803d 33% 66%,
+    #ea580c 66% 100%
+  );
+  height: 5px;
+  box-shadow: 0 0 0 1.5px rgba(23, 32, 48, 0.85);
+}
+.swatch--route-return {
+  height: 5px;
+  background: repeating-linear-gradient(
+    to right,
+    var(--route-return) 0 6px,
+    transparent 6px 10px
+  );
+  box-shadow: 0 0 0 1.5px rgba(23, 32, 48, 0.85);
+}
+/* swatch de UM trecho da rota (a cor vem do JS, via style inline) */
+.swatch--trecho {
+  height: 5px;
+  width: 18px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1.5px rgba(23, 32, 48, 0.85);
+}
+
+/* seção "Trechos da rota" da legenda — uma linha por trecho */
+.legend .legend__trechos {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, .12);
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 5px;
+  max-width: 260px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.legend .legend__trechos > .legend__titulo {
+  display: block;
+  font-size: 9.5px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: #8b949e;
+}
+#legend-trechos-lista {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+#legend-trechos-lista > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.legend__retorno {
+  font-size: 9.5px;
+  color: #8b949e;
+  font-style: italic;
+}
+
+.swatch--origin { background: var(--origin); height: 10px; width: 10px; border-radius: 50%; }
+.swatch--stop { background: var(--stop); height: 10px; width: 10px; border-radius: 50%; }
+.swatch--dest { background: var(--dest); height: 10px; width: 10px; border-radius: 50%; }
+
+.pick-banner {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(22, 27, 34, .95);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 9px 14px;
+  font-size: 13px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  backdrop-filter: blur(6px);
+}
+/* o atributo `hidden` precisa vencer o `display:flex` do banner */
+.pick-banner[hidden] { display: none; }
+
+.pick-banner button {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 11.5px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.pick-banner button:hover { color: var(--text); border-color: #444c56; }
+
+.map--picking { cursor: crosshair; }
+
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .panel { max-height: 48vh; border-right: none; border-bottom: 1px solid var(--border); }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MAPA-BASE CLAREADO
+   O OpenLayers desenha os tiles do OSM num <canvas> dentro do container
+   da camada. Um filtro CSS nesse container clareia e dessatura o mapa-base
+   sem depender de nenhum servidor de tiles externo — e o resultado é uma
+   base neutra, sobre a qual a rede viária e a rota ganham contraste.
+   ══════════════════════════════════════════════════════════════════════ */
+.basemap {
+  filter: grayscale(0.82) brightness(1.19) contrast(0.8) saturate(0.45);
+  opacity: 0.95;
+}
+
+
+/* ─────────────── Lista de pontos do trajeto ─────────────── */
+
+.points {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.point {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--stop);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  padding: 8px 9px 9px;
+}
+.point--origem { border-left-color: var(--origin); }
+.point--destino { border-left-color: var(--dest); }
+
+.point__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+}
+
+.point__badge {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--stop);
+}
+.point--origem .point__badge { background: var(--origin); }
+.point--destino .point__badge { background: var(--dest); }
+
+.point__role {
+  flex: 1;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.point__actions { display: flex; gap: 3px; flex: none; }
+
+.mini {
+  border: 1px solid var(--border);
+  background: #222a34;
+  color: var(--muted);
+  border-radius: 5px;
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 4px 5px;
+  cursor: pointer;
+  font-family: var(--mono);
+}
+.mini:hover:not(:disabled) { color: var(--text); border-color: #4b5563; }
+.mini:disabled { opacity: .35; cursor: not-allowed; }
+.mini--danger:hover:not(:disabled) { color: #fff; background: var(--dest); border-color: var(--dest); }
+
+.point__row { display: flex; gap: 6px; margin-top: 5px; }
+
+.point__row input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #11161d;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.point__row input:focus { outline: none; border-color: var(--accent); }
+.point__codigo { text-transform: uppercase; letter-spacing: .04em; }
+
+.point__estado {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.point__estado--ok { color: var(--ok); }
+.point__estado--erro { color: var(--err); }
+.point__estado--idle { color: var(--muted); }
+
+.btn--block { display: block; width: 100%; }
+
+/* ─────────────── Trechos da rota (A → B → C → D) ─────────────── */
+
+.legs { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+
+.leg {
+  display: grid;
+  grid-template-columns: 14px 22px 14px 22px 1fr;
+  align-items: baseline;
+  gap: 4px;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-size: 12px;
+}
+/* chip com a cor do trecho (a mesma do mapa e da legenda) */
+.leg__cor {
+  width: 12px;
+  height: 5px;
+  border-radius: 2px;
+  align-self: center;
+  box-shadow: 0 0 0 1.5px rgba(23, 32, 48, 0.75);
+}
+.leg__de, .leg__para {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--accent);
+}
+.leg__seta { color: var(--muted); text-align: center; }
+.leg__dist { font-family: var(--mono); font-size: 11.5px; text-align: right; }
+.leg__acesso {
+  grid-column: 1 / -1;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+
+/* ─────────────── Seletor de ordem do trajeto ─────────────── */
+
+.modes {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 9px 9px;
+  margin: 0 0 10px;
+  background: var(--panel-2);
+}
+.modes legend {
+  font-size: 10.5px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding: 0 4px;
+}
+
+.mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 4px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.mode:hover { background: #222a34; }
+.mode input { margin-top: 2px; accent-color: var(--accent); }
+.mode span { display: flex; flex-direction: column; line-height: 1.3; }
+.mode b { font-size: 12.5px; font-weight: 600; }
+.mode i {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+/* ─────────────── Dica de arraste ─────────────── */
+
+.drag-hint {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 14px;
+  background: rgba(16, 22, 30, .88);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 11.5px;
+  pointer-events: none;
+  box-shadow: 0 2px 12px rgba(0,0,0,.35);
+}
+.drag-hint b { color: var(--route); font-family: var(--mono); }
+.drag-hint[hidden] { display: none; }
+
+
+/* ─────────────── Arrastar a ordem dos pontos no painel ─────────────── */
+
+.point__grip {
+  width: 12px;
+  min-width: 12px;
+  height: 18px;
+  margin-right: 2px;
+  /* área de clique maior do que a alça desenhada (sem alterar o layout) */
+  padding: 9px 7px;
+  margin-top: -9px;
+  margin-bottom: -9px;
+  margin-left: -7px;
+  cursor: grab;
+  opacity: .55;
+  /* "empunhadura" desenhada em CSS (sem depender de fonte de ícones) */
+  background-image: radial-gradient(circle, currentColor 1.1px, transparent 1.2px);
+  background-size: 5px 5px;
+  background-position: 1px 1px;
+  align-self: center;
+}
+.point[data-arrastavel] .point__grip:hover { opacity: 1; }
+.point__grip--fixo { cursor: default; opacity: .12; }
+
+.point--arrastando { opacity: .45; }
+.point--arrastando .point__grip { cursor: grabbing; }
+
+/* linha sobre a qual a parada será solta */
+.point--alvo {
+  border-color: var(--route) !important;
+  box-shadow: 0 0 0 1px var(--route), 0 2px 10px rgba(0, 0, 0, .35);
+}
+.point--alvo::after {
+  content: 'soltar aqui';
+  position: absolute;
+  right: 10px;
+  top: 8px;
+  font-size: 9.5px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #12181f;
+  background: var(--route);
+  border-radius: 4px;
+  padding: 1px 6px;
+  pointer-events: none;
+}
+.point { position: relative; }
+
+.modes__nota {
+  margin: 6px 2px 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+}
+.modes__nota b { color: var(--text); font-weight: 600; }
+
+/* ─────────────── Trecho de retorno (rota circular) ─────────────── */
+
+.leg--retorno {
+  border-left: 3px dashed var(--route-return);
+  padding-left: 9px;
+  background: rgba(255, 159, 28, .07);
+}
+.leg--retorno .leg__de,
+.leg--retorno .leg__para { color: var(--route-return); font-weight: 600; }
+
+.point__grip[draggable='true'] { cursor: grab; }
+.point__grip[draggable='true']:focus-visible {
+  outline: 2px solid var(--route);
+  outline-offset: 2px;
+  opacity: 1;
+}

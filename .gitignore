@@ -1,0 +1,10 @@
+node_modules/
+.DS_Store
+*.log
+# snapshots temporários dos testes
+data/test-auto-update-*.json
+data/test-auto-update.snapshot.json
+
+# o snapshot da rede é grande (2,6 MB) e pode ser regerado com "npm run fetch".
+# Descomente a linha abaixo se preferir versioná-lo:
+# data/network.snapshot.json

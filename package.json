@@ -1,0 +1,48 @@
+{
+  "name": "siga-rodada-8094",
+  "version": "1.0.0",
+  "description": "Cópia independente do projeto SIGA no estado da rodada 8094. Não altera o projeto principal.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js --port 8094",
+    "dev": "node --watch server/index.js --port 8094",
+    "test": "node --test test/",
+    "fetch": "node tools/fetch-network.js",
+    "inspect": "node tools/inspect-layer.js",
+    "report": "node tools/report-network.js",
+    "validate": "node tools/validate-routes.js 400",
+    "fidelity": "node tools/audit-fidelity.js 250",
+    "validar:mapa": "node tools/validar-mapa.mjs",
+    "diagnose": "node tools/diagnose-connections.js",
+    "updates": "node -e \"fetch('http://localhost:8080/api/updates',{method:'POST'}).then(r=>r.json()).then(j=>console.log(JSON.stringify(j,null,2)))\"",
+    "validar:paradas": "node tools/validar-paradas.mjs",
+    "validar:otimizacao": "node tools/validar-otimizacao.mjs",
+    "validar:circular": "node tools/validar-circular.mjs",
+    "validar:trechos": "node tools/validar-trechos-coloridos.mjs",
+    "validar:tsp": "node tools/validar-otimizacao.js 6",
+    "auditar:otimizacao": "node tools/auditar-otimizacao.js",
+    "auditar:ordem": "node tools/auditar-ordem-paradas.js",
+    "auditar:caminho-minimo": "node tools/auditar-caminho-minimo.js 600",
+    "validar:navegacao": "node tools/validar-navegacao.mjs",
+    "validar:offline": "node tools/validar-offline.mjs",
+    "validar:saida-curta": "node tools/validar-saida-curta.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "roteamento",
+    "santo-andre",
+    "geoserver",
+    "wfs",
+    "openlayers",
+    "grafos",
+    "a-star"
+  ],
+  "license": "MIT",
+  "private": true,
+  "devDependencies": {
+    "playwright": "^1.49.1"
+  }
+}

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Roteamento viário de Santo André — a pé</title>
+<!-- favicon embutido (evita o 404 no console do navegador) -->
+<link
+  rel="icon"
+  href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111827'/%3E%3Cpath d='M8 25V13l8-6 8 6v12' fill='none' stroke='%23ffc233' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='19' r='2.4' fill='%23ffc233'/%3E%3C/svg%3E"
+/>
+<link rel="stylesheet" href="vendor/ol/ol.css" />
+<link rel="stylesheet" href="styles.css?v=20261021" />
+</head>
+<body>
+<div class="app">
+
+  <!-- ─────────────── Painel lateral ─────────────── -->
+  <aside class="panel">
+    <header class="panel__head">
+      <h1>Roteamento viário<br /><span>Santo André &middot; a pé</span></h1>
+      <p class="panel__sub">
+        Fonte: <code>siga:SIGA_EIXO_LOG_OFICIAL_E_NAO</code><br />
+        GeoServer da Prefeitura de Santo André
+      </p>
+    </header>
+
+    <section class="block">
+      <div class="block__title">Pontos da rota</div>
+
+      <div class="field" id="field-origin">
+        <label for="origin">Origem</label>
+        <div class="field__row">
+          <input id="origin" type="text" inputmode="decimal" autocomplete="off"
+                 placeholder="-46,5450 , -23,6600" />
+          <button type="button" class="pick" data-pick="origin" title="Selecionar no mapa">🗺</button>
+        </div>
+        <small class="hint">Longitude, latitude (decimal). Também é possível clicar no mapa.</small>
+      </div>
+
+      <div class="field" id="field-destination">
+        <label for="destination">Destino</label>
+        <div class="field__row">
+          <input id="destination" type="text" inputmode="decimal" autocomplete="off"
+                 placeholder="-46,5200 , -23,6500" />
+          <button type="button" class="pick" data-pick="destination" title="Selecionar no mapa">🗺</button>
+        </div>
+        <small class="hint">Longitude, latitude (decimal). Também é possível clicar no mapa.</small>
+      </div>
+
+      <button id="calc" class="btn btn--primary" type="button">Calcular rota</button>
+      <button id="swap" class="btn btn--ghost" type="button" title="Trocar origem e destino">⇅ Inverter</button>
+      <button id="clear" class="btn btn--ghost" type="button">Limpar</button>
+    </section>
+
+    <section class="block block--result" id="result-block" hidden>
+      <div class="block__title">Resultado</div>
+
+      <div class="distance" id="distance">
+        <span class="distance__value" id="distance-value">—</span>
+        <span class="distance__unit" id="distance-unit"></span>
+      </div>
+
+      <div class="stats" id="stats"></div>
+
+      <details id="streets-details" open>
+        <summary>Logradouros percorridos <span class="count" id="streets-count"></span></summary>
+        <ol class="streets" id="streets"></ol>
+      </details>
+    </section>
+
+    <section class="block">
+      <div class="block__title">Rede viária</div>
+      <div class="stats" id="network-stats"><span class="muted">Carregando…</span></div>
+      <details>
+        <summary>Diagnóstico do grafo</summary>
+        <div class="stats" id="diagnostics"></div>
+      </details>
+    </section>
+
+    <footer class="panel__foot">
+      <span id="status" class="status status--idle">Pronto</span>
+    </footer>
+  </aside>
+
+  <!-- ─────────────── Mapa ─────────────── -->
+  <main class="map-wrap">
+    <div id="map" class="map"></div>
+
+    <div class="legend">
+      <div><span class="swatch swatch--axis"></span> Eixo viário oficial</div>
+      <div><span class="swatch swatch--axis-unofficial"></span> Eixo não oficializado</div>
+      <div><span class="swatch swatch--route"></span> Rota calculada</div>
+      <div><span class="swatch swatch--origin"></span> Origem</div>
+      <div><span class="swatch swatch--dest"></span> Destino</div>
+    </div>
+
+    <div class="pick-banner" id="pick-banner" hidden>
+      Clique no mapa para definir a <strong id="pick-label">origem</strong>
+      <button type="button" id="pick-cancel">Cancelar</button>
+    </div>
+  </main>
+</div>
+
+<script src="vendor/ol/ol.js"></script>
+<script src="app.js?v=20261021"></script>
+</body>
+</html>

@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Roteamento viário de Santo André — a pé</title>
+<!-- favicon embutido (evita o 404 no console do navegador) -->
+<link
+  rel="icon"
+  href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111827'/%3E%3Cpath d='M8 25V13l8-6 8 6v12' fill='none' stroke='%23ffc233' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='19' r='2.4' fill='%23ffc233'/%3E%3C/svg%3E"
+/>
+<link rel="stylesheet" href="vendor/ol/ol.css" />
+<link rel="stylesheet" href="styles.css?v=20261028-5" />
+</head>
+<body>
+<div class="app">
+
+  <!-- ─────────────── Painel lateral ─────────────── -->
+  <aside class="panel">
+    <header class="panel__head">
+      <h1>Roteamento viário<br /><span>Santo André &middot; a pé</span></h1>
+      <p class="panel__sub">
+        Fonte: <code>siga:SIGA_EIXO_LOG_OFICIAL_E_NAO</code><br />
+        GeoServer da Prefeitura de Santo André
+      </p>
+    </header>
+
+    <section class="block">
+      <div class="block__title">Pontos do trajeto</div>
+
+      <!--
+        Lista dinâmica de pontos: A (origem), B, C, … (paradas) e o destino.
+        Cada ponto aceita o Endereço Digital (CEP Digital de Santo André) ou,
+        como alternativa, coordenadas decimais / seleção no mapa.
+        No modo "circuito" não há card de destino: o retorno à origem é
+        automático.
+      -->
+      <div id="points" class="points"></div>
+
+      <!--
+        Tipo de trajeto:
+          • "Ida e volta"   — A → B → C → D (destino livre);
+          • "Circuito"      — A → B → C → D → A (linha de ônibus): o
+            retorno à origem é calculado automaticamente.
+      -->
+      <fieldset class="modes" id="tipos">
+        <legend>Tipo de trajeto</legend>
+        <label class="mode">
+          <input type="radio" name="tipo" value="ida" checked />
+          <span><b>Ida e volta</b><i>A → paradas → destino</i></span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="tipo" value="circuito" />
+          <span><b>Circuito</b><i>A → paradas → A (linha de ônibus)</i></span>
+        </label>
+      </fieldset>
+
+      <!--
+        Duas opções de rota:
+          • "Menor rota"      — a ordem de visita é OTIMIZADA (TSP sobre o
+            fecho métrico da rede);
+          • "Ordem do usuário" — a sequência dos pontos é respeitada como o
+            usuário informou.
+        A prioridade vem do escopo: por padrão a aplicação entrega a menor
+        rota (pedido explícito), e a ordem do usuário continua disponível.
+      -->
+      <fieldset class="modes" id="modes">
+        <legend>Ordem do trajeto</legend>
+        <label class="mode">
+          <input type="radio" name="modo" value="otimizada" checked />
+          <span><b>Menor rota total</b><i>minimiza a distância total do circuito, com o retorno à origem (TSP)</i></span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="modo" value="usuario" />
+          <span><b>Ordem do usuário</b><i>respeita a sequência A → B → C…</i></span>
+        </label>
+        <p class="modes__nota" id="modes-nota">
+          Na <b>menor rota total</b> a ordem final é recalculada para somar a
+          menor distância possível — incluindo o <b>retorno à origem</b> no
+          circuito; na <b>ordem do usuário</b> ela é exatamente a que você
+          arrastar aqui.
+        </p>
+      </fieldset>
+
+      <button id="add-stop" class="btn btn--ghost btn--block" type="button">+ Adicionar parada</button>
+      <button id="calc" class="btn btn--primary btn--block" type="button">Calcular rota</button>
+      <button id="swap" class="btn btn--ghost btn--block" type="button" title="Trocar origem e destino">⇅ Inverter</button>
+      <button id="clear" class="btn btn--ghost btn--block" type="button">Limpar</button>
+    </section>
+
+    <section class="block block--result" id="result-block" hidden>
+      <div class="block__title">Resultado</div>
+
+      <div class="distance" id="distance">
+        <span class="distance__value" id="distance-value">—</span>
+        <span class="distance__unit" id="distance-unit"></span>
+      </div>
+
+      <div id="legs" class="legs"></div>
+
+      <!--
+        Nota compacta do trajeto: o método de otimização continua sendo
+        declarado (a otimização é exata até 16 paradas e heurística acima
+        disso — nunca se promete o ótimo global quando a heurística foi
+        usada) e a economia sobre a ordem do usuário é informada.
+      -->
+      <div class="route-note" id="route-note" hidden></div>
+
+      <!--
+        Navegação ativa: o trajeto percorrido é exatamente o que foi
+        calculado acima — a navegação acompanha a posição sobre a
+        geometria já desenhada, sem recalcular a rota.
+
+        "GPS real" usa a localização do aparelho (o navegador pede a
+        permissão). "Simulação" é o MODO DE TESTE do desenvolvedor: a
+        posição é fictícia, calculada sobre a própria geometria da rota, e
+        a tela fica permanentemente marcada como simulada.
+      -->
+      <fieldset class="modes modes--nav" id="nav-modos">
+        <legend>Fonte da posição</legend>
+        <label class="mode">
+          <input type="radio" name="navmodo" value="gps" checked />
+          <span><b>GPS real</b><i>localização do aparelho (o navegador pede a permissão)</i></span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="navmodo" value="simulacao" />
+          <span><b>Simulação</b><i>modo de teste do desenvolvedor — a posição é fictícia</i></span>
+        </label>
+        <p class="modes__nota">
+          As regras de navegação (progresso sobre a geometria, chegada,
+          desvio) são as mesmas nos dois modos; só a origem da posição
+          muda. Na simulação a tela fica marcada com <b>MODO DE TESTE</b>.
+        </p>
+      </fieldset>
+
+      <button id="start-nav" class="btn btn--nav btn--block" type="button" hidden>
+        &#9654; Começar trajeto
+      </button>
+
+      <details id="streets-details" open>
+        <summary>Logradouros percorridos <span class="count" id="streets-count"></span></summary>
+        <ol class="streets" id="streets"></ol>
+      </details>
+    </section>
+
+    <footer class="panel__foot">
+      <span id="status" class="status status--idle">Pronto</span>
+    </footer>
+  </aside>
+
+  <!-- ─────────────── Mapa ─────────────── -->
+  <main class="map-wrap">
+    <div id="map" class="map"></div>
+
+    <div class="legend">
+      <div><span class="swatch swatch--axis"></span> Eixo viário oficial</div>
+      <div><span class="swatch swatch--axis-unofficial"></span> Eixo não oficializado</div>
+      <div><span class="swatch swatch--route"></span> Rota calculada</div>
+      <div id="legend-return" hidden><span class="swatch swatch--route-return"></span> Retorno à origem</div>
+      <div><span class="swatch swatch--origin"></span> Origem (A)</div>
+      <div><span class="swatch swatch--stop"></span> Parada intermediária</div>
+      <div id="legend-dest"><span class="swatch swatch--dest"></span> Destino</div>
+      <div id="legend-trechos" class="legend__trechos" hidden>
+        <div class="legend__titulo">
+          <span>Trechos da rota</span>
+          <span class="legend__cont" id="legend-cont"></span>
+        </div>
+        <div id="legend-trechos-lista"></div>
+        <button type="button" class="legend__restaurar" id="legend-restaurar" hidden>
+          Mostrar todos
+        </button>
+        <div class="legend__dica">clique num trecho para ocultá-lo</div>
+      </div>
+    </div>
+
+    <div class="drag-hint" id="drag-hint">
+      Arraste as paradas <b>B</b>, <b>C</b>… no painel para mudar a ordem da rota
+    </div>
+
+    <div class="pick-banner" id="pick-banner" hidden>
+      Clique no mapa para definir a <strong id="pick-label">origem</strong>
+      <button type="button" id="pick-cancel">Cancelar</button>
+    </div>
+
+    <!--
+      Painel da navegação ativa: posição atual, instrução do momento,
+      próxima parada, distância restante e progresso do trajeto.
+    -->
+    <div class="nav-panel" id="nav-panel" hidden>
+      <div class="nav-panel__head">
+        <span class="nav-badge" id="nav-badge">GPS real</span>
+        <span class="nav-panel__estado" id="nav-estado">Em navegação</span>
+        <button type="button" class="nav-panel__x" id="nav-fechar" title="Encerrar a navegação">&#10005;</button>
+      </div>
+
+      <div class="nav-panel__instr" id="nav-instr">&mdash;</div>
+      <div class="nav-panel__sec" id="nav-secundario"></div>
+
+      <div class="nav-panel__progress">
+        <div class="nav-panel__bar"><div class="nav-panel__fill" id="nav-progress"></div></div>
+        <div class="nav-panel__ptext">
+          <span id="nav-progresso">0%</span>
+          <span id="nav-restante">&mdash;</span>
+        </div>
+      </div>
+
+      <dl class="nav-panel__grid">
+        <div><dt>Posição</dt><dd id="nav-posicao">&mdash;</dd></div>
+        <div><dt>Precisão</dt><dd id="nav-precisao">&mdash;</dd></div>
+        <div><dt>Próxima parada</dt><dd id="nav-parada">&mdash;</dd></div>
+        <div><dt>Trecho</dt><dd id="nav-trecho">&mdash;</dd></div>
+      </dl>
+
+      <div class="nav-panel__alerta" id="nav-alerta" hidden></div>
+
+      <div class="nav-panel__botoes">
+        <button type="button" class="mini" id="nav-pausar">Pausar</button>
+        <button type="button" class="mini" id="nav-centralizar">Centralizar</button>
+        <button type="button" class="mini" id="nav-encerrar">Encerrar</button>
+      </div>
+    </div>
+
+    <!-- Faixa permanente enquanto a posição é SIMULADA. -->
+    <div class="sim-banner" id="sim-banner" hidden>
+      <b>MODO DE TESTE</b> &mdash; a posi&ccedil;&atilde;o exibida &eacute; <b>SIMULADA</b>, n&atilde;o o GPS real
+    </div>
+
+    <!--
+      Controles do simulador (modo de teste do desenvolvedor): iniciar,
+      pausar, reiniciar, passo a passo, velocidade, ponto de início e
+      cenários (desvio, perda de sinal, recuperação, posição manual).
+    -->
+    <div class="sim-panel" id="sim-panel" hidden>
+      <div class="sim-panel__head"><b>Simulador &middot; modo de teste</b></div>
+      <div class="sim-panel__row">
+        <button type="button" class="mini" id="sim-iniciar">Iniciar</button>
+        <button type="button" class="mini" id="sim-pausar">Pausar</button>
+        <button type="button" class="mini" id="sim-reiniciar">Reiniciar</button>
+        <button type="button" class="mini" id="sim-voltar" title="Voltar 100 m">&#9664; 100 m</button>
+        <button type="button" class="mini" id="sim-avancar" title="Avançar 100 m">100 m &#9654;</button>
+      </div>
+      <div class="sim-panel__row">
+        <label class="sim-panel__campo">Velocidade
+          <select id="sim-velocidade"></select>
+        </label>
+        <label class="sim-panel__campo">Come&ccedil;ar em
+          <select id="sim-inicio"></select>
+        </label>
+      </div>
+      <div class="sim-panel__row">
+        <button type="button" class="mini" id="sim-desvio">Cen&aacute;rio: desvio</button>
+        <button type="button" class="mini" id="sim-perder">Cen&aacute;rio: perder sinal</button>
+        <button type="button" class="mini" id="sim-recuperar">Cen&aacute;rio: recuperar</button>
+      </div>
+      <div class="sim-panel__row">
+        <input id="sim-lat" class="sim-panel__input" placeholder="lat" inputmode="decimal" />
+        <input id="sim-lon" class="sim-panel__input" placeholder="lon" inputmode="decimal" />
+        <button type="button" class="mini" id="sim-manual">Posi&ccedil;&atilde;o manual</button>
+      </div>
+      <div class="sim-panel__estado" id="sim-estado"></div>
+    </div>
+  </main>
+</div>
+
+<script src="vendor/ol/ol.js"></script>
+<script type="module" src="app.js?v=20261028-5"></script>
+</body>
+</html>
