@@ -12,6 +12,7 @@ import {
   Text,
   TouchableOpacity,
 } from 'react-native';
+import { resumoRota } from '../utils/resumoRota.js';
 import { formatDistanceParts, formatStreetLength } from '../utils/formatters.js';
 import { COLORS } from '../theme/colors';
 
@@ -50,6 +51,8 @@ export function RouteResultPanel({ routeResult, routeError, routeSegments = [], 
         <Text style={styles.distanceValue}>{dist.v}</Text>
         <Text style={styles.distanceUnit}>{dist.u}</Text>
       </View>
+
+      <Text style={styles.routeNote}>{resumoRota(routeResult)}</Text>
 
       {/* Métricas gerais do trajeto */}
       <View style={styles.statsGrid}>
@@ -160,6 +163,7 @@ function StatRow({ label, value }) {
 }
 
 const styles = StyleSheet.create({
+  routeNote: { color: COLORS.muted, fontSize: 11.5, lineHeight: 17, marginVertical: 8, padding: 8, borderLeftWidth: 2, borderLeftColor: COLORS.border, backgroundColor: COLORS.panel2 },
   block: {
     paddingVertical: 14,
     paddingHorizontal: 16,

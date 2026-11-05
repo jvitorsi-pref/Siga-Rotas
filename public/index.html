@@ -4,11 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Roteamento viário de Santo André — a pé</title>
-<!-- favicon embutido (evita o 404 no console do navegador) -->
-<link
-  rel="icon"
-  href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111827'/%3E%3Cpath d='M8 25V13l8-6 8 6v12' fill='none' stroke='%23ffc233' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='19' r='2.4' fill='%23ffc233'/%3E%3C/svg%3E"
-/>
+<!-- Mesma arte do APK, sem recorte ou mudança de identidade. -->
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
 <link rel="stylesheet" href="vendor/ol/ol.css" />
 <link rel="stylesheet" href="styles.css?v=20261104-1" />
 <!--
@@ -286,7 +284,7 @@
       </div>
     </div>
 
-    <div class="drag-hint" id="drag-hint">
+    <div class="drag-hint" id="drag-hint" hidden>
       Arraste as paradas <b>B</b>, <b>C</b>… no painel para mudar a ordem da rota
     </div>
 

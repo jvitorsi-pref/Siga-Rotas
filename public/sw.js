@@ -19,7 +19,7 @@
    ficam no IndexedDB, que é do aplicativo (`core/armazenamentoLocal.js`).
    ========================================================================== */
 
-const CACHE = 'siga-rotas-v5';
+const CACHE = 'siga-rotas-v8';
 
 /** Arquivos do esqueleto do aplicativo. */
 const ESQUELETO = [
@@ -31,8 +31,14 @@ const ESQUELETO = [
   '/coletaUI.js',
   '/planoPersistido.js',
   '/planejamentoCircuito.js',
+  '/revisoesEndereco.js',
+  '/resumoRota.js',
   '/navegacaoUI.js',
   '/manifest.webmanifest',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/icon-maskable-512.png',
+  '/icons/apple-touch-icon.png',
   '/vendor/ol/ol.js',
   '/vendor/ol/ol.css',
   '/core/pontoTrajeto.js',

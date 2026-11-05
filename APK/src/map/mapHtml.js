@@ -5,7 +5,6 @@ export const MAP_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v10.2.1/ol.css" />
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
   html, body, #map {
@@ -41,17 +40,43 @@ export const MAP_HTML = `<!DOCTYPE html>
     display: none;
     width: 100%;
     height: 100%;
-    background: #e9eef2;
+    background: #ffffff;
+  }
+  #fallback-zoom {
+    display: none;
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 2;
+    flex-direction: column;
+  }
+  #fallback-zoom[hidden] { display: none !important; }
+  #fallback-zoom button {
+    background: #ffffff;
+    color: #045127;
+    border: 1px solid #d0d7de;
+    width: 36px;
+    height: 36px;
+    font-size: 18px;
+    line-height: 1;
+    border-radius: 6px;
+    margin-bottom: 4px;
+    padding: 0;
   }
 </style>
 </head>
 <body>
 <div id="map"></div>
 <canvas id="fallback-canvas"></canvas>
+<div id="fallback-zoom" hidden>
+  <button type="button" id="fallback-zoom-in" aria-label="Aproximar mapa">+</button>
+  <button type="button" id="fallback-zoom-out" aria-label="Afastar mapa">−</button>
+</div>
 
-<script src="https://cdn.jsdelivr.net/npm/ol@v10.2.1/dist/ol.js"></script>
 <script>
+
 (function () {
+  function iniciarMapa() {
   function postToRN(payload) {
     if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
       window.ReactNativeWebView.postMessage(JSON.stringify(payload));
@@ -217,7 +242,7 @@ export const MAP_HTML = `<!DOCTYPE html>
         axisSource.addFeatures(olFeats);
         axisCasingSource.addFeatures(olFeats);
         var ext = axisSource.getExtent();
-        if (isExtentValid(ext)) {
+        if (msg.fit !== false && isExtentValid(ext)) {
           map.getView().fit(ext, { padding: [30, 30, 30, 30], maxZoom: 15, duration: 300 });
         }
         postToRN({ type: 'NETWORK_RENDERED', count: olFeats.length });
@@ -265,6 +290,8 @@ export const MAP_HTML = `<!DOCTYPE html>
             duration: 450
           });
         }
+      } else if (msg.type === 'RESIZE_MAP') {
+        map.updateSize();
       } else if (msg.type === 'FIT_NETWORK') {
         var nExt = axisSource.getExtent();
         if (isExtentValid(nExt)) {
@@ -294,8 +321,27 @@ export const MAP_HTML = `<!DOCTYPE html>
   var view = {
     centerLon: -46.525,
     centerLat: -23.665,
-    scale: 18000 // pixels por grau
+    scale: 18000 // pixels por grau de longitude
   };
+
+  // Mesma faixa e a mesma relação zoom × resolução do OpenLayers 10, para que
+  // o fallback não invente uma escala incompatível com o mapa vetorial.
+  var ZOOM_MIN = 5, ZOOM_MAX = 21;
+  var ESCALA_BASE = 111319.49079327358 / 156543.03392804097;
+
+  function zoomDaEscala(escala) {
+    return Math.log(escala / ESCALA_BASE) / Math.LN2;
+  }
+
+  function escalaDoZoom(zoom) {
+    return ESCALA_BASE * Math.pow(2, zoom);
+  }
+
+  function limitarEscala(escala) {
+    var z = zoomDaEscala(escala);
+    if (!isFinite(z)) return escala;
+    return escalaDoZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)));
+  }
 
   function geometryLines(geometry) {
     if (!geometry) return [];
@@ -319,8 +365,9 @@ export const MAP_HTML = `<!DOCTYPE html>
     if (!isFinite(minX)) return;
     view.centerLon = (minX + maxX) / 2;
     view.centerLat = (minY + maxY) / 2;
-    view.scale = Math.min(Math.max(1, window.innerWidth - 110) / Math.max(maxX - minX, 0.0001),
-      Math.max(1, window.innerHeight - 110) / Math.max(maxY - minY, 0.0001));
+    view.scale = limitarEscala(Math.min(
+      Math.max(1, window.innerWidth - 110) / Math.max(maxX - minX, 0.0001),
+      Math.max(1, window.innerHeight - 110) / Math.max(maxY - minY, 0.0001)));
   }
 
   function routeGeometries() {
@@ -364,7 +411,7 @@ export const MAP_HTML = `<!DOCTYPE html>
 
   function draw() {
     var dpr = window.devicePixelRatio || 1;
-    ctx.fillStyle = '#e5eaef';
+    ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Casca branca
@@ -457,36 +504,144 @@ export const MAP_HTML = `<!DOCTYPE html>
     }
   }
 
-  var touchStart = null;
+  // Zoom ancorado no ponteiro: o ponto geográfico sob o dedo/cursor não anda.
+  function zoomAt(clientX, clientY, fator) {
+    if (!isFinite(clientX) || !isFinite(clientY) || !fator || fator <= 0) return false;
+    var alvo = limitarEscala(view.scale * fator);
+    if (!isFinite(alvo) || Math.abs(alvo - view.scale) < 1e-9) return false;
+    var ancora = xyToLonLat(clientX, clientY);
+    view.scale = alvo;
+    var dpr = window.devicePixelRatio || 1;
+    view.centerLon = ancora[0] - (clientX * dpr - canvas.width / 2) / (view.scale * dpr);
+    view.centerLat = ancora[1] + (clientY * dpr - canvas.height / 2) / (view.scale * dpr);
+    draw();
+    return true;
+  }
+
+  canvas.addEventListener('wheel', function (e) {
+    if (!e.deltaY) return;
+    if (e.preventDefault) e.preventDefault();
+    zoomAt(e.clientX, e.clientY, Math.pow(2, -e.deltaY / 400));
+  }, { passive: false });
+
+  var ponteiros = {};
+  var toque = null;   // arrastar/soltar com um dedo
+  var pinca = null;   // dois dedos: distância e centro anteriores
+
+  function ponteirosAtivos() {
+    var lista = [];
+    for (var id in ponteiros) if (ponteiros.hasOwnProperty(id)) lista.push(ponteiros[id]);
+    return lista;
+  }
+  function distanciaEntre(a, b) { return Math.hypot(b.x - a.x, b.y - a.y); }
+  function centroEntre(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+
+  function iniciarPinca() {
+    var lista = ponteirosAtivos();
+    if (lista.length < 2) { pinca = null; return; }
+    pinca = { distancia: distanciaEntre(lista[0], lista[1]), centro: centroEntre(lista[0], lista[1]) };
+  }
+
   canvas.addEventListener('pointerdown', function (e) {
-    touchStart = { x: e.clientX, y: e.clientY, moved: false };
+    var id = e.pointerId == null ? 'default' : e.pointerId;
+    ponteiros[id] = { x: e.clientX, y: e.clientY };
+    if (canvas.setPointerCapture) { try { canvas.setPointerCapture(id); } catch (erro) {} }
+    if (ponteirosAtivos().length === 1) {
+      toque = { x: e.clientX, y: e.clientY, moved: false };
+      pinca = null;
+    } else {
+      toque = null;
+      iniciarPinca();
+    }
   });
+
   canvas.addEventListener('pointermove', function (e) {
-    if (!touchStart) return;
-    var dx = e.clientX - touchStart.x;
-    var dy = e.clientY - touchStart.y;
-    if (Math.hypot(dx, dy) > 6) touchStart.moved = true;
-    if (touchStart.moved) {
+    var id = e.pointerId == null ? 'default' : e.pointerId;
+    if (!ponteiros[id]) {
+      if (!toque) return;
+      id = 'default';
+      ponteiros[id] = { x: toque.x, y: toque.y };
+    }
+    ponteiros[id] = { x: e.clientX, y: e.clientY };
+
+    if (pinca) {
+      var lista = ponteirosAtivos();
+      if (lista.length < 2) return;
+      var centro = centroEntre(lista[0], lista[1]);
+      var distancia = distanciaEntre(lista[0], lista[1]);
+      if (pinca.distancia > 0 && distancia > 0) {
+        var anterior = pinca;
+        pinca = { distancia: distancia, centro: centro };
+        zoomAt(centro.x, centro.y, distancia / anterior.distancia);
+        view.centerLon -= (centro.x - anterior.centro.x) / view.scale;
+        view.centerLat += (centro.y - anterior.centro.y) / view.scale;
+        draw();
+      }
+      return;
+    }
+    if (!toque) return;
+    var dx = e.clientX - toque.x;
+    var dy = e.clientY - toque.y;
+    if (Math.hypot(dx, dy) > 6) toque.moved = true;
+    if (toque.moved) {
       view.centerLon -= dx / view.scale;
       view.centerLat += dy / view.scale;
-      touchStart.x = e.clientX;
-      touchStart.y = e.clientY;
+      toque.x = e.clientX;
+      toque.y = e.clientY;
       draw();
     }
   });
-  canvas.addEventListener('pointerup', function (e) {
-    if (touchStart && !touchStart.moved) {
+
+  function encerrarPonteiro(e) {
+    var id = e.pointerId == null ? 'default' : e.pointerId;
+    delete ponteiros[id];
+    if (pinca) {
+      pinca = null;
+      toque = null;
+      if (ponteirosAtivos().length === 1) {
+        var restante = ponteirosAtivos()[0];
+        toque = { x: restante.x, y: restante.y, moved: true };
+      }
+      return;
+    }
+    if (toque && !toque.moved) {
       var ll = xyToLonLat(e.clientX, e.clientY);
       postToRN({ type: 'MAP_CLICK', lon: ll[0], lat: ll[1] });
     }
-    touchStart = null;
+    toque = null;
+  }
+
+  canvas.addEventListener('pointerup', encerrarPonteiro);
+  canvas.addEventListener('pointercancel', function (e) {
+    var id = e.pointerId == null ? 'default' : e.pointerId;
+    delete ponteiros[id];
+    pinca = null;
+    toque = null;
   });
+
+  // Controles +/− com a mesma aparência do .ol-zoom, disponíveis sem CDN.
+  var caixaZoom = document.getElementById('fallback-zoom');
+  if (caixaZoom && caixaZoom !== canvas && caixaZoom.querySelectorAll) {
+    caixaZoom.hidden = false;
+    caixaZoom.style.display = 'flex';
+    var passos = [['#fallback-zoom-in', 2], ['#fallback-zoom-out', 0.5]];
+    for (var pz = 0; pz < passos.length; pz++) {
+      var botao = document.querySelector(passos[pz][0]);
+      if (!botao) continue;
+      (function (fator) {
+        botao.addEventListener('click', function (e) {
+          if (e && e.preventDefault) e.preventDefault();
+          zoomAt(window.innerWidth / 2, window.innerHeight / 2, fator);
+        });
+      })(passos[pz][1]);
+    }
+  }
 
   window.__handleRNMessage = function (msg) {
     if (!msg || !msg.type) return;
     if (msg.type === 'SET_NETWORK') {
       state.features = msg.features || [];
-      fitGeometries(state.features.map(function (f) { return f.geometry; }));
+      if (msg.fit !== false) fitGeometries(state.features.map(function (f) { return f.geometry; }));
       draw();
       postToRN({ type: 'NETWORK_RENDERED', count: state.features.length });
     } else if (msg.type === 'SET_MARKERS') {
@@ -500,6 +655,8 @@ export const MAP_HTML = `<!DOCTYPE html>
       state.segments = msg.segments || [];
       if (msg.fit !== false) fitGeometries(routeGeometries());
       draw();
+    } else if (msg.type === 'RESIZE_MAP') {
+      resize();
     } else if (msg.type === 'FIT_NETWORK') {
       fitGeometries(state.features.map(function (f) { return f.geometry; })); draw();
     } else if (msg.type === 'FIT_ROUTE') {
@@ -508,6 +665,9 @@ export const MAP_HTML = `<!DOCTYPE html>
       if (msg.lon != null && msg.lat != null) {
         view.centerLon = msg.lon;
         view.centerLat = msg.lat;
+        // Mesmo critério do OpenLayers: centralizar aproxima até o zoom 17,
+        // sem afastar quem já está mais perto.
+        if (zoomDaEscala(view.scale) < 17) view.scale = escalaDoZoom(17);
         draw();
       }
     }
@@ -515,6 +675,28 @@ export const MAP_HTML = `<!DOCTYPE html>
 
   resize();
   postToRN({ type: 'MAP_READY', engine: 'canvas-fallback' });
+  }
+  // CDN indisponível ou lento não pode impedir o mapa vetorial local.
+  // CSS é carregado dinamicamente para não bloquear o início do Canvas.
+  if (window.ol) { iniciarMapa(); return; }
+  var iniciado = false;
+  var script = document.createElement('script');
+  var prazo = setTimeout(iniciar, 3000);
+  function iniciar() {
+    if (iniciado) return;
+    iniciado = true; clearTimeout(prazo);
+    script.onload = script.onerror = null;
+    if (window.ol) {
+      var css = document.createElement('link'); css.rel = 'stylesheet';
+      css.href = 'https://cdn.jsdelivr.net/npm/ol@v10.2.1/ol.css'; document.head.appendChild(css);
+    }
+    iniciarMapa();
+  }
+  script.async = true;
+  script.src = 'https://cdn.jsdelivr.net/npm/ol@v10.2.1/dist/ol.js';
+  script.onload = iniciar; script.onerror = iniciar;
+  document.head.appendChild(script);
+
 })();
 </script>
 </body>

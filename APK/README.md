@@ -1,6 +1,18 @@
 # Roteamento Viário de Santo André (a pé) — Projeto React Native (Android APK)
 
-Transformação completa do **Motor de Roteamento Viário de Santo André** (`siga:SIGA_EIXO_LOG_OFICIAL_E_NAO`) para **React Native (Expo / Android Nativo)**, pronto para execução em emulador Android (AVD) e geração de pacote `.apk`.
+Adaptação do **Motor de Roteamento Viário de Santo André** (`siga:SIGA_EIXO_LOG_OFICIAL_E_NAO`) para **React Native (Expo / Android Nativo)**, em processo de unificação com o Web. Exportação Hermes não equivale a APK instalado/homologado; consulte [o relatório de integração](../docs/UNIFICACAO.md) para evidências e pendências.
+
+### Fluxo atual
+
+- Somente circuitos: A é origem e destino; B, C, D etc. são paradas editáveis. Não há card duplicado para o retorno.
+- **Calcular rota** respeita a ordem dos cards; **Calcular rota otimizada**, logo abaixo, otimiza a distância total incluindo a volta a A.
+- O resultado informa o modo aplicado, método de otimização e economia recebidos do motor, com os mesmos rótulos do Web. Método heurístico não é apresentado como garantia de ótimo global; comparação ausente é declarada indisponível. Circuitos empatados só indicam mudança de ordem quando a sequência realmente mudou, ignorando a repetição final de A.
+- Nas visualizações **Painel** e **Dividido**, role abaixo do resultado da rota para acessar **Rede viária**. O painel mostra fonte, cache, atualização automática, erros do serviço e diagnóstico expansível do grafo. **Verificar atualizações** consulta o conteúdo WFS; **Baixar do GeoServer** solicita uma atualização completa.
+- Fonte “WFS — carregado nesta sessão” não indica conexão ativa. Cache local e snapshot embarcado são identificados separadamente. Falha de gravação informa quando uma atualização ficou apenas em memória.
+- Alternar Painel/Dividido/Mapa mantém a mesma WebView e a preferência da legenda. No modo Painel ela fica invisível e sem interação/acessibilidade, mas retida em memória para não perder a câmera. Redimensionar não reenquadra a rota; novos cálculos ou os comandos explícitos Rede/Rota continuam podendo enquadrar.
+- Se o CDN do OpenLayers falhar ou ultrapassar o prazo nominal de 3 s, o mapa vetorial Canvas inicia sem depender dele. Não troca de motor se o script chegar depois. O Canvas usa o fundo claro, rede/rotas/pontos locais, arraste, roda do mouse, pinça e os botões +/− no mesmo lugar/aparência do OpenLayers; não oferece tiles OSM offline, rotação, inércia nem teclado como o mapa vetorial completo.
+- O painel trata da **rede viária**, não de sincronização de dados coletados. **Coleta de localização está adiada** por decisão do usuário. Cálculo continua local; delegação por URL remota não está implementada.
+- Estado validado em código/testes: **299 testes Web / 195 APK**, exportação Android/Hermes. Execução/gestos, AsyncStorage real e aparência em aparelho ainda requerem homologação.
 
 ---
 
@@ -24,7 +36,7 @@ No aplicativo **React Native para Android**:
    - Alternador rápido de visualização no topo: **Dividido** (Mapa + Painel), **Mapa** (Tela cheia) e **Painel** (Tela cheia).
    - Cartões nativos de pontos (`PointCard.js`) com validação de Endereço Digital, entrada de coordenadas decimais (com suporte a vírgula brasileira e inversão automática `lat, lon`), reordenação (`↑`/`↓`), foco no mapa (`🎯`) e seleção por toque no mapa (`🗺`).
    - Painel nativo de resultados (`RouteResultPanel.js`) com distância total, métricas, trechos (`A → B`, `B → C`) e lista numerada de logradouros percorridos (`oficial` / `não oficial`).
-   - Painel nativo de diagnóstico do grafo e sincronização WFS (`NetworkDiagnosticsPanel.js`).
+   - Painel nativo de diagnóstico do grafo e atualização WFS (`NetworkDiagnosticsPanel.js`), montado em `App.js`, com comandos/ciclo de vida em `networkPanelService.js`.
    - Mapa cartográfico (`RoadNetworkMap.js`) mantendo a cartografia de casca + núcleo dos eixos viários, eixos não oficializados tracejados, rota em 3 níveis (halo branco + contorno escuro + núcleo âmbar) e fallback vetorial em Canvas HTML5 2D caso o aparelho esteja 100% offline.
 
 ---

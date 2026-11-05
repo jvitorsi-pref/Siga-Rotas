@@ -24,6 +24,8 @@ import {
   TIPOS,
   STATUS,
 } from '../core/pontoTrajeto.js';
+import { resumoRota } from './resumoRota.js';
+import { criarRevisoesEndereco } from './revisoesEndereco.js';
 import { criarListaCircuito, opcoesCalculoCircuito, papelPontoCircuito } from './planejamentoCircuito.js';
 import { prepararPlanoSalvo, assinaturaPlanejador } from './planoPersistido.js';
 import { coresDosTrechos } from '../core/coresTrechos.js';
@@ -68,11 +70,16 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     circuito: true,
     // id do ponto que está sendo arrastado no painel (reordenação)
     arrastandoId: null,
+    // a dica de arraste já foi usada nesta sessão (não volta a aparecer)
+    dicaArrasteVista: false,
     // trechos desenhados no mapa (um por trecho da rota): cada um pode ser
     // ocultado pelo usuário — é o que resolve os trechos que passam pelo
     // mesmo caminho e ficam sobrepostos
     trechos: [],
   };
+
+  const revisoesEndereco = criarRevisoesEndereco();
+  window.addEventListener('pagehide', () => revisoesEndereco.limpar());
 
   const $ = (sel) => document.querySelector(sel);
 
@@ -292,6 +299,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     const lonLat = ol.proj.toLonLat(coord);
     const ponto = state.lista.pontos.find((p) => p.id === id);
     if (!ponto) return;
+    revisoesEndereco.invalidar(id);
     atualizarPonto(state.lista, id, {
       latitude: lonLat[1],
       longitude: lonLat[0],
@@ -449,6 +457,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
 
   /** Cria A, origem e destino fixo do circuito. */
   function inicializarPontos() {
+    revisoesEndereco.limpar();
     state.lista = criarListaCircuito();
     state.circuito = true;
     state.modo = 'usuario';
@@ -480,10 +489,10 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
           ' role="button" tabindex="' + (arrastavel ? '0' : '-1') + '"' +
           ' aria-label="' +
           (arrastavel
-            ? 'Mover a parada ' + escapeHtml(p.rotulo) + ' na ordem do trajeto (use também os botões subir e descer)'
+            ? 'Mover a parada ' + escapeHtml(p.rotulo) + ' na ordem do trajeto (arraste ou use as setas e os botões subir e descer)'
             : 'A origem e o destino ficam sempre nas extremidades do trajeto') +
           '"' +
-          ' title="' + (arrastavel ? 'Arraste para mudar a ordem da rota' : 'Origem e destino ficam sempre nas extremidades') + '"></span>' +
+          ' title="' + (arrastavel ? 'Arraste ou use as setas ↑ ↓ para mudar a ordem da rota' : 'Origem e destino ficam sempre nas extremidades') + '"></span>' +
           '<span class="point__badge">' + escapeHtml(p.rotulo) + '</span>' +
           '<span class="point__role">' + escapeHtml(papel) + '</span>' +
           '<span class="point__actions">' +
@@ -517,6 +526,17 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
       .join('');
 
     atualizarMarcadores();
+    atualizarDicaArraste();
+  }
+
+  /**
+   * A dica de arraste só faz sentido quando existe algo para reordenar
+   * (duas paradas ou mais) e desaparece depois da primeira reordenação.
+   */
+  function atualizarDicaArraste() {
+    if (!els.dragHint) return;
+    const paradas = state.lista.pontos.filter((p) => p.tipo === TIPOS.PARADA).length;
+    els.dragHint.hidden = state.dicaArrasteVista || paradas < 2;
   }
 
   /**
@@ -644,6 +664,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     const pt = { lon: lonLat[0], lat: lonLat[1] };
     const ponto = state.lista.pontos.find((p) => p.id === state.picking);
     if (ponto) {
+      revisoesEndereco.invalidar(ponto.id);
       atualizarPonto(state.lista, ponto.id, {
         latitude: pt.lat,
         longitude: pt.lon,
@@ -792,6 +813,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     const ponto = state.lista.pontos.find((p) => p.id === id);
     if (!ponto) return;
     const codigo = (ponto.enderecoDigital || '').trim();
+    const token = revisoesEndereco.iniciar(id);
     if (!codigo) {
       atualizarPonto(state.lista, id, {
         status: STATUS.VAZIO,
@@ -807,6 +829,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     try {
       const res = await fetch('/api/endereco-digital?modo=local&codigo=' + encodeURIComponent(codigo));
       const data = await res.json();
+      if (!revisoesEndereco.atual(token)) return;
       const patch = {
         status: data.status,
         mensagem: data.mensagem,
@@ -834,6 +857,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
         data.status === STATUS.CONVERTIDO ? 'ok' : 'err',
       );
     } catch (err) {
+      if (!revisoesEndereco.atual(token)) return;
       atualizarPonto(state.lista, id, {
         status: STATUS.FALHA,
         mensagem: 'Falha na resolução do endereço: ' + err.message,
@@ -1132,38 +1156,8 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
    */
   function atualizarNotaDoTrajeto(data) {
     if (!els.routeNote) return;
-    const partes = [];
-    if (data.modo === 'otimizada' || data.modo === 'saida_curta') {
-      partes.push(data.modo === 'saida_curta' ? 'Ordem otimizada (saída curta)' : 'Ordem otimizada');
-      if (data.otimizacao) {
-        const metodo = data.otimizacao.metodo || '';
-        partes.push(
-          metodo.startsWith('exato')
-            ? metodo.includes('desempate')
-              ? 'método exato (Held-Karp, desempate pela saída curta)'
-              : 'método exato (Held-Karp)'
-            : 'método heurístico (vizinho mais próximo + 2-opt)',
-        );
-      }
-      if (data.comparacao) {
-        const economia = Math.round(data.comparacao.economia);
-        // `Number('-0.0')` é -0: normalizado para 0 para não exibir "-0,0 %"
-        const pct = (Number(data.comparacao.economiaPercentual.toFixed(1)) || 0)
-          .toFixed(1)
-          .replace('.', ',');
-        partes.push('economia ' + economia + ' m (' + pct + ' %)');
-        const mudou =
-          data.sequenciaUsuario && data.sequencia &&
-          data.sequenciaUsuario.join() !== data.sequencia.join();
-        if (mudou && economia === 0) {
-          partes.push('empate: a ordem mudou, mas o custo total é o mesmo');
-        }
-      }
-    } else {
-      partes.push('Ordem do usuário · a sequência informada foi respeitada');
-    }
     els.routeNote.hidden = false;
-    els.routeNote.textContent = partes.join(' · ');
+    els.routeNote.textContent = resumoRota(data);
   }
 
   function showRoute(data, opcoes = {}) {
@@ -1329,6 +1323,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     // a linha alvo define a posição final da parada arrastada
     const movido = moverPontoPara(state.lista, id, indice);
     if (!movido) return;
+    state.dicaArrasteVista = true;
     reaplicarOrdem(
       'Ordem alterada: ' + sequenciaRotulos(state.lista).join(' → ') + '. Recalculando a rota…',
     );
@@ -1369,11 +1364,14 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
       });
     } else if (acao === 'cima') {
       moverPonto(state.lista, id, -1);
+      state.dicaArrasteVista = true;
       reaplicarOrdem();
     } else if (acao === 'baixo') {
       moverPonto(state.lista, id, +1);
+      state.dicaArrasteVista = true;
       reaplicarOrdem();
     } else if (acao === 'remover') {
+      revisoesEndereco.invalidar(id);
       removerPonto(state.lista, id);
       // o trajeto mudou: a rota exibida (e as cores dos trechos) ficaram
       // desatualizadas — recalcula, ou limpa o desenho se o trajeto deixou
@@ -1399,6 +1397,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     if (!ponto) return;
 
     if (ev.target.classList.contains('point__codigo')) {
+      revisoesEndereco.invalidar(id);
       ponto.enderecoDigital = ev.target.value;
       // digitou um código novo: o ponto precisa ser validado de novo
       ponto.status = ev.target.value.trim() ? 'PENDENTE' : STATUS.VAZIO;
@@ -1412,6 +1411,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
       }
       atualizarMarcadores();
     } else if (ev.target.classList.contains('point__coord')) {
+      revisoesEndereco.invalidar(id);
       const coords = parseCoords(ev.target.value);
       if (coords) {
         ponto.latitude = coords.lat;
@@ -1435,6 +1435,32 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
   });
 
   els.points.addEventListener('keydown', (ev) => {
+    // A alça de arraste também é operável pelo teclado: as setas mudam a
+    // ordem da parada. Enter/Espaço NÃO calculam a rota a partir dela.
+    const alca = ev.target.closest('.point__grip[data-arrastavel]');
+    if (alca) {
+      if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
+      ev.preventDefault();
+      const linha = alca.closest('.point');
+      if (!linha) return;
+      const id = linha.dataset.id;
+      const indice = state.lista.pontos.findIndex((p) => p.id === id);
+      if (indice < 0) return;
+      const destino = indice + (ev.key === 'ArrowDown' ? 1 : -1);
+      if (!moverPontoPara(state.lista, id, destino)) {
+        setStatus('A parada já está no limite da ordem do trajeto.', 'idle');
+        return;
+      }
+      state.dicaArrasteVista = true;
+      reaplicarOrdem(
+        'Ordem alterada: ' + sequenciaRotulos(state.lista).join(' → ') + '. Recalculando a rota…',
+      );
+      const devolvida = [...els.points.querySelectorAll('.point')]
+        .find((item) => item.dataset.id === id);
+      const novaAlca = devolvida && devolvida.querySelector('.point__grip');
+      if (novaAlca) novaAlca.focus();
+      return;
+    }
     if (ev.key !== 'Enter') return;
     const linha = ev.target.closest('.point');
     if (!linha) return;
@@ -1497,6 +1523,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     renderizarPontos,
     abrirPlanoSalvo(registro) {
       const plano = prepararPlanoSalvo(registro); // valida tudo antes de alterar estado
+      revisoesEndereco.limpar();
       revisaoCalculo++; // uma resposta de rede antiga não pode substituir o plano aberto
       els.calc.disabled = false;
       stopPicking();

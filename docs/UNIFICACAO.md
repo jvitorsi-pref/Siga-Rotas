@@ -64,6 +64,15 @@ Referências fixas: **APK = visual; Web = funcionalidades**. Trabalho em andamen
 | PWA | `public/sw.js`, `public/manifest.webmanifest` |
 | Testes e documentação | `package.json`, `APK/package.json`, `test/paridade.test.js`, `docs/UNIFICACAO.md` |
 
+### Dica de arraste corrigida (defeito visual reproduzido)
+
+A pílula “Arraste as paradas **B**, **C**… no painel para mudar a ordem da rota” ficava **sempre visível**, inclusive com o trajeto contendo só A, sobrepondo o mapa — uma divergência em relação à tela do APK, que não tem esse elemento. Agora a dica:
+
+- nasce oculta no HTML (não pisca no primeiro desenho);
+- só aparece com **duas paradas ou mais** (quando há o que reordenar);
+- desaparece após a primeira reordenação por arraste, setas ou botões e **não volta** naquela sessão;
+- continua sendo apenas texto (`pointer-events: none`), sem interceptar cliques no mapa.
+
 ### Evidências de teste
 
 | Comando / cenário | Resultado |
@@ -376,3 +385,325 @@ Coordenadas [longitude, latitude]: A [-46.50761262, -23.71127804], B [-46.506689
 - **Coleta de dados de localização adiada por solicitação expressa.** Não foi removido o código histórico, mas integração/persistência/coleta nativas não são a prioridade da continuação.
 - APK exportado, mas sem compilação Gradle/instalação/gestos em aparelho nesta rodada. O teste Web não homologa a WebView Android.
 - Demais etapas de paridade dos recursos disponíveis, proteções assíncronas restantes, offline e homologação visual continuam abertas. A conclusão destas alterações de planejamento não significa conclusão de toda a unificação.
+
+
+## Continuação — validações de endereço assíncronas (F07 parcial)
+
+Escopo mantido: coleta de localização adiada; planejamento continua somente em circuitos, com os dois botões de cálculo. Esta rodada não adiciona recursos de coleta e não altera o serviço de CEP Digital nem o motor.
+
+### Problemas reproduzidos e correção
+
+Foram executados os handlers reais anteriores de Web/APK com respostas controladas: **8 falhas de asserção antes da correção**, quatro por plataforma (editar e voltar ao mesmo código, substituir por coordenada manual, duas validações fora de ordem e erro antigo depois de resposta nova). Não é apenas comparar o texto do código: ao voltar ao texto anterior, uma requisição antiga continua obsoleta.
+
+Novo `public/revisoesEndereco.js`, reexportado por `APK/src/utils/revisoesEndereco.js`, mantém um token opaco por ponto. Cada nova validação substitui o token anterior. Edição de código/coordenada, escolha ou arraste no mapa e remoção invalidam o ponto; Limpar e encerramento da página/componente invalidam todos. No Web, abrir plano salvo também invalida as validações pendentes.
+
+Antes de aplicar sucesso ou erro, os handlers verificam o token. Resposta descartada não altera coordenadas/status, não apresenta mensagem de erro/sucesso e não recentraliza o mapa. No APK há ainda uma verificação dentro do updater funcional de estado, incluindo existência do ponto e código atual, para não aplicar resultado que tenha ficado obsoleto enquanto a atualização aguardava processamento pelo React. A requisição de transporte não é abortada: seu resultado deixa de ter autoridade sobre a UI.
+
+### Testes e resultados
+
+| Verificação | Resultado |
+|---|---|
+| Regressões contra os handlers anteriores | **8 falhas esperadas**, todas de comportamento |
+| Mesmos cenários sobre os handlers reais Web e APK | **10/10 por plataforma** |
+| `npm test` | **283/283**, zero falhas/ignorados |
+| `npm test --prefix APK` | **129/129**, zero falhas/ignorados |
+| Expo Android/Hermes | **606 módulos**, bundle **9,1 MB**, exportação concluída |
+| Inventário | **123 arquivos**, **21 protegidos**, **3 exceções históricas aprovadas**, **0 não aprovadas** |
+| `git diff --check` | Sem erros |
+
+`test/cenariosEnderecoUI.js` fornece os mesmos dez cenários para `test/enderecoUI.test.js` e `APK/test/enderecoUI.test.js`. Além dos quatro defeitos reproduzidos, verifica sucesso/erro atuais e cancelamento por mapa, remoção, limpeza e desmontagem. Os testes dos handlers injetam serviços/estado; não equivalem a executar React Native em aparelho. Os cenários de cancelamento por ciclo de vida exercitam a invalidação lógica, não o Android AppState real.
+
+**Verificação adicional em Chromium real:** eventos de digitação, clique em Validar, seleção no mapa OpenLayers, Limpar e remoção de parada. Seis cenários passaram: coordenada manual preservada; edição que volta ao mesmo código preservada; segunda validação vence; mapa preservado; limpeza não recupera ponto antigo; remoção não recupera parada. Zero erros JavaScript. As respostas da API de endereços foram interceptadas e entregues em ordem controlada: a evidência é de concorrência da UI real, não de disponibilidade/correção de um provedor externo de CEP Digital.
+
+Logs locais: `/home/user/enderecos-before.log`, `enderecos-focused.log`, `enderecos-web-tests.log`, `enderecos-apk-tests.log`, `enderecos-export.log`, `enderecos-browser.log`.
+
+Arquivos: novos `public/revisoesEndereco.js`, `APK/src/utils/revisoesEndereco.js`, `test/cenariosEnderecoUI.js`, `test/enderecoUI.test.js`, `APK/test/enderecoUI.test.js`; alterados `public/app.js`, `APK/App.js`, `public/sw.js` (cache v6 inclui o novo módulo), teste de abertura de plano e documentação/inventário. **Nenhum arquivo core/server, nem implementação de coleta, foi alterado nesta rodada.**
+
+### Limites e próximos pontos
+
+F07 continua parcial: estes testes cobrem a resolução de endereços, não todos os fluxos de edição durante navegação/recálculo, nem a homologação completa do ciclo de vida nativo. F09 (persistência da atualização WFS), diagnósticos, mapa/remontagem/offline, demais recursos disponíveis e execução do APK em aparelho continuam pendentes. **Unificação ainda em andamento; coleta de localização segue adiada.**
+
+
+## Continuação — persistência da atualização WFS no APK (F09)
+
+### Falha reproduzida
+
+A verificação profunda alterava o grafo em memória, mas não gravava o snapshot em AsyncStorage. A mesma regressão foi executada sobre a classe anterior (extraída do arquivo original, com dependências nativas substituídas por adaptadores): **1 falha esperada**, zero gravações onde deveria haver uma. Não é evidência de falha no motor; é uma falha de integração entre atualização e cache.
+
+### Implementação
+
+- `mobileNetworkService.js` passa a ser um binding nativo pequeno, mantendo classe, singleton e export de fingerprint existentes. A implementação do ciclo de vida foi movida para `mobileNetworkServiceCore.js`, com AsyncStorage/snapshot/WFS injetáveis. As dependências padrão continuam sendo o cliente WFS nativo, o snapshot embarcado e os mesmos módulos de grafo/roteamento/endereço. Não foi criado um motor alternativo.
+- Refresh explícito, atualização profunda e atualização disparada por mudança de contagem usam uma única rotina de aplicação/persistência. O grafo continua sendo construído pelo `buildGraph` original.
+- Snapshots vazios, com contagem total incompatível ou sem arestas válidas são recusados antes de substituir a rede atual. Cache ilegível/inválido mantém sua cópia em disco intacta e tenta o snapshot embarcado; o problema fica explícito em metadados e aviso de tela.
+- Ao reabrir, um snapshot WFS salvo recebe fonte **`wfs-cache`**, não “WFS ao vivo”. A ausência normal de cache no primeiro uso não é apresentada como erro.
+- Falha de gravação não derruba a rede recém-carregada em RAM. O metadado de cache fica **`memory-only`** e um aviso no painel do APK informa que a atualização não foi salva para a próxima abertura. Nova verificação profunda sem mudança de conteúdo também tenta novamente a gravação pendente.
+- Tokens de requisição descartam respostas antigas; uma fila serializa as gravações aceitas, evitando que escrita antiga termine depois da mais nova e a sobrescreva. Rejeição não bloqueia as operações seguintes.
+- `allowWfs: false` impede refresh/verificação e o fallback de download quando não existe rede local válida. Não cria grafo fictício para simular sucesso offline.
+- Corrigida a promessa documental de `remoteApiUrl`: a opção histórica não tinha delegação implementada. Metadados agora informam `supported: false` e execução local, mesmo quando a opção está preenchida. **Nenhuma delegação remota foi implementada nesta rodada.**
+
+### Evidências
+
+| Verificação | Resultado |
+|---|---|
+| Regressão executada sobre serviço anterior | **1 falha esperada**, por ausência de gravação |
+| Nova suíte `APK/test/mobileNetworkService.test.js` | **14/14** |
+| `npm test` | **283/283**, sem falhas/ignorados |
+| `npm test --prefix APK` | **143/143**, sem falhas/ignorados |
+| Exportação Android/Hermes | **607 módulos**, bundle **9,11 MB**, sucesso |
+| Inventário | **125 arquivos**, **21 protegidos**, **3 exceções históricas aprovadas**, **0 não aprovadas** |
+| `git diff --check` | Sem erros |
+
+Os testes exercitam grafo e roteador originais, com armazenamento e transporte injetados: primeira abertura offline, aplicação/gravação profunda e reinício, rota circular na rede recuperada, refresh/verificação leve, quota/retentativa, quatro formas de cache inválido, rejeição de payload WFS inválido sem destruir a rede/cache anteriores, resposta obsoleta, serialização de escritas, falha de transporte e nova tentativa, WFS desativado, fallback sem snapshot e metadados de execução remota não suportada.
+
+O teste de reinício cria uma **nova instância do serviço** sobre o mesmo adaptador de armazenamento, desativa WFS e calcula A → B → A com a geometria recuperada; **não mata/reabre um processo Android real**. AsyncStorage/SQLite, limite de quota e renderização do aviso ainda precisam de teste em aparelho. As respostas WFS são fixtures controladas, não consultas ao GeoServer nesta rodada. A suíte Web foi reexecutada como regressão; o cache móvel não implica que o Web passe a calcular rotas offline.
+
+Arquivos desta rodada: novo `APK/src/services/mobileNetworkServiceCore.js` e `APK/test/mobileNetworkService.test.js`; alterados binding `mobileNetworkService.js`, `APK/App.js` para o aviso de cache, e documentação/inventário. Logs: `/home/user/cache-before.log`, `cache-focused.log`, `cache-web-tests.log`, `cache-apk-tests.log`, `cache-export.log`.
+
+**Nenhum arquivo de core/server ou implementação de coleta foi alterado nesta rodada.** F09 tem correção de persistência e declaração explícita do limite remoto em código/testes; integração remota não passou a existir. Acesso ao painel de diagnósticos (F11), offline/remontagem do mapa (F15), outros fluxos assíncronos e homologação do APK permanecem pendentes. **Coleta de localização segue adiada e a unificação continua em andamento.**
+
+
+## Continuação — acesso ao diagnóstico da rede no APK (F11)
+
+O componente `NetworkDiagnosticsPanel.js`, antes existente mas não montado, agora é acessível nas visualizações **Painel** e **Dividido**, abaixo do resultado da rota. Não foram alterados os modos de circuito nem os botões de cálculo; coleta permanece adiada.
+
+### Integração e comportamento
+
+- `App.js` monta o componente existente, preservando suas seções/contadores e a paleta do APK. O controle de assinatura, carregamento inicial, comandos e liberação foi extraído para `networkPanelService.js`, sem duplicar regras de rede/roteamento. O serviço de rede continua o responsável por grafo, cache, ordenação de atualizações e WFS.
+- O painel recebe fonte, feições, estratégia, cache, atualização automática, último check/mudança, erros recentes e contadores efetivos do grafo. **Verificar atualizações** solicita verificação profunda; **Baixar do GeoServer** usa o refresh completo. Ambos ficam bloqueados durante operação manual/inicial; trava síncrona também impede dois toques antes da atualização de estado React.
+- Falha inicial não fica em um spinner permanente: mostra erro e permite tentar carregar novamente. Falha de atualização conserva a rede anterior e permite nova tentativa.
+- `networkPresentation.js` distingue snapshot, cache WFS e “WFS — carregado nesta sessão”. Nenhuma fonte é apresentada como prova de conectividade atual. Exibe persistência/erro de quota, limite remoto não suportado e até cinco erros recentes fornecidos pelo serviço.
+- O diagnóstico é expansível e expõe nós, arestas, cruzamentos, toques, snaps, conectores, fusões, duplicidades, componentes e tempo de construção já produzidos pelo motor. Botões e expansão recebem papéis/estados de acessibilidade; avisos usam os tokens de cor existentes, inclusive contraste de texto compatível com o tema claro.
+- Descartar o controlador remove listener e para timers; sucesso/erro tardios não atualizam a UI nem iniciam novos timers. Não aborta o HTTP já iniciado ou reverte uma persistência válida do serviço. Alternar para layout **Mapa** apenas oculta o painel: o controlador vive no componente raiz, não no ScrollView condicional.
+- Atualizações automáticas renovam os dados do painel sem reescrever continuamente a barra de status com uma mensagem antiga. O cálculo de uma rota já exibida não é refeito silenciosamente ao atualizar a rede; novos cálculos usam a rede atual.
+- Metadados do serviço passam a declarar atualização automática desativada se `allowWfs` estiver desligado, coerente com os timers/consultas.
+
+### Evidências desta rodada
+
+| Verificação | Resultado |
+|---|---|
+| Testes novos de controlador/apresentação | **13/13**, incluindo integração com grafo/cache originais |
+| Testes do JSX real com primitivas RN/hooks injetados | **6/6** |
+| `npm test` | **283/283**, sem falhas/ignorados |
+| `npm test --prefix APK` | **162/162**, sem falhas/ignorados |
+| Exportação Android/Hermes | **610 módulos**, bundle **9,12 MB**, sucesso |
+| Inventário | **129 arquivos**, **21 protegidos**, **3 exceções históricas aprovadas**, **0 não aprovadas** |
+| `git diff --check` | Sem erros |
+
+Controlador: carregamento, assinatura, comandos profundos/refresh, duplicação de toques, erro inicial e retry, erro de atualização, sucesso/erro tardio após descarte, retirada de listeners/timers, assinatura única e dados automáticos. Integração usa o serviço real para mostrar grafo e falha de quota, tentar gravar de novo e reabrir uma nova instância offline com fonte `wfs-cache`.
+
+Componente: JSX original transpilado pelo Babel do APK, com `View/Text/TouchableOpacity`, hooks e estilos injetados; verifica carregamento, erro/retry, fonte/cache/quota/limite remoto, bloqueio de comandos, expansão dos contadores e ligação do painel em App. **Não é uma renderização React Native/Android real, screenshot, gesto, leitor de tela ou homologação visual.** Transporte/armazenamento continuam controlados nos testes; a exportação não instala APK.
+
+Arquivos desta rodada: novos `networkPanelService.js`, `networkPresentation.js`, `APK/test/networkPanel.test.js`, `APK/test/networkPanelRender.test.js`; alterados `APK/App.js`, `NetworkDiagnosticsPanel.js`, metadado de atualização em `mobileNetworkServiceCore.js`, `APK/README.md` e documentação/inventário. Logs: `/home/user/painel-focused.log`, `painel-web-tests.log`, `painel-apk-tests.log`, `painel-export.log`.
+
+**Nenhum arquivo core/server nem implementação de coleta foi alterado nesta rodada.** F11 está integrado em código e testado com as limitações acima. Mapa/offline/remontagem (F15), demais fluxos assíncronos e homologação Android continuam abertos. **Produto ainda não concluído; coleta de localização segue adiada.**
+
+
+## Continuação — ciclo de vida do mapa e inicialização offline (F15 parcial)
+
+### Alterações
+
+- `App.js` não desmonta mais `RoadNetworkMap` ao escolher **Painel**. O contêiner torna-se absoluto/invisível, mantém dimensões positivas e deixa de consumir espaço do painel. Não recebe toques e sai da árvore de acessibilidade enquanto oculto. A WebView permanece em memória por decisão explícita de preservar câmera/estado.
+- `RoadNetworkMap` usa uma referência estável para a fonte HTML, evitando tratá-la como uma nova fonte em cada render. A legenda mantém o estado React ao trocar layout. Uma nova mensagem `MAP_READY` ressincroniza as camadas se houver recarga efetiva da WebView.
+- Novo `mapSync.js` controla somente a ponte de apresentação: rede, marcadores, rota, segmentos, posição e comandos. Alternar visibilidade ou redimensionar não pede fit nem reenvia uma rede inteira sem mudança. Atualização WFS não reposiciona uma câmera já inicializada.
+- Nova rota planejada continua sendo enquadrada; se for calculada com mapa oculto, o fit é adiado até ficar visível. Ocultar trecho ou recalcular durante navegação não reposiciona a câmera. Limpar uma rota cancela seu fit pendente.
+- Comandos explícitos Rede/Rota/Centralizar funcionam mesmo se emitidos antes de a WebView estar pronta/visível: fica pendente o comando mais recente. Uma centralização solicitada por prop e cancelada enquanto oculta não volta depois para uma posição antiga. A centralização explícita tem prioridade sobre o enquadramento automático.
+- Protocolo `RESIZE_MAP`: OpenLayers chama `updateSize`; Canvas redimensiona/redesenha sem refazer o enquadramento, preservando centro e escala. `SET_NETWORK` aceita `fit: false`, como `SET_ROUTE` já aceitava.
+- O script OpenLayers deixa de bloquear o HTML: carregamento assíncrono com prazo nominal de **3 s**, fallback imediato em erro. CSS também é anexado dinamicamente quando o OpenLayers chega, sem bloquear o Canvas. Uma biblioteca que chegue após o fallback não troca o motor nem apaga sua apresentação.
+- Fundo Canvas ajustado ao branco do tema APK, preservando cores/tracejados dos eixos, trechos e posições. Nenhum grafo, distância, otimização ou geometria viária foi recalculado pela apresentação.
+
+### Testes desta rodada
+
+| Verificação | Resultado |
+|---|---|
+| Focados do mapa | **34/34** (14 anteriores + **20 novos**) |
+| Novos cenários | 10 sincronização; 4 componente com hooks/RN injetados; 6 bridge/boot/Canvas em VM |
+| `npm test` | **283/283**, sem falhas/ignorados |
+| `npm test --prefix APK` | **182/182**, sem falhas/ignorados |
+| Expo Android/Hermes | **611 módulos**, bundle **9,13 MB**, sucesso |
+| Inventário | **132 arquivos**, **21 protegidos**, **3 exceções históricas aprovadas**, **0 não aprovadas** |
+| `git diff --check` | Sem erros |
+
+Os testes de sincronização usam os mesmos objetos de dados ao ocultar/mostrar e verificam ausência de fit/reenvio indevidos; cobrem rota nova oculta, navegação, fila de comandos, cancelamento, camadas após nova sessão e limpeza. O JSX real do componente é transpilado com as ferramentas do APK, mas hooks, primitivas RN e WebView são injetados: verifica retenção da fonte/ref/legenda, resize e remontagem de camadas. **Não executa a hierarquia nativa Android nem prova o comportamento de opacity/acessibilidade em aparelho.**
+
+**HTML real em Chromium:** três cenários passaram — CDN abortado (Canvas), CDN pendente além do prazo (Canvas) e OpenLayers carregado (biblioteca/CSS servidos pela cópia vendor local de teste). Foram enviados rede/trecho com retorno, centralização, pan e resize; medidos centro e deslocamento geográfico por pixel antes/depois, sem perda de câmera/escala. No OpenLayers também foi aplicado zoom com wheel antes do resize. No caso de atraso, o script foi liberado depois para confirmar que não houve segundo `MAP_READY` nem troca para outro motor. Zero erros JavaScript nos três cenários. Não foram baixados tiles nem dependências remotas reais nesta verificação.
+
+O teste Chromium executa o HTML utilizado pelo APK, não o componente `react-native-webview` em Android; a troca de layout nativo é coberta apenas pelo componente com hooks injetados e pela política de sincronização. Isso amplia a evidência de apresentação offline, mas não é homologação visual/gestual do APK.
+
+Arquivos desta rodada: novo `APK/src/map/mapSync.js`, `APK/test/mapSync.test.js`, `APK/test/mapRender.test.js`; alterados `APK/App.js`, `RoadNetworkMap.js`, `mapHtml.js`, `mapaTrechos.test.js`, README e documentação/inventário. Logs: `/home/user/mapa-focused.log`, `mapa-browser.log`, `mapa-web-tests.log`, `mapa-apk-tests.log`, `mapa-export.log`. Capturas locais: `/home/user/map-canvas-offline.png`, `map-canvas-timeout.png`, `map-openlayers.png`.
+
+### Limites mantidos
+
+- Canvas continua sendo fallback vetorial, sem tiles/base OSM offline e sem equivalência completa de zoom/pinch/gestos com OpenLayers. Centro/escala são preservados, mas esta rodada não acrescenta gestos de zoom ao Canvas.
+- Manter a WebView oculta usa memória; impacto de bateria/memória, layout, rotação, leitor de tela e eventual descarte do processo de renderização precisam de aparelho. Uma recarga da WebView repõe os dados, mas não promete recuperar a câmera perdida por morte do processo nem a sessão após encerrar o app.
+- O CDN continua sendo usado para OpenLayers na operação normal; apenas deixou de ser requisito bloqueante para o fallback local. Não há cache/download em massa de tiles.
+- Web não ganhou cálculo offline: permanece dependente da API para calcular rotas. Demais fluxos assíncronos e paridade visual/funcional completa ainda estão pendentes.
+
+**Nenhum arquivo core/server ou implementação de coleta foi alterado nesta rodada. Coleta de localização segue adiada. Unificação ainda em andamento.**
+
+
+## Continuação — resultado de otimização e rótulos comuns (F14)
+
+### Paridade de apresentação
+
+O APK ainda não mostrava o método de otimização/economia disponíveis na nota do Web. Novo `public/resumoRota.js`, reexportado no APK, agora fornece uma única apresentação para a nota Web e para `RouteResultPanel`. Usa exclusivamente modo, método, comparação e sequências entregues pelo motor: não calcula uma nova rota nem refaz custos/otimização.
+
+- Distingue ordem do usuário, otimizada e o modo histórico saída curta. Método exato/Held-Karp, seu desempate e heurística são identificados a partir do valor recebido; **heurística explicita ausência de garantia de ótimo global**. Método trivial não é chamado Held-Karp e método desconhecido não é inventado.
+- Economia em metros/percentual é formatada de forma consistente nas duas plataformas. Comparação ausente/inválida fica explicitamente indisponível; não se transforma em economia zero. Valor negativo é apresentado como distância maior que a ordem do usuário, não como ganho.
+- Corrigida uma regressão de texto no Web: comparar `sequenciaUsuario` fechada com `sequencia` aberta fazia o A final parecer uma mudança de ordem em empate. O novo resumo normaliza apenas a repetição de fechamento antes da comparação de rótulos. Arredondar economia pequena para zero não a torna empate exato.
+- O resultado nativo mantém métricas, cards/cores dos trechos, retorno, ocultação e logradouros existentes; acrescenta a nota compacta com os tokens de tema do APK.
+- A lista de planos já salvos no Web reutiliza o rótulo correto do modo, inclusive saída curta. Esta alteração é **somente texto da lista existente**, não avanço na coleta ou sincronização adiada. Não reintroduz seletores antigos: continuam apenas os dois botões de circuito.
+- Service worker v7 inclui o módulo comum.
+
+### Verificações
+
+| Verificação | Resultado |
+|---|---|
+| Regressão da nota anterior sobre fechamento do circuito | **1 falha esperada**, por mensagem incorreta de ordem alterada |
+| Novos testes | **17/17**: 6 cenários comuns por plataforma, 2 hooks Web reais, 3 JSX de resultado nativo |
+| `npm test` | **291/291**, sem falhas/ignorados |
+| `npm test --prefix APK` | **191/191**, sem falhas/ignorados (contagem daquela rodada; a atual é 195) |
+| Exportação Android/Hermes | **613 módulos**, bundle **9,13 MB**, sucesso |
+| Inventário | **138 arquivos**, **21 protegidos**, **3 exceções históricas aprovadas**, **0 não aprovadas** |
+| `git diff --check` | Sem erros |
+
+Asserções cobrem rótulos, método, não mutação dos resultados, comparação inválida, sinal/zero/arredondamento, fechamento do circuito e erro de rota não apresentado como otimização bem-sucedida. Testes JSX usam hooks/primitivas RN injetados, **não renderização Android real**.
+
+**Navegador real + API local real, usando coordenadas do snapshot:** quatro cenários Web passaram sem erros JavaScript: manual; otimizada com método exato e economia **117 m (27,0 %)** na precisão exibida; empate com ordem realmente alterada; circuito de duas posições para o qual o motor não fornece método/comparação. Neste último, a UI declarou os dados indisponíveis, sem inventar metadados ou modificar o comportamento do motor. O texto no DOM foi comparado ao resumo comum em cada cenário.
+
+Os registros de plano existentes não persistem todos os metadados de otimização/comparação; abrir um plano histórico pode continuar mostrando informação indisponível. Não foi alterado o esquema de persistência para simular que esses metadados existiam.
+
+Arquivos novos: `public/resumoRota.js`, reexport `APK/src/utils/resumoRota.js`, `test/cenariosResumoRota.js`, `test/resumoRota.test.js`, `APK/test/resumoRota.test.js`, `APK/test/routeResultRender.test.js`. Alterados: `public/app.js`, rótulo em `public/coletaUI.js`, `public/sw.js`, `RouteResultPanel.js`, README e documentação/inventário. Logs: `/home/user/resumo-before.log`, `resumo-focused.log`, `resumo-browser.log`, `resumo-web-tests.log`, `resumo-apk-tests.log`, `resumo-export.log`.
+
+**Nenhum arquivo core/server, algoritmo de otimização ou implementação de coleta foi alterado nesta rodada.** F14 recebeu resumo comum e regressões; confirmação visual em aparelho, demais fluxos assíncronos, gestos Canvas e paridade completa ainda estão pendentes. **Coleta continua adiada; unificação ainda em andamento.**
+
+
+## Continuação — identidade/recursos da instalação Web (F12)
+
+### Correção
+
+O manifesto ativo apontava para `icon.svg` e `icon-maskable.svg` inexistentes; o favicon embutido usava outra arte. Foram criados quatro PNGs a partir do **logotipo original do APK**, sem recortar o brasão, redesenhar ou trocar paleta:
+
+| Arquivo | Uso | Dimensões |
+|---|---|---|
+| `public/icons/icon-192.png` | Manifesto `any` e favicon | 192 × 192 |
+| `public/icons/icon-512.png` | Manifesto `any` | 512 × 512 |
+| `public/icons/icon-maskable-512.png` | Manifesto `maskable` | 512 × 512 |
+| `public/icons/apple-touch-icon.png` | Ícone Apple | 180 × 180 |
+
+O logo mantém proporção, é centralizado sobre branco e fica inteiro. Na variante maskable, o retângulo da arte fica dentro do círculo seguro de raio 40% da imagem; pixels fora desse círculo foram verificados como brancos. O formato horizontal do logo foi preservado, não convertido em símbolo quadrado novo: avaliação de legibilidade do atalho real segue pendente.
+
+O manifesto agora usa o nome do APK, nome curto SIGA-Rotas e descrição do fluxo de circuitos, sem prometer cálculo Web offline/coleta homologada. `index.html` aponta favicon e Apple para os novos arquivos. O worker **v8** inclui manifesto e os quatro ícones; mantém a exclusão de API/dados e recursos externos. Nenhum novo mecanismo de persistência ou cálculo foi adicionado.
+
+`npm run gerar:icones:pwa` executa `tools/gerar-icones-pwa.mjs`, usando o Playwright já existente. Lê somente a arte do APK e grava os PNGs em `public/icons/`. Requer Chromium do Playwright ou `PWA_CHROMIUM_PATH`; não é executado no servidor nem altera o APK. Os arquivos gerados são versionados. Versões diferentes do Chromium podem rasterizar/comprimir de forma ligeiramente diferente; não se promete reprodução byte a byte entre browsers.
+
+### Evidências
+
+| Verificação | Resultado |
+|---|---|
+| Teste contra o manifesto anterior | **1 falha de asserção esperada**: ícone PNG exigido não declarado |
+| Novos testes PWA | **8/8**, metadados, dimensões PNG, pixels/área segura, origem do logo, precache e fallback offline |
+| `npm test` | **299/299**, sem falhas/ignorados |
+| `npm test --prefix APK` | **191/191**, sem falhas/ignorados (contagem daquela rodada; a atual é 195) |
+| Exportação Android/Hermes | **613 módulos**, **9,13 MB**, sucesso; hash do bundle igual ao da rodada anterior |
+| Inventário | **140 arquivos próprios de código/configuração**, **21 protegidos**, **3 exceções históricas aprovadas**, **0 não aprovadas** |
+| `git diff --check` | Sem erros |
+
+**Chromium real + servidor local real:** `Page.getAppManifest` e `Page.getInstallabilityErrors` retornaram listas de erros vazias. Os quatro PNGs retornaram HTTP 200 com MIME `image/png` e bytes iguais aos arquivos do repositório. Após concluir o precache, a conexão foi desativada: manifesto e ícones foram recuperados pelo worker, imagens decodificadas nas dimensões declaradas e a interface foi recarregada com o card A. Zero erros JavaScript (`pageerror`). Falhas esperadas de acesso à API offline não são tratadas como cálculo offline funcionando.
+
+O teste confirma recursos/requisitos no Chromium utilizado; **não instalou efetivamente um atalho no sistema operacional, não valida Safari/iOS nem Android nativo**, tampouco a apresentação do ícone no launcher. Instalação pode exigir HTTPS, contexto de aba principal e ação do usuário. Primeiro acesso totalmente offline, sem cache prévio, não está coberto nem prometido.
+
+Os PNGs não entram na tabela mecânica de exports do inventário; são quatro assets pequenos adicionais (cerca de 104 KiB no total). Fonte original do APK e cópia do Web continuam byte a byte idênticas. SHA-256 dos assets:
+
+```text
+c1ef577ccaab4f23f2cfee114a796a44935dfd60419add1de982907fde74fd67  apple-touch-icon.png
+55305d4e1cf43449401c6e5e077f6cc15bdeec46527fcc8ad479b2a1e6484faa  icon-192.png
+f629ae92074412bf39200a4669a762ee997f531a0b6d4c17c39f8479ad685973  icon-512.png
+82ed500059e321254e8fdfe902416355cc66c61207c83bdc836c21371a1c844f  icon-maskable-512.png
+```
+
+Código/configuração alterados nesta rodada: manifesto, favicon/Apple no HTML, lista/cache-version do worker, script npm de geração. Novos: gerador, `test/pwa.test.js` e os quatro PNGs; README e documentação atualizados. Logs: `/home/user/pwa-before.log`, `pwa-browser.log`, `pwa-web-tests.log`, `pwa-apk-tests.log`, `pwa-export.log`.
+
+**Nenhum arquivo core/server, regra de rota, componente nativo ou implementação de coleta alterado nesta rodada. Coleta segue adiada e a unificação permanece parcial.**
+
+
+## Continuação — zoom e interação no mapa offline (F10/M05 parcial)
+
+### Problema reproduzido
+
+No fallback Canvas usado quando o CDN do OpenLayers falha ou atrasa, só era possível **arrastar** e tocar. Não havia roda do mouse, pinça nem controles `+/−`, e `CENTER_POINT` apenas mudava o centro — sem a aproximação que o OpenLayers aplica ao centralizar um ponto. O mapa continuava tecnicamente utilizável, mas oferecia menos controle do que o mapa vetorial e o zoom por gesto não existia offline.
+
+### Correção
+
+- **Zoom ancorado no ponteiro:** o ponto geográfico sob o cursor/dedo permanece fixo; a escala é reaplicada ao centro para não “escorregar” a rede.
+- **Mesma faixa do OpenLayers:** a conversão usa a relação de resolução do EPSG:3857 (`111319,49 / 156543,03`) e limita o zoom a 5–21, em vez de inventar uma escala incompatível. Os enquadramentos de rede/rota também respeitam esses limites.
+- **Roda do mouse e pinça:** a roda usa `deltaY` com `preventDefault`; a pinça acompanha dois ponteiros, amplia/reduz pela razão das distâncias e desloca pelo centro entre os dedos. Pinça e arraste não geram `MAP_CLICK`; toque simples continua selecionando o ponto.
+- **Controles `+/−`:** div própria do Canvas, oculta, exibida apenas quando o fallback está ativo. Mantém a posição (12 px, canto superior direito), o tamanho de 36 px, fundo branco, borda `#d0d7de`, raio 6 e verde `#045127` dos botões do OpenLayers, com rótulos acessíveis “Aproximar/Afastar mapa”.
+- **Centralizar igual ao mapa vetorial:** `CENTER_POINT` aproxima até o zoom 17 quando o mapa está mais afastado e não afasta quem já está mais perto.
+- Nenhum motor, rota, distância, cor, camada ou tile foi alterado. O Canvas continua **sem tiles do OSM offline**, sem rotação, inércia, teclado ou todos os controles do OpenLayers.
+
+### Evidências
+
+| Verificação | Resultado |
+|---|---|
+| Testes novos contra o módulo anterior (`HEAD`) | **4/4 falham**, incluindo a ausência de roda/pinça e o zoom ao centralizar |
+| `APK/test/mapaTrechos.test.js` | **24/24** focados, incluindo limites de zoom e área segura dos botões |
+| `npm test` | **299/299** |
+| `npm test --prefix APK` | **195/195** |
+| Exportação Android/Hermes | **613 módulos**, **9,14 MB**, sucesso |
+| Inventário | **140 arquivos próprios**, **21 protegidos**, **3 exceções aprovadas**, **0 não aprovadas** |
+| `git diff --check` | Sem erros |
+
+**Chromium real:** o HTML do mapa foi servido com o CDN bloqueado. Com o fallback ativo, a roda do mouse reduziu a distância entre dois cliques na metade (razão **0,50**), o botão `−` dobrou (**2,00**) e a pinça sintética aproximou pela metade (**0,50**), sem gerar `MAP_CLICK` e sem erros JavaScript. Os controles estavam visíveis. A regressão dos três cenários anteriores (CDN abortado, CDN pendente e OpenLayers servido localmente) continuou preservando centro e escala após pan e resize, com zero erros.
+
+Esses resultados são do Chromium; não são gestos físicos em WebView/Android nem comprovam a aparência no aparelho. A pinça foi simulada por `PointerEvent`, e não há rasterização da WebView. Tiles do OSM offline, rotação, inércia e navegação por teclado continuam ausentes no fallback.
+
+Arquivos alterados nesta rodada: `APK/src/map/mapHtml.js`, `APK/test/mapaTrechos.test.js`, README, `APK/README.md`, documentação. Nenhum arquivo `core/`/`server/`, regra de rota ou implementação de coleta foi alterado. Logs: `/home/user/mapa-zoom-{web-tests,apk-tests,export}.log`, `/home/user/mapa-zoom-regressao.log`; script de navegador `/home/user/browser-check/check-canvas-zoom.cjs`; screenshot `/home/user/map-canvas-zoom.png`.
+
+**Coleta de localização segue adiada; a unificação continua parcial.**
+
+
+## Continuação — layouts responsivos e reordenação por teclado (M07/P07 parcial)
+
+### O que foi verificado
+
+Os três layouts da Web (**Dividido**, **Mapa** e **Painel**) foram medidos em Chromium real, em **1280×800** e **390×844**, com a rede viária carregada do servidor local:
+
+| Verificação | Desktop | Celular |
+|---|---|---|
+| Dividido: mapa × painel | 900×743 / 380 px | 390×354 / 390×433 |
+| Painel: mapa oculto, painel inteiro | sim | sim |
+| Mapa: painel oculto, mapa em toda a largura | sim | sim |
+| Canvas reajustado e **não remontado** | sim | sim |
+| Câmera preservada ao voltar ao Dividido | desvio 0 px | desvio 0 px |
+| Rede redesenhada sem reenquadrar | mesmos 49.371/2.705 px | idem |
+| Rolagem horizontal | nenhuma | nenhuma |
+
+Também foram conferidas as larguras **320, 360, 390, 768, 900, 1024 e 1440 px**: sem rolagem horizontal e com o mapa/painel ocupando o esperado em cada faixa. No celular o mapa fica com **42%** da altura, o mesmo valor de `mapAreaSplit` do APK.
+
+### Defeito reproduzido na Web
+
+A alça de reordenação é um `span` com `role="button"` e `tabindex="0"`, portanto recebe foco e é anunciada como botão. Mas o tratamento de teclado só reconhecia **Enter** no contêiner de pontos: as setas não reordenavam nada e **Enter na alça executava o cálculo da rota**, produzindo “Resolva o Endereço Digital…” em vez de mover a parada. O rótulo prometia “use também os botões subir e descer”, mas não o atalho de teclado.
+
+### Correção
+
+- **↑ / ↓** na alça focada movem a parada uma posição, usando a **mesma** regra do arraste e dos botões (`moverPontoPara`, em `core/pontoTrajeto.js`). A origem continua fixa e a lista é renumerada; a rota é recalculada quando o trajeto está completo.
+- Ao chegar ao limite, o foco permanece e o rodapé informa “A parada já está no limite da ordem do trajeto.”, sem alterar a lista.
+- Depois da reordenação, o **foco volta para a alça da mesma parada** (o contêiner é redesenhado).
+- **Enter/Espaço na alça não calculam mais a rota**; o Enter nos campos e botões continua com o comportamento anterior.
+- `aria-label`/`title` passaram a citar as setas. Nenhum limite, cor, regra de motor, arraste existente ou botão ↑↓ foi alterado. O APK não ganhou arraste nativo nesta rodada.
+
+### Evidências
+
+| Verificação | Resultado |
+|---|---|
+| Versão anterior da alça (só Enter, sem setas) | Falha em **“seta desce a parada”** no Chromium |
+| Versão anterior da dica (sempre visível) | Falha em **“com uma parada ainda não há o que reordenar”** |
+| Teste de navegador da reordenação | **Aprovado**: dica oculta → visível com 2 paradas → oculta após reordenar; linha B desce, foco acompanha, ↑ desfaz, ↑ no limite avisa, Enter não calcula, 0 erros |
+| `npm test` | **299/299** |
+| `npm test --prefix APK` | **195/195** |
+| Inventário | **140 arquivos**, **21 protegidos**, **3 exceções**, **0 não aprovadas** |
+| `git diff --check` | Sem erros |
+
+Arquivos alterados: `public/app.js`, `public/index.html`, `README.md`, `docs/AUDITORIA-COMPARATIVA.md`, `docs/UNIFICACAO.md`. Nenhum arquivo `core/`/`server/`, componente nativo, regra de rota ou coleta foi alterado. Script de navegador: `/home/user/browser-check/check-reordenacao.cjs` (aceita `SIGA_URL`); layout: `/home/user/browser-check/check-layout.cjs`. Logs: `/home/user/{layout-browser,reordenacao-browser,reordenacao-antes-dica,reordenacao-antes-teclado,reordenacao-web-tests,reordenacao-apk-tests}.log`.
+
+**O arraste nativo no APK, a homologação em aparelho, os tiles offline do Canvas e a coleta de localização continuam pendentes. Unificação ainda parcial.**

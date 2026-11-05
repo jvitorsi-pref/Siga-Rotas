@@ -18,6 +18,8 @@ nenhum momento.
 
 ---
 
+**Unificação em andamento:** o APK define a referência visual e o Web, as funcionalidades. O fluxo atual usa circuitos e dois botões de cálculo; coleta de localização está adiada. Consulte [UNIFICACAO.md](docs/UNIFICACAO.md) para resultados atuais e pendências; as seções históricas abaixo não equivalem a homologação do produto integrado.
+
 ## 1. Sumário
 
 1. [Instalação e execução](#2-instalação-e-execução)
@@ -114,10 +116,29 @@ Abra **<http://localhost:8080/>**.
 Opções do servidor: `node server/index.js --port 8080 --host 0.0.0.0`
 (ou as variáveis de ambiente `PORT` e `HOST`).
 
+### Instalação Web (PWA) e ícones
+
+Em navegador compatível, abra o Web por **HTTPS** (ou localhost em desenvolvimento) e use a opção de instalar do navegador. Um preview embutido pode exigir abertura em aba separada. Instalar o atalho não transforma o cálculo em processamento local: **o Web continua dependendo da API para calcular rotas**. O service worker permite reabrir a interface e seus recursos já armazenados após um primeiro acesso online e a conclusão do cache; não armazena API nem baixa tiles offline.
+
+O manifesto usa o nome do APK e PNGs 192/512, com versão maskable separada; favicon e apple-touch-icon reutilizam a mesma arte. O logotipo original foi mantido inteiro, inclusive o brasão. Para regenerar os arquivos:
+
+```bash
+npm ci
+npx playwright install chromium
+npm run gerar:icones:pwa
+```
+
+O script lê `APK/assets/logo-siga-app.png` e grava apenas `public/icons/`, sobre fundo branco. `PWA_CHROMIUM_PATH` pode indicar um Chromium já instalado. A rasterização pode variar entre versões de navegador; não há dependência nova além do Playwright já declarado. Os PNGs gerados ficam versionados para não exigir navegador no servidor de produção.
+
 ### Cartografia da interface
 
 A leitura do mapa é otimizada para a **rede viária**, não para o mapa-base:
 
+* **Zoom no fallback offline** — quando o CDN do OpenLayers não responde em 3 s,
+  o mapa Canvas mantém arraste, roda do mouse, pinça e os botões **+/−** no
+  mesmo canto e com a mesma aparência do mapa vetorial. O zoom é ancorado no
+  cursor/dedo e usa a mesma faixa de zoom do OpenLayers. Continuam ausentes
+  tiles do OSM offline, rotação, inércia e atalhos de teclado.
 * **Base clareada** — os tiles do OpenStreetMap passam por um filtro CSS
   (`grayscale` + `brightness` + `contrast`) que os torna um fundo neutro e
   claro. Nenhum servidor de tiles externo é acrescentado: a atribuição do OSM
@@ -1056,7 +1077,7 @@ santo-andre-routing/
 │   ├── coletaUI.js           painel da coleta de campo (rodada 13)
 │   ├── sw.js                 Service Worker: aplicativo abre sem conexão
 │   ├── manifest.webmanifest  manifesto do PWA (instalável)
-│   ├── icon.svg              ícone do aplicativo
+│   ├── icons/                PNGs PWA, maskable, favicon e apple-touch-icon
 │   └── vendor/ol/            OpenLayers 10.6.1 vendorizado (ol.js + ol.css)
 │
 ├── tools/
@@ -1333,8 +1354,11 @@ a linha arrastada troca de lugar com a linha sobre a qual ela é solta, e a rota
 > A alça é a **única** parte arrastável do cartão — de propósito: arrastar o
 > cartão inteiro atrapalharia a edição dos campos e a interação com o mapa
 > (ver [seção 17](#17-rota-circular-a--b--c--d--a)). A área de clique da alça é
-> ampliada e ela é focável pelo teclado; além disso, cada cartão tem os botões
-> **↑ / ↓**, que fazem a mesma reordenação sem arraste.
+> ampliada, ela é focável pelo teclado e as setas **↑ / ↓** reordenam a parada
+> quando a alça está em foco (Enter/Espaço nela **não** calculam a rota); além
+> disso, cada cartão tem os botões **↑ / ↓**, que fazem a mesma reordenação sem
+> arraste. A dica sobre arrastar aparece apenas quando há duas paradas ou mais e
+> desaparece depois da primeira reordenação.
 
 Regras (em `core/pontoTrajeto.js`, isomórfico e testado):
 
