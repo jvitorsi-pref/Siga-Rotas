@@ -36,6 +36,8 @@ import {
   podeCalcular,
   STATUS,
 } from './src/core/pontoTrajeto.js';
+import { NetworkDiagnosticsPanel } from './src/components/NetworkDiagnosticsPanel.js';
+import { criarPainelRede } from './src/services/networkPanelService.js';
 import { NavigationPanel } from './src/components/NavigationPanel.js';
 import { criarFonteGPSReal } from './src/services/nativeLocation.js';
 import { criarNavegacaoMobile } from './src/services/mobileNavigationService.js';
@@ -50,11 +52,14 @@ import { PointCard } from './src/components/PointCard.js';
 import { RouteResultPanel } from './src/components/RouteResultPanel.js';
 import { RoadNetworkMap } from './src/components/RoadNetworkMap.js';
 import { trechosParaMapa } from './src/map/routePresentation.js';
+import { criarRevisoesEndereco } from './src/utils/revisoesEndereco.js';
 import { criarListaCircuito, opcoesCalculoCircuito } from './src/utils/planejamentoCircuito.js';
 import { COLORS } from './src/theme/colors.js';
 
 export default function App() {
   const mapRef = useRef(null);
+  const revisoesEndereco = useRef(null);
+  if (!revisoesEndereco.current) revisoesEndereco.current = criarRevisoesEndereco();
 
   // Estado da lista de pontos (A, B, C, D…)
   const [lista, setLista] = useState(criarListaCircuito);
@@ -62,6 +67,9 @@ export default function App() {
 
   // Estado da rede viária
   const [networkFeatures, setNetworkFeatures] = useState([]);
+  const [networkCacheWarning, setNetworkCacheWarning] = useState(null);
+  const [networkPanel, setNetworkPanel] = useState({ meta: null, diagnostics: null, operacao: 'carregar', feedback: null });
+  const networkPanelRef = useRef(null);
 
   // Estado do cálculo de rota
   const [calculating, setCalculating] = useState(false);
@@ -118,49 +126,29 @@ export default function App() {
     navigationRef.current.encerrar();
     setRouteResult(null); setRouteError(null); setPartialGeometry(null); setCalculating(false); setNavigationCenter(null);
   }, [lista]);
-  useEffect(() => () => { calculoRef.current++; navigationRef.current.descartar(); }, []);
+  useEffect(() => () => { revisoesEndereco.current.limpar(); calculoRef.current++; navigationRef.current.descartar(); }, []);
 
-  // Carregamento inicial da rede viária e assinatura de atualizações
+  // O painel é dono da assinatura/comandos; não atualiza a UI após descarte.
   useEffect(() => {
-    let mounted = true;
-
-    const syncFromState = () => {
-      if (!mounted) return;
-      const feats = mobileNetworkService.state?.features || [];
-      setNetworkFeatures(feats);
-    };
-
-    const unsubscribe = mobileNetworkService.subscribe(() => {
-      syncFromState();
-    });
-
-    setStatus('Carregando a rede viária…', 'busy');
-    mobileNetworkService
-      .ensureReady()
-      .then((st) => {
-        if (!mounted) return;
-        syncFromState();
-        mobileNetworkService.startAutoUpdate();
-        setStatus(
-          `Rede pronta (${st.features.length.toLocaleString('pt-BR')} eixos).`,
-          'ok'
-        );
-      })
-      .catch((err) => {
-        if (!mounted) return;
-        setStatus(`Falha ao carregar a rede: ${err.message}`, 'err');
-      });
-
-    return () => {
-      mounted = false;
-      unsubscribe();
-      mobileNetworkService.stopAutoUpdate();
-    };
+    let ultimoFeedback = null;
+    const painel = criarPainelRede({ service: mobileNetworkService, aoMudar: (estado) => {
+      setNetworkPanel(estado);
+      setNetworkFeatures(estado.features);
+      setNetworkCacheWarning(estado.meta?.cache?.error || null);
+      if (estado.feedback && estado.feedback !== ultimoFeedback) {
+        ultimoFeedback = estado.feedback;
+        setStatus(estado.feedback.text, estado.feedback.kind);
+      }
+    } });
+    networkPanelRef.current = painel;
+    void painel.abrir();
+    return () => { painel.descartar(); networkPanelRef.current = null; };
   }, [setStatus]);
 
   // ─────────────── Manipulação dos pontos do trajeto ───────────────
 
   const handleChangeCodigo = (id, text) => {
+    revisoesEndereco.current.invalidar(id);
     setLista((atual) => {
       const copia = cloneLista(atual);
       const trimmed = text.trim();
@@ -180,6 +168,7 @@ export default function App() {
     const ponto = lista.pontos.find((p) => p.id === id);
     if (!ponto) return;
     const codigo = (ponto.enderecoDigital || '').trim();
+    const token = revisoesEndereco.current.iniciar(id);
 
     if (!codigo) {
       setLista((atual) => {
@@ -198,7 +187,9 @@ export default function App() {
     setStatus(`Validando o Endereço Digital do ponto ${ponto.rotulo}…`, 'busy');
     try {
       const data = await mobileNetworkService.resolverEnderecoDigital(codigo);
+      if (!revisoesEndereco.current.atual(token)) return;
       setLista((atual) => {
+        if (!revisoesEndereco.current.atual(token) || !atual.pontos.some(p => p.id === id && (p.enderecoDigital || '').trim() === codigo)) return atual;
         const copia = cloneLista(atual);
         const patch = {
           status: data.status,
@@ -231,7 +222,9 @@ export default function App() {
         setStatus(data.mensagem, 'err');
       }
     } catch (err) {
+      if (!revisoesEndereco.current.atual(token)) return;
       setLista((atual) => {
+        if (!revisoesEndereco.current.atual(token) || !atual.pontos.some(p => p.id === id && (p.enderecoDigital || '').trim() === codigo)) return atual;
         const copia = cloneLista(atual);
         atualizarPonto(copia, id, {
           status: STATUS.FALHA,
@@ -246,6 +239,7 @@ export default function App() {
   };
 
   const handleChangeCoordText = (id, text) => {
+    revisoesEndereco.current.invalidar(id);
     const coords = parseCoords(text);
     setLista((atual) => {
       const copia = cloneLista(atual);
@@ -296,6 +290,7 @@ export default function App() {
 
   const handleMapPickCoordinate = ({ lon, lat }) => {
     if (!pickingId) return;
+    revisoesEndereco.current.invalidar(pickingId);
     setLista((atual) => {
       const copia = cloneLista(atual);
       const ponto = copia.pontos.find((p) => p.id === pickingId);
@@ -341,6 +336,7 @@ export default function App() {
   };
 
   const handleRemoveStop = (id) => {
+    revisoesEndereco.current.invalidar(id);
     Keyboard.dismiss();
     setLista((atual) => {
       const copia = cloneLista(atual);
@@ -360,6 +356,7 @@ export default function App() {
   };
 
   const handleClear = () => {
+    revisoesEndereco.current.limpar();
     Keyboard.dismiss();
     setPickingId(null);
     setLista(criarListaCircuito());
@@ -516,15 +513,19 @@ export default function App() {
         </View>
 
         {/* Área do Mapa Cartográfico */}
-        {layoutMode !== 'panel' && (
           <View
+            pointerEvents={layoutMode === 'panel' ? 'none' : 'auto'}
+            accessibilityElementsHidden={layoutMode === 'panel'}
+            importantForAccessibility={layoutMode === 'panel' ? 'no-hide-descendants' : 'auto'}
             style={[
               styles.mapArea,
+              layoutMode === 'panel' && styles.mapAreaHidden,
               layoutMode === 'map' ? styles.mapAreaFull : styles.mapAreaSplit,
             ]}
           >
             <RoadNetworkMap
               ref={mapRef}
+              visible={layoutMode !== 'panel'}
               features={networkFeatures}
               markers={lista.pontos}
               routeGeometry={activeRouteGeometry}
@@ -544,7 +545,6 @@ export default function App() {
               onMapPickCoordinate={handleMapPickCoordinate}
             />
           </View>
-        )}
 
         {/* Painel de Controle e Resultados */}
         {layoutMode !== 'map' && (
@@ -555,6 +555,7 @@ export default function App() {
           >
             <View style={styles.block}>
               <Text style={styles.blockTitle}>Pontos do trajeto</Text>
+              {!!networkCacheWarning && <Text accessibilityRole="alert" style={styles.cacheWarning}>{networkCacheWarning}</Text>}
 
               {lista.pontos.map((p) => (
                 <PointCard
@@ -629,6 +630,15 @@ export default function App() {
               onToggleSegment={toggleSegment}
               onRestoreSegments={restoreSegments}
               routeError={routeError}
+            />
+
+            <NetworkDiagnosticsPanel
+              meta={networkPanel.meta} diagnostics={networkPanel.diagnostics}
+              syncing={!!networkPanel.operacao} operacao={networkPanel.operacao}
+              feedback={networkPanel.feedback}
+              onRetry={() => networkPanelRef.current?.executar('carregar')}
+              onCheckUpdates={() => networkPanelRef.current?.executar('verificar')}
+              onRefreshWfs={() => networkPanelRef.current?.executar('baixar')}
             />
           </ScrollView>
         )}
@@ -714,6 +724,7 @@ const styles = StyleSheet.create({
   modeBtnTextActive: {
     color: COLORS.white,
   },
+  mapAreaHidden: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0 },
   mapArea: {
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
@@ -738,6 +749,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
+  cacheWarning: { color: COLORS.warn, backgroundColor: COLORS.warnBg, borderColor: COLORS.warnBorder, borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 12 },
   circuitHint: { color: COLORS.muted, marginBottom: 12 },
   blockTitle: {
     fontSize: 11,

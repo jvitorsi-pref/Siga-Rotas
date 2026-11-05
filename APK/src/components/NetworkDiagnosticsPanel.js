@@ -16,12 +16,16 @@ import {
   TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
-import { COLORS } from '../theme/colors';
+import { COLORS } from '../theme/colors.js';
+import { apresentarRede } from '../utils/networkPresentation.js';
 
 export function NetworkDiagnosticsPanel({
   meta,
   diagnostics,
   syncing,
+  operacao,
+  feedback,
+  onRetry,
   onCheckUpdates,
   onRefreshWfs,
 }) {
@@ -31,29 +35,31 @@ export function NetworkDiagnosticsPanel({
     return (
       <View style={styles.block}>
         <Text style={styles.blockTitle}>Rede viária</Text>
-        <View style={styles.loadingRow}>
+        {feedback?.kind === 'err' ? <>
+          <Text accessibilityRole="alert" style={styles.errorText}>{feedback.text}</Text>
+          <TouchableOpacity accessibilityRole="button" style={styles.syncBtn} disabled={syncing} onPress={onRetry}>
+            <Text style={styles.syncBtnText}>Tentar carregar rede novamente</Text>
+          </TouchableOpacity>
+        </> : <View style={styles.loadingRow}>
           <ActivityIndicator size="small" color={COLORS.accent} />
           <Text style={styles.mutedText}>Construindo grafo viário em UTM 23S…</Text>
-        </View>
+        </View>}
       </View>
     );
   }
 
   const upd = meta.update || {};
-  const warnings = meta.warnings || [];
-  const sourceLabel =
-    meta.source === 'wfs'
-      ? 'GeoServer (WFS ao vivo)'
-      : meta.source === 'wfs-cache'
-        ? 'Cache local (WFS)'
-        : 'Snapshot local embutido';
+  const apresentacao = apresentarRede(meta);
+  const warnings = apresentacao.avisos;
 
   return (
     <View style={styles.block}>
       <Text style={styles.blockTitle}>Rede viária</Text>
 
       <View style={styles.statsGrid}>
-        <Row label="Fonte" value={sourceLabel} />
+        <Row label="Fonte" value={apresentacao.fonte} />
+        <Row label="Persistência" value={apresentacao.cache} />
+        <Row label="Cálculo" value="Local no aparelho" />
         <Row label="Estratégia de carga" value={meta.strategy || '—'} />
         <Row label="Feições" value={Number(meta.features || 0).toLocaleString('pt-BR')} />
         <Row
@@ -82,6 +88,7 @@ export function NetworkDiagnosticsPanel({
             ) : null}
           </>
         )}
+        {!upd.enabled && <Row label="Atualização automática" value="Desativada" />}
       </View>
 
       {warnings.length > 0 && (
@@ -94,24 +101,33 @@ export function NetworkDiagnosticsPanel({
         </View>
       )}
 
-      {/* Ações de sincronização com o WFS da Prefeitura */}
+      {!!feedback && <Text accessibilityRole={feedback.kind === 'err' ? 'alert' : undefined}
+        style={feedback.kind === 'err' ? styles.errorText : styles.mutedText}>{feedback.text}</Text>}
+      {apresentacao.erros.length > 0 && <View style={styles.warnBox}>
+        <Text style={styles.warnText}>Erros recentes de atualização</Text>
+        {apresentacao.erros.map((e, i) => <Text key={`erro-${i}`} style={styles.warnText}>{e}</Text>)}
+      </View>}
+
+      {/* Consulta/baixamento da rede, não sincronização de dados de coleta. */}
       <View style={styles.syncActions}>
         <TouchableOpacity
           style={[styles.syncBtn, syncing && styles.syncBtnDisabled]}
           disabled={syncing}
+          accessibilityRole="button" accessibilityState={{ disabled: !!syncing, busy: !!syncing }}
           onPress={onCheckUpdates}
         >
           <Text style={styles.syncBtnText}>
-            {syncing ? 'Consultando WFS…' : '↻ Verificar atualizações'}
+            {operacao === 'verificar' ? 'Verificando WFS…' : '↻ Verificar atualizações'}
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={[styles.syncBtn, syncing && styles.syncBtnDisabled]}
           disabled={syncing}
+          accessibilityRole="button" accessibilityState={{ disabled: !!syncing, busy: !!syncing }}
           onPress={onRefreshWfs}
         >
-          <Text style={styles.syncBtnText}>⬇ Baixar do GeoServer</Text>
+          <Text style={styles.syncBtnText}>{operacao === 'baixar' ? 'Baixando…' : '⬇ Baixar do GeoServer'}</Text>
         </TouchableOpacity>
       </View>
 
@@ -120,6 +136,7 @@ export function NetworkDiagnosticsPanel({
         <>
           <TouchableOpacity
             style={styles.diagToggle}
+            accessibilityRole="button" accessibilityState={{ expanded: diagOpen }}
             onPress={() => setDiagOpen((v) => !v)}
           >
             <Text style={styles.diagToggleText}>
@@ -201,6 +218,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  errorText: { color: COLORS.err, fontSize: 12, marginVertical: 8 },
   mutedText: {
     color: COLORS.muted,
     fontSize: 12,
@@ -215,10 +233,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   keyText: {
+    flex: 1,
     color: COLORS.muted,
     fontSize: 12,
   },
   valText: {
+    flex: 1,
+    textAlign: 'right',
     color: COLORS.textSecondary,
     fontSize: 11.5,
     fontWeight: '600',
@@ -233,7 +254,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   warnText: {
-    color: '#e3c168',
+    color: COLORS.warn,
     fontSize: 11.5,
   },
   syncActions: {

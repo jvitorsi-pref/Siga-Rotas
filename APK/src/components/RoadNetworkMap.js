@@ -26,11 +26,14 @@ import {
 import { WebView } from 'react-native-webview';
 import { COLORS } from '../theme/colors';
 
+import { criarSincronizacaoMapa } from '../map/mapSync.js';
 import { MAP_HTML } from '../map/mapHtml.js';
+const MAP_SOURCE = { html: MAP_HTML };
 
 export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
   {
     features,
+    visible = true,
     markers,
     routeGeometry,
     routeSegments,
@@ -48,64 +51,36 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
   ref
 ) {
   const webviewRef = useRef(null);
-  const lastRoute = useRef(null);
+  const syncRef = useRef(null);
   const [mapReady, setMapReady] = useState(false);
+  const [mapSession, setMapSession] = useState(0);
   const [showLegend, setShowLegend] = useState(true);
 
-  const sendMessageToMap = (payload) => {
-    if (!webviewRef.current || !mapReady) return;
+  if (!syncRef.current) syncRef.current = criarSincronizacaoMapa(payload => {
+    if (!webviewRef.current) return;
     const script = `window.__handleRNMessage && window.__handleRNMessage(${JSON.stringify(payload)}); true;`;
     webviewRef.current.injectJavaScript(script);
-  };
+  });
+  const sendMessageToMap = payload => syncRef.current.comando(payload);
 
   useImperativeHandle(ref, () => ({
-    centerPoint(lon, lat) {
-      sendMessageToMap({ type: 'CENTER_POINT', lon, lat });
-    },
-    fitNetwork() {
-      sendMessageToMap({ type: 'FIT_NETWORK' });
-    },
-    fitRoute() {
-      sendMessageToMap({ type: 'FIT_ROUTE' });
-    },
+    centerPoint(lon, lat) { sendMessageToMap({ type: 'CENTER_POINT', lon, lat }); },
+    fitNetwork() { sendMessageToMap({ type: 'FIT_NETWORK' }); },
+    fitRoute() { sendMessageToMap({ type: 'FIT_ROUTE' }); },
   }));
 
-  // Envia a rede viária para o mapa assim que ambos estiverem prontos
   useEffect(() => {
-    if (mapReady && Array.isArray(features) && features.length > 0) {
-      sendMessageToMap({ type: 'SET_NETWORK', features });
-    }
-  }, [mapReady, features]);
-
-  // Atualiza os marcadores (A, B, C, D…)
-  useEffect(() => {
-    if (mapReady) {
-      sendMessageToMap({ type: 'SET_MARKERS', markers: markers || [] });
-    }
-  }, [mapReady, markers]);
-
-  // Atualiza a geometria da rota
-  useEffect(() => {
-    if (mapReady) {
-      sendMessageToMap({ type: 'SET_ROUTE', geometry: routeGeometry || null,
-        segments: routeSegments || [], fit: !suppressRouteFit && lastRoute.current !== routeGeometry });
-      lastRoute.current = routeGeometry;
-    }
-  }, [mapReady, routeGeometry, routeSegments, suppressRouteFit]);
-
-  useEffect(() => {
-    if (mapReady) sendMessageToMap({ type: 'SET_POSITION', position: navigationPosition || null });
-  }, [mapReady, navigationPosition]);
-
-  useEffect(() => {
-    if (mapReady && centerRequest) sendMessageToMap({ type: 'CENTER_POINT', lon: centerRequest.longitude, lat: centerRequest.latitude });
-  }, [mapReady, centerRequest]);
+    syncRef.current.atualizar({ ready: mapReady, session: mapSession, visible,
+      features, markers, routeGeometry, routeSegments, navigationPosition,
+      centerRequest, suppressRouteFit });
+  }, [mapReady, mapSession, visible, features, markers, routeGeometry, routeSegments, navigationPosition, centerRequest, suppressRouteFit]);
 
   const handleWebViewMessage = (event) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === 'MAP_READY') {
         setMapReady(true);
+        setMapSession(n => n + 1);
       } else if (data.type === 'MAP_CLICK') {
         if (onMapPickCoordinate) {
           onMapPickCoordinate({ lon: data.lon, lat: data.lat });
@@ -117,11 +92,11 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
   };
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} onLayout={() => syncRef.current.redimensionar()}>
       <WebView
         ref={webviewRef}
         originWhitelist={['*']}
-        source={{ html: MAP_HTML }}
+        source={MAP_SOURCE}
         style={styles.webview}
         onMessage={handleWebViewMessage}
         javaScriptEnabled={true}

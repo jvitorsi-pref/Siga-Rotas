@@ -40,6 +40,7 @@ import { prepararRetomadaSimulada } from '../core/recuperacaoColeta.js';
 import { criarSimulador, VELOCIDADES } from '../core/simulador.js';
 import { criarFonteGPS } from '../core/fonteGPS.js';
 import { planoDeNavegacao } from '../core/navegacao.js';
+import { rotuloModo } from './resumoRota.js';
 import { persistirPlanoAtivo, assinaturaPlanejador } from './planoPersistido.js';
 
 const CHAVE_DISPOSITIVO = 'santo-andre:dispositivo';
@@ -332,7 +333,7 @@ export function criarInterfaceColeta(app) {
           '<span class="campo__item-sub">' +
           escapeHtml(formatarMetros(r.distance)) +
           ' · ' +
-          escapeHtml(r.modo === 'otimizada' ? 'otimizada' : 'ordem do usuário') +
+          escapeHtml(rotuloModo(r.modo)) +
           (r.circular ? ' · circuito' : '') +
           ' · ' +
           escapeHtml(quando) +

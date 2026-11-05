@@ -26,7 +26,8 @@
     "auditar:caminho-minimo": "node tools/auditar-caminho-minimo.js 600",
     "validar:navegacao": "node tools/validar-navegacao.mjs",
     "validar:offline": "node tools/validar-offline.mjs",
-    "validar:saida-curta": "node tools/validar-saida-curta.mjs"
+    "validar:saida-curta": "node tools/validar-saida-curta.mjs",
+    "gerar:icones:pwa": "node tools/gerar-icones-pwa.mjs"
   },
   "engines": {
     "node": ">=20.0.0"

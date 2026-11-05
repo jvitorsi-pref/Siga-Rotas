@@ -1,7 +1,7 @@
 {
-  "name": "Roteamento e Coleta de Campo — Santo André (a pé)",
-  "short_name": "Coleta Santo André",
-  "description": "Planejamento de rotas a pé e coleta de campo (rota, trajeto percorrido e localização de residências) para agentes de saúde, com funcionamento offline.",
+  "name": "Roteamento Santo André",
+  "short_name": "SIGA-Rotas",
+  "description": "Planejamento de circuitos a pé em Santo André, com ordem dos pontos definida pelo usuário ou otimizada na rede viária. A interface pode ser reaberta sem conexão; o cálculo no Web exige acesso à API.",
   "lang": "pt-BR",
   "dir": "ltr",
   "start_url": "/",
@@ -10,18 +10,28 @@
   "orientation": "any",
   "background_color": "#ffffff",
   "theme_color": "#045127",
-  "categories": ["navigation", "utilities", "productivity"],
+  "categories": [
+    "navigation",
+    "utilities",
+    "productivity"
+  ],
   "icons": [
     {
-      "src": "icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "icon-maskable.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "maskable"
     }
   ]

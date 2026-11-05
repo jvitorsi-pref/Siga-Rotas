@@ -12,16 +12,17 @@ const legs = [
   { de: 'A', para: 'B', cor: '#15803d', distance: 100, geometry: geometry([-46.5, -23.7], [-46.499, -23.7]) },
   { de: 'B', para: 'A', cor: '#ea580c', retorno: true, distance: 100, geometry: geometry([-46.499, -23.7], [-46.5, -23.7]) },
 ];
-function ambiente(engine) {
-  const strokes = [], fills = [], fits = [], sources = [], messages = [];
+function ambiente(engine, cdn = 'error') {
+  const strokes = [], fills = [], fits = [], sources = [], messages = [], backgrounds = [];
   const ctx = {
     path: [], dash: [], globalAlpha: 1,
     beginPath() { this.path = []; }, moveTo(x,y) { this.path.push([x,y]); }, lineTo(x,y) { this.path.push([x,y]); },
     setLineDash(d) { this.dash = [...d]; },
     stroke() { strokes.push({ color: this.strokeStyle, width: this.lineWidth, dash: [...this.dash], path: this.path.map(p=>[...p]) }); },
-    fillRect() {}, arc(x,y,r) { this.lastArc = [x,y,r]; }, fill() { fills.push({ color: this.fillStyle, arc: this.lastArc }); }, fillText() {},
+    fillRect() { backgrounds.push(this.fillStyle); }, arc(x,y,r) { this.lastArc = [x,y,r]; }, fill() { fills.push({ color: this.fillStyle, arc: this.lastArc }); }, fillText() {},
   };
-  const canvas = { style: {}, getContext: () => ctx, addEventListener() {} };
+  const events = {}, windowEvents = {}, resizes = [], scripts = [], timers = [];
+  const canvas = { style: {}, getContext: () => ctx, addEventListener(name, fn) { events[name] = fn; } };
   const feature = (raw) => ({
     get: (key) => raw.properties?.[key],
     getGeometry: () => ({ getExtent: () => {
@@ -42,7 +43,7 @@ function ambiente(engine) {
   }
   class Options { constructor(opts) { Object.assign(this, opts); } }
   const ol = {
-    Map: class { constructor(opts) { this.view = opts.view; } addLayer(layer) { layers.push(layer); } on() {} getView() { return this.view; } },
+    Map: class { constructor(opts) { this.view = opts.view; } addLayer(layer) { layers.push(layer); } on() {} getView() { return this.view; } updateSize() { resizes.push(true); } },
     View: class { fit(ext, opts) { fits.push({ ext: [...ext], opts }); } animate() {} getZoom() { return 13; } },
     layer: { Tile: Options, Vector: Options }, source: { OSM: Options, Vector },
     style: { Style: Options, Stroke: Options, Fill: Options, Circle: Options, Text: Options },
@@ -50,14 +51,17 @@ function ambiente(engine) {
     format: { GeoJSON: class { readFeature(raw) { return feature(raw); } } },
     geom: { Point: Options }, Feature: Options,
   };
-  const window = { innerWidth: 400, innerHeight: 300, devicePixelRatio: 1, addEventListener() {},
+  const window = { innerWidth: 400, innerHeight: 300, devicePixelRatio: 1, addEventListener(name, fn) { windowEvents[name] = fn; },
     ReactNativeWebView: { postMessage: s => messages.push(JSON.parse(s)) } };
   if (engine === 'openlayers') window.ol = ol;
-  const sandbox = { window, document: { getElementById: id => id === 'map' ? { style: {} } : canvas } };
+  const sandbox = { window, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout() {}, document: {
+    getElementById: id => id === 'map' ? { style: {} } : canvas,
+    createElement: tag => ({ tag }), head: { appendChild: el => { if (el.tag === 'script') { scripts.push(el); if (cdn === 'error') el.onerror(); } } },
+  } };
   vm.createContext(sandbox);
   const source = [...MAP_HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)][0][1];
   vm.runInContext(source, sandbox);
-  return { send: msg => window.__handleRNMessage(JSON.parse(JSON.stringify(msg))), strokes, fills, fits, sources, layers, messages };
+  return { send: msg => window.__handleRNMessage(JSON.parse(JSON.stringify(msg))), strokes, fills, fits, sources, layers, messages, events, windowEvents, canvas, window, resizes, scripts, timers, ol, backgrounds };
 }
 
 test('adaptador de trechos não altera legs, geometria, distâncias ou sequência', () => {
@@ -176,3 +180,82 @@ for (const engine of ['openlayers', 'canvas']) {
     }
   });
 }
+
+for (const engine of ['openlayers', 'canvas']) test(`${engine}: atualizar rede e redimensionar sem fit não reenquadra`,()=>{
+ const a=ambiente(engine);a.send({type:'SET_NETWORK',features:[{geometry:legs[0].geometry}],fit:false});assert.equal(a.fits.length,0);
+ a.send({type:'SET_ROUTE',segments:trechosParaMapa(legs),fit:false});const before=a.strokes.at(-1)?.path;
+ a.window.innerWidth=800;a.window.innerHeight=600;a.send({type:'RESIZE_MAP'});assert.equal(a.fits.length,0);
+ if(engine==='openlayers')assert.equal(a.resizes.length,1);else {assert.equal(a.canvas.width,800);assert.equal(a.canvas.height,600);assert.ok(before);}
+});
+test('Canvas: pan seguido de resize preserva centro e escala geográfica',()=>{
+ const a=ambiente('canvas');a.send({type:'SET_NETWORK',features:[{geometry:legs[0].geometry}]});
+ a.events.pointerdown({clientX:200,clientY:150});a.events.pointermove({clientX:230,clientY:170});a.events.pointerup({clientX:230,clientY:170});
+ const click=(x,y)=>{a.events.pointerdown({clientX:x,clientY:y});a.events.pointerup({clientX:x,clientY:y});return a.messages.at(-1);};
+ const before=click(200,150),offset=click(220,150);a.window.innerWidth=800;a.window.innerHeight=600;a.send({type:'RESIZE_MAP'});
+ const after=click(400,300),offsetAfter=click(420,300);assert.equal(before.lon,after.lon);assert.equal(before.lat,after.lat);assert.equal(offset.lon-before.lon,offsetAfter.lon-after.lon);
+});
+test('CDN lento: deadline inicia Canvas uma única vez e chegada tardia não troca o motor',()=>{
+ const a=ambiente('canvas','pending');assert.equal(a.messages.length,0);assert.equal(a.timers[0].ms,3000);const late=a.scripts[0].onload;
+ a.timers[0].fn();assert.equal(a.messages[0].engine,'canvas-fallback');a.window.ol=a.ol;late();assert.equal(a.messages.filter(m=>m.type==='MAP_READY').length,1);
+});
+test('CDN disponível antes do deadline inicia OpenLayers apenas uma vez',()=>{
+ const a=ambiente('canvas','pending');a.window.ol=a.ol;a.scripts[0].onload();a.timers[0].fn();assert.equal(a.messages.filter(m=>m.type==='MAP_READY').length,1);assert.equal(a.messages[0].engine,'openlayers');
+});
+
+test('Canvas offline conserva o fundo claro do APK',()=>{
+ const a=ambiente('canvas');assert.equal(a.backgrounds.at(-1),'#ffffff');
+});
+test('Canvas: roda do mouse aproxima com o ponto sob o cursor fixo', () => {
+  const a = ambiente('canvas');
+  a.send({ type: 'SET_NETWORK', features: [{ geometry: legs[0].geometry }] });
+  const click=(x,y)=>{a.events.pointerdown({clientX:x,clientY:y});a.events.pointerup({clientX:x,clientY:y});return a.messages.at(-1);};
+  const antes=click(200,150), deslocAntes=click(220,150).lon-antes.lon;
+  a.events.wheel({ clientX: 200, clientY: 150, deltaY: -400 });
+  const depois=click(200,150), deslocDepois=click(220,150).lon-depois.lon;
+  assert.equal(antes.lon, depois.lon);
+  assert.equal(antes.lat, depois.lat);
+  assert.ok(deslocDepois < deslocAntes * 0.6 && deslocDepois > deslocAntes * 0.4);
+});
+test('Canvas: pinça de dois dedos aproxima e não vira clique no mapa', () => {
+  const a = ambiente('canvas');
+  a.send({ type: 'SET_NETWORK', features: [{ geometry: legs[0].geometry }] });
+  const click=(x,y)=>{a.events.pointerdown({clientX:x,clientY:y});a.events.pointerup({clientX:x,clientY:y});return a.messages.at(-1);};
+  const antes=click(200,150), deslocAntes=click(220,150).lon-antes.lon;
+  const cliques=a.messages.filter(m=>m.type==='MAP_CLICK').length;
+  a.events.pointerdown({ pointerId: 1, clientX: 180, clientY: 150 });
+  a.events.pointerdown({ pointerId: 2, clientX: 220, clientY: 150 });
+  a.events.pointermove({ pointerId: 2, clientX: 260, clientY: 150 });
+  a.events.pointerup({ pointerId: 1, clientX: 180, clientY: 150 });
+  a.events.pointerup({ pointerId: 2, clientX: 260, clientY: 150 });
+  assert.equal(a.messages.filter(m=>m.type==='MAP_CLICK').length, cliques, 'pinça não é clique');
+  const deslocDepois=click(220,150).lon-click(200,150).lon;
+  assert.ok(deslocDepois < deslocAntes * 0.6, 'pinça afastando os dedos aproxima');
+});
+test('Canvas: centralizar usa o mesmo zoom 17 do OpenLayers, sem afastar quem já está perto', () => {
+  const a = ambiente('canvas');
+  a.send({ type: 'SET_NETWORK', features: [{ properties: {}, geometry: { type: 'LineString', coordinates: [[-46.6,-23.8],[-46.4,-23.6]] } }] });
+  const click=(x,y)=>{a.events.pointerdown({clientX:x,clientY:y});a.events.pointerup({clientX:x,clientY:y});return a.messages.at(-1);};
+  const larguraAntes=click(220,150).lon-click(200,150).lon;
+  a.send({ type: 'CENTER_POINT', lon: -46.5, lat: -23.7 });
+  const centro=click(200,150);
+  assert.ok(Math.abs(centro.lon+46.5)<1e-9 && Math.abs(centro.lat+23.7)<1e-9);
+  const larguraDepois=click(220,150).lon-centro.lon;
+  assert.ok(larguraDepois < larguraAntes / 10, 'centralizar aproxima como o zoom 17');
+  assert.ok(Math.abs(larguraDepois - 20/(111319.49079327358/156543.03392804097*Math.pow(2,17))) < 1e-6);
+  a.send({ type: 'CENTER_POINT', lon: -46.5, lat: -23.7 });
+  assert.ok(Math.abs((click(220,150).lon-centro.lon)-larguraDepois)<1e-12, 'centralizar de novo não afasta');
+});
+test('Canvas: zoom respeita os limites e os controles +/− têm área e rótulo acessível', () => {
+  const a = ambiente('canvas');
+  a.send({ type: 'SET_NETWORK', features: [{ geometry: legs[0].geometry }] });
+  const click=(x,y)=>{a.events.pointerdown({clientX:x,clientY:y});a.events.pointerup({clientX:x,clientY:y});return a.messages.at(-1);};
+  for (let i=0;i<60;i++) a.events.wheel({ clientX: 200, clientY: 150, deltaY: 900 });
+  const lonMin=click(200,150).lon, passo=click(220,150).lon-lonMin;
+  assert.ok(isFinite(passo) && passo>0 && passo<2, 'afastar para no zoom mínimo');
+  for (let i=0;i<60;i++) a.events.wheel({ clientX: 200, clientY: 150, deltaY: -900 });
+  const passoMax=click(220,150).lon-click(200,150).lon;
+  assert.ok(passoMax>0 && passoMax<passo, 'aproximar para no zoom máximo');
+  assert.match(MAP_HTML, /id="fallback-zoom-in" aria-label="Aproximar mapa"/);
+  assert.match(MAP_HTML, /id="fallback-zoom-out" aria-label="Afastar mapa"/);
+  assert.match(MAP_HTML, /#fallback-zoom button \{[^}]*width: 36px/);
+});

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { criarArmazenamento, criarAdaptadorMemoria } from '../core/armazenamentoLocal.js';
+import { criarRevisoesEndereco } from '../public/revisoesEndereco.js';
 import { opcoesCalculoCircuito } from '../public/planejamentoCircuito.js';
 import { snapshotPlano, persistirPlanoAtivo, prepararPlanoSalvo, assinaturaPlanejador } from '../public/planoPersistido.js';
 import { prepararRetomadaSimulada } from '../core/recuperacaoColeta.js';
@@ -75,7 +76,7 @@ const appSource=readFileSync(new URL('../public/app.js',import.meta.url),'utf8')
 function hookAbrir(ctx){
  const start=appSource.indexOf('    abrirPlanoSalvo(registro) {');const end=appSource.indexOf('    ajustarEnquadramento,',start);
  const text=appSource.slice(start,end).trim().replace(/^abrirPlanoSalvo/, 'function abrirPlanoSalvo').replace(/,$/,'');
- return new Function(...Object.keys(ctx),'let revisaoCalculo=0;'+text+';return abrirPlanoSalvo;')(...Object.values(ctx));
+ return new Function('criarRevisoesEndereco',...Object.keys(ctx),'let revisaoCalculo=0;const revisoesEndereco=criarRevisoesEndereco();'+text+';return abrirPlanoSalvo;')(criarRevisoesEndereco,...Object.values(ctx));
 }
 test('gancho de abertura mantém circuitos e exige recálculo de plano legado aberto',()=>{
  const state={lista:{pontos:[]},circuito:false,modo:'usuario'},els={calc:{disabled:true},calcOptimized:{},resultBlock:{},startNav:{}},calls=[];
