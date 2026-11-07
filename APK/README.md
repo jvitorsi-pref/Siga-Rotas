@@ -6,13 +6,14 @@ Adaptação do **Motor de Roteamento Viário de Santo André** (`siga:SIGA_EIXO_
 
 - Somente circuitos: A é origem e destino; B, C, D etc. são paradas editáveis. Não há card duplicado para o retorno.
 - **Calcular rota** respeita a ordem dos cards; **Calcular rota otimizada**, logo abaixo, otimiza a distância total incluindo a volta a A.
+- Tocar num trecho da rota no mapa, sem seleção de ponto ativa, oculta/mostra aquele trecho (o mesmo comportamento do Web). A legenda e os cartões continuam mostrando todos de novo. A seleção de ponto no mapa continua tendo prioridade.
 - O resultado informa o modo aplicado, método de otimização e economia recebidos do motor, com os mesmos rótulos do Web. Método heurístico não é apresentado como garantia de ótimo global; comparação ausente é declarada indisponível. Circuitos empatados só indicam mudança de ordem quando a sequência realmente mudou, ignorando a repetição final de A.
 - Nas visualizações **Painel** e **Dividido**, role abaixo do resultado da rota para acessar **Rede viária**. O painel mostra fonte, cache, atualização automática, erros do serviço e diagnóstico expansível do grafo. **Verificar atualizações** consulta o conteúdo WFS; **Baixar do GeoServer** solicita uma atualização completa.
 - Fonte “WFS — carregado nesta sessão” não indica conexão ativa. Cache local e snapshot embarcado são identificados separadamente. Falha de gravação informa quando uma atualização ficou apenas em memória.
 - Alternar Painel/Dividido/Mapa mantém a mesma WebView e a preferência da legenda. No modo Painel ela fica invisível e sem interação/acessibilidade, mas retida em memória para não perder a câmera. Redimensionar não reenquadra a rota; novos cálculos ou os comandos explícitos Rede/Rota continuam podendo enquadrar.
 - Se o CDN do OpenLayers falhar ou ultrapassar o prazo nominal de 3 s, o mapa vetorial Canvas inicia sem depender dele. Não troca de motor se o script chegar depois. O Canvas usa o fundo claro, rede/rotas/pontos locais, arraste, roda do mouse, pinça e os botões +/− no mesmo lugar/aparência do OpenLayers; não oferece tiles OSM offline, rotação, inércia nem teclado como o mapa vetorial completo.
 - O painel trata da **rede viária**, não de sincronização de dados coletados. **Coleta de localização está adiada** por decisão do usuário. Cálculo continua local; delegação por URL remota não está implementada.
-- Estado validado em código/testes: **299 testes Web / 195 APK**, exportação Android/Hermes. Execução/gestos, AsyncStorage real e aparência em aparelho ainda requerem homologação.
+- Estado validado em código/testes: **299 testes Web / 208 APK**, exportação Android/Hermes. Execução/gestos, AsyncStorage real e aparência em aparelho ainda requerem homologação.
 
 ---
 
@@ -120,11 +121,40 @@ npm install
 # Compila e instala no emulador conectado:
 npm run android
 
-# Ou gera o arquivo .apk diretamente via Gradle:
-npx expo prebuild --platform android
-cd android
-./gradlew assembleRelease
+# Ou gera o arquivo .apk diretamente pelo wrapper (Windows, Linux e macOS):
+npm run apk:release      # release
+npm run apk:debug        # debug
 ```
+
+O wrapper `scripts/gradle.mjs` escolhe `gradlew` ou `gradlew.bat`, repassa os
+argumentos e informa quando falta JDK/SDK. `SIGA_GRADLE_DRY=1` só imprime o
+comando. O diretório `android/` já está versionado: se você o apagar, rode
+`npx expo prebuild --platform android` para recriá-lo (inclui o
+`android/app/debug.keystore`, que **não** é versionado por ser chave).
+
+### Assinatura de distribuição
+
+O release usa a chave de **debug** enquanto não existir um keystore próprio —
+serve para testes, **não para publicar**. Para assinar de verdade, crie o
+keystore uma única vez e um `android/keystore.properties` (ambos fora do Git):
+
+```bash
+keytool -genkeypair -v -storetype PKCS12 -keystore siga-release.keystore \
+  -alias siga -keyalg RSA -keysize 2048 -validity 10000
+```
+
+`android/keystore.properties`:
+```properties
+storeFile=../../siga-release.keystore
+storePassword=...
+keyAlias=siga
+keyPassword=...
+```
+
+Com esse arquivo presente, `assembleRelease` assina com ele; sem o arquivo,
+continua compilando com a chave de debug. Nesta sessão não há JDK/Android SDK,
+então o build e a assinatura **não foram executados** — a configuração foi
+apenas validada por leitura e testes.
 O arquivo `.apk` pronto para instalação será gerado em:
 `APK/android/app/build/outputs/apk/release/app-release.apk` (ou `debug/app-debug.apk`).
 

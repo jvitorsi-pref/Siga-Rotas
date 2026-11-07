@@ -52,6 +52,7 @@ import { PointCard } from './src/components/PointCard.js';
 import { RouteResultPanel } from './src/components/RouteResultPanel.js';
 import { RoadNetworkMap } from './src/components/RoadNetworkMap.js';
 import { trechosParaMapa } from './src/map/routePresentation.js';
+import { trechoSobClique } from './src/utils/trechoNoMapa.js';
 import { criarRevisoesEndereco } from './src/utils/revisoesEndereco.js';
 import { criarListaCircuito, opcoesCalculoCircuito } from './src/utils/planejamentoCircuito.js';
 import { COLORS } from './src/theme/colors.js';
@@ -95,6 +96,22 @@ export default function App() {
       ? atuais.filter((i) => i !== indice) : [...atuais, indice] };
   });
   const restoreSegments = () => setVisibilidade({ rota: routeResult, ocultos: [] });
+
+  // Toque no mapa sem seleção de ponto: oculta/mostra o trecho mais próximo,
+  // como o clique em `routeLayer` no Web. Não recalcula nem altera distâncias.
+  const handleMapClick = ({ lon, lat, zoom } = {}) => {
+    if (!routeSegments.length) return;
+    const alvo = trechoSobClique(routeSegments, lon, lat, { zoom });
+    if (!alvo) return;
+    const trecho = routeSegments[alvo.indice];
+    toggleSegment(alvo.indice);
+    setStatus(
+      trecho.visivel === false
+        ? `Trecho ${trecho.de} → ${trecho.para} mostrado novamente.`
+        : `Trecho ${trecho.de} → ${trecho.para} oculto. A legenda permite mostrar de novo.`,
+      'idle',
+    );
+  };
   const [routeError, setRouteError] = useState(null);
   const [partialGeometry, setPartialGeometry] = useState(null);
 
@@ -543,6 +560,7 @@ export default function App() {
                 setStatus('Pronto', 'idle');
               }}
               onMapPickCoordinate={handleMapPickCoordinate}
+              onMapClick={handleMapClick}
             />
           </View>
 

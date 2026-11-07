@@ -12,7 +12,7 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 
 | Arquivo | Linhas | Situação | Exports / reexports |
 |---|---:|---|---|
-| `APK/App.js` | 823 | Alterado | — |
+| `APK/App.js` | 841 | Alterado | — |
 | `APK/android/app/src/main/AndroidManifest.xml` | 34 | Alterado | — |
 | `APK/app.json` | 45 | Alterado | — |
 | `APK/eas.json` | 27 | Igual à base | — |
@@ -21,7 +21,7 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `APK/src/components/NavigationPanel.js` | 89 | Novo | NavigationPanel |
 | `APK/src/components/NetworkDiagnosticsPanel.js` | 293 | Alterado | NetworkDiagnosticsPanel |
 | `APK/src/components/PointCard.js` | 339 | Alterado | PointCard |
-| `APK/src/components/RoadNetworkMap.js` | 326 | Alterado | RoadNetworkMap |
+| `APK/src/components/RoadNetworkMap.js` | 331 | Alterado | RoadNetworkMap |
 | `APK/src/components/RouteResultPanel.js` | 359 | Alterado | RouteResultPanel |
 | `APK/src/core/config.js` | 3 | Alterado | → ../../../core/config.js |
 | `APK/src/core/enderecoDigital.js` | 3 | Alterado | → ../../../core/enderecoDigital.js |
@@ -33,7 +33,7 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `APK/src/core/router.js` | 3 | Alterado | → ../../../core/router.js |
 | `APK/src/core/spatialIndex.js` | 3 | Alterado | → ../../../core/spatialIndex.js |
 | `APK/src/core/wfs.js` | 530 | Igual à base | WfsError, parseServiceException, fetchNetwork, describeLayer, checkForUpdates |
-| `APK/src/map/mapHtml.js` | 704 | Novo | MAP_HTML |
+| `APK/src/map/mapHtml.js` | 711 | Novo | MAP_HTML |
 | `APK/src/map/mapSync.js` | 43 | Novo | criarSincronizacaoMapa |
 | `APK/src/map/routePresentation.js` | 13 | Novo | trechosParaMapa |
 | `APK/src/map/styleScript.js` | 24 | Novo | ESTILO_TRECHO_JS |
@@ -50,16 +50,18 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `APK/src/utils/planejamentoCircuito.js` | 2 | Novo | — |
 | `APK/src/utils/resumoRota.js` | 2 | Novo | — |
 | `APK/src/utils/revisoesEndereco.js` | 2 | Novo | — |
+| `APK/src/utils/trechoNoMapa.js` | 99 | Novo | metrosPorPixel, toleranciaDoClique, distanciaPontoSegmentoMetros, trechoSobClique |
 | `APK/test/circuitoUI.test.js` | 24 | Novo | — |
 | `APK/test/controlesTrajeto.test.js` | 33 | Novo | — |
 | `APK/test/enderecoDigital.test.js` | 514 | Igual à base | — |
 | `APK/test/enderecoUI.test.js` | 4 | Novo | — |
 | `APK/test/fidelity.test.js` | 416 | Igual à base | — |
+| `APK/test/gradleLauncher.test.js` | 54 | Novo | — |
 | `APK/test/graph.test.js` | 280 | Igual à base | — |
 | `APK/test/helpers.js` | 91 | Igual à base | ROOT, loadRealFeatures, feature, official, unofficial, road, offset |
-| `APK/test/mapRender.test.js` | 39 | Novo | — |
+| `APK/test/mapRender.test.js` | 51 | Novo | — |
 | `APK/test/mapSync.test.js` | 38 | Novo | — |
-| `APK/test/mapaTrechos.test.js` | 262 | Novo | — |
+| `APK/test/mapaTrechos.test.js` | 273 | Novo | — |
 | `APK/test/mobileNetworkService.test.js` | 74 | Novo | — |
 | `APK/test/nativeGPS.test.js` | 83 | Novo | — |
 | `APK/test/navegacaoMobile.test.js` | 139 | Novo | — |
@@ -68,6 +70,7 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `APK/test/resumoRota.test.js` | 4 | Novo | — |
 | `APK/test/routeResultRender.test.js` | 27 | Novo | — |
 | `APK/test/router.test.js` | 509 | Igual à base | — |
+| `APK/test/trechoNoMapa.test.js` | 84 | Novo | — |
 | `APK/test/wfs.test.js` | 295 | Igual à base | — |
 | `core/armazenamentoLocal.js` | 798 | Alterado | ESTADO, STORE, TIPO_OPERACAO, STORES, VERSAO_ESQUEMA, descreverErroArmazenamento, novoId, criarAdaptadorMemoria, criarAdaptadorIndexedDB, criarArmazenamento |
 | `core/coleta.js` | 796 | Alterado | ESTADO_COLETA, TIPO_PONTO, MOTIVO, FONTE, CLASSIFICACAO, CONFIG_PADRAO, criarColeta, capturarPosicao, montarLocalizacaoResidencia, detectarDuplicado |
