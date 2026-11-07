@@ -259,3 +259,14 @@ test('Canvas: zoom respeita os limites e os controles +/− têm área e rótulo
   assert.match(MAP_HTML, /id="fallback-zoom-out" aria-label="Afastar mapa"/);
   assert.match(MAP_HTML, /#fallback-zoom button \{[^}]*width: 36px/);
 });
+test('Canvas: clique informa o zoom para a tolerância do toque no trecho', () => {
+  const a = ambiente('canvas');
+  a.send({ type: 'SET_NETWORK', features: [{ geometry: { type: 'LineString', coordinates: [[-46.6, -23.8], [-46.4, -23.6]] } }] });
+  a.send({ type: 'CENTER_POINT', lon: -46.5, lat: -23.7 });
+  a.events.pointerdown({ clientX: 200, clientY: 150 });
+  a.events.pointerup({ clientX: 200, clientY: 150 });
+  const clique = a.messages.at(-1);
+  assert.equal(clique.type, 'MAP_CLICK');
+  assert.ok(Math.abs(clique.zoom - 17) < 1e-9);
+  assert.match(MAP_HTML, /zoom: map\.getView\(\)\.getZoom\(\)/);
+});

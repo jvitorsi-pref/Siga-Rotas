@@ -217,7 +217,9 @@ export const MAP_HTML = `<!DOCTYPE html>
       postToRN({
         type: 'MAP_CLICK',
         lon: lonLat[0],
-        lat: lonLat[1]
+        lat: lonLat[1],
+        // o zoom permite calcular a tolerância do toque em metros
+        zoom: map.getView().getZoom()
       });
     });
 
@@ -606,7 +608,12 @@ export const MAP_HTML = `<!DOCTYPE html>
     }
     if (toque && !toque.moved) {
       var ll = xyToLonLat(e.clientX, e.clientY);
-      postToRN({ type: 'MAP_CLICK', lon: ll[0], lat: ll[1] });
+      postToRN({
+        type: 'MAP_CLICK',
+        lon: ll[0],
+        lat: ll[1],
+        zoom: zoomDaEscala(view.scale)
+      });
     }
     toque = null;
   }

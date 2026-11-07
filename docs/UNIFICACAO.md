@@ -707,3 +707,79 @@ A alça de reordenação é um `span` com `role="button"` e `tabindex="0"`, port
 Arquivos alterados: `public/app.js`, `public/index.html`, `README.md`, `docs/AUDITORIA-COMPARATIVA.md`, `docs/UNIFICACAO.md`. Nenhum arquivo `core/`/`server/`, componente nativo, regra de rota ou coleta foi alterado. Script de navegador: `/home/user/browser-check/check-reordenacao.cjs` (aceita `SIGA_URL`); layout: `/home/user/browser-check/check-layout.cjs`. Logs: `/home/user/{layout-browser,reordenacao-browser,reordenacao-antes-dica,reordenacao-antes-teclado,reordenacao-web-tests,reordenacao-apk-tests}.log`.
 
 **O arraste nativo no APK, a homologação em aparelho, os tiles offline do Canvas e a coleta de localização continuam pendentes. Unificação ainda parcial.**
+
+
+## Continuação — toque no trecho do mapa no APK (M03)
+
+### Lacuna
+
+No Web, clicar num trecho da rota o oculta (e clicar de novo o mostra), o que resolve sobreposições; no APK só era possível fazer isso pela legenda e pelo cartão do trecho. O toque no mapa era usado apenas para selecionar um ponto e, sem seleção, era ignorado.
+
+### Implementação
+
+- A mensagem `MAP_CLICK` da WebView passou a levar o **zoom** (OpenLayers e Canvas) junto de `lon`/`lat`.
+- Novo módulo puro `APK/src/utils/trechoNoMapa.js`: distância ponto–segmento em metros (projeção local equiretangular), tolerância de **8 px convertidos em metros** pelo zoom, limitada a **3–60 m** (12 m quando a mensagem não traz zoom). Só trechos **visíveis** são candidatos; empate é decidido pelo menor índice; `LineString` e `MultiLineString` são aceitos; geometrias inválidas são ignoradas.
+- `RoadNetworkMap`: com `pickingPoint` ativo, o toque continua definindo o ponto; sem seleção, chama `onMapClick`.
+- `App`: o toque oculta o trecho mais próximo visível e informa no rodapé; tocar de novo mostra. Não recalcula, não reordena, não muda distância, cor ou legenda. Um toque longe de qualquer trecho não faz nada.
+
+### Evidências
+
+| Verificação | Resultado |
+|---|---|
+| Testes novos contra o código anterior | **3/3 falham** (sem zoom, sem alternância por toque, sem o helper) |
+| Novos testes | **9** (7 do módulo + 1 da WebView + 1 do Canvas) |
+| `APK/test/trechoNoMapa.test.js` | **7/7**, incluindo zoom alto/baixo, sobreposição, oculto, `MultiLineString` e geometria inválida |
+| `npm test` | **299/299** |
+| `npm test --prefix APK` | **204/204** naquele momento (**208/208** após o F13) |
+| Exportação Android/Hermes | **614 módulos**, **9,15 MB** |
+| Inventário | **142 arquivos** naquele momento (**143** após o F13), **21 protegidos**, **3 exceções aprovadas**, **0 não aprovadas** |
+| `git diff --check` | Sem erros |
+
+**Rota real da API** (A→B→C→A, 3 pernas, 3.114,28 m): toque exatamente na geometria devolve a perna 0 com distância 0 e tolerância **8,75 m** no zoom 17; desvio de 15 m e de 40 m não devolve trecho; com a perna 0 oculta, o mesmo toque também não devolve nada. O cálculo da rota não participa deste caminho.
+
+**Chromium real (após reinstalar o navegador via pacote npm):** o HTML do mapa foi servido com o CDN bloqueado (Canvas) e com o OpenLayers vendorizado localmente. Nos dois motores o clique devolveu `lon=-46.5`, `lat=-23.7` e **zoom 17**; arrastar **não** gerou `MAP_CLICK`; zero erros JavaScript.
+
+Limites: a ponte foi verificada em Chromium e o cálculo do trecho em Node com a geometria real do servidor; **não é toque físico na WebView/Android**, nem homologa a sensação de tolerância em tela. O valor de 8 px segue o `hitTolerance` do Web, mas pode precisar de ajuste após teste em aparelho. A construção do APK (Gradle/assinatura) continua fora deste ambiente.
+
+Arquivos: `APK/src/utils/trechoNoMapa.js` (novo), `APK/App.js`, `APK/src/components/RoadNetworkMap.js`, `APK/src/map/mapHtml.js`, `APK/test/trechoNoMapa.test.js` (novo), `APK/test/mapRender.test.js`, `APK/test/mapaTrechos.test.js`, READMEs e documentação. Logs: `/home/user/trecho-{web-tests,apk-tests,export,antes}.log`; script de navegador `/tmp/br/check-clique-map.cjs` (Chromium de `@sparticuz/chromium` + `playwright-core` instalados fora do repositório).
+
+**Coleta de localização segue adiada; unificação ainda parcial.**
+
+
+## Continuação — build multiplataforma e assinatura do APK (F13 parcial)
+
+### Defeitos reproduzidos na configuração
+
+- `apk:debug` e `apk:release` chamavam `gradlew.bat` diretamente: **quebravam no Linux/macOS**.
+- O `gradlew` versionado não tinha permissão de execução (modo 644).
+- O release usava a **chave de debug**, sem caminho para um keystore próprio; `*.keystore` está no `.gitignore`, então o `android/app/debug.keystore` também não é versionado e precisa ser recriado por `expo prebuild`.
+- Nada disso foi compilado nesta sessão: **não há JDK nem Android SDK** no ambiente.
+
+### Alterações
+
+- Novo `APK/scripts/gradle.mjs`: escolhe `gradlew.bat` (Windows) ou `gradlew` (Linux/macOS), repassa argumentos, mantém shell apenas no Windows e explica a falha quando falta JDK/SDK. `SIGA_GRADLE_DRY=1` imprime o comando; sem tarefa, sai com código 2.
+- `package.json` do APK passa a usar `node scripts/gradle.mjs assembleDebug|assembleRelease`.
+- `android/app/build.gradle`: `signingConfigs.release` e o `buildTypes.release` leem `android/keystore.properties` quando existir; **sem o arquivo, o release continua usando a chave de debug** (comportamento anterior preservado). `android/keystore.properties` foi incluído no `.gitignore`.
+- `gradlew` recebeu permissão de execução.
+- README do APK documenta o wrapper, o keystore e a limitação de não publicar com a chave de debug.
+
+### Evidências
+
+| Verificação | Resultado |
+|---|---|
+| Testes do wrapper (`APK/test/gradleLauncher.test.js`) | **4/4** |
+| Modo de conferência | `{"cwd":"…/APK/android","executavel":"./gradlew","argumentos":["assembleRelease"]}` |
+| Sem tarefa | mensagem de uso e código **2** |
+| Scripts npm | sem `gradlew.bat`; caminhos `node scripts/gradle.mjs …` |
+| Configuração de assinatura | lida por teste: propriedades, fallback debug e `.gitignore` do keystore.properties |
+| `npm test --prefix APK` | **208/208** |
+| `npm test` | **299/299** |
+| `npm run apk:release` no Linux | alcança o `gradlew` (antes falhava no `.bat`); o Gradle para em `JAVA_HOME is not set` |
+| Inventário | **143 arquivos**, **21 protegidos**, **3 exceções**, **0 não aprovadas** |
+| Exportação Hermes | **614 módulos**, **9,15 MB** |
+
+**O que não foi demonstrado:** `gradlew assembleRelease` de verdade, geração/validação de keystore, assinatura do APK, instalação e publicação. Sem JDK 17 e Android SDK, o wrapper só foi executado em modo de conferência. O README agora diz isso explicitamente.
+
+Arquivos: `APK/scripts/gradle.mjs` (novo), `APK/test/gradleLauncher.test.js` (novo), `APK/package.json`, `APK/android/app/build.gradle`, `APK/.gitignore`, `APK/README.md`, documentação. Nenhum arquivo `core/`/`server/`, regra de rota ou coleta foi alterado.
+
+**Coleta de localização segue adiada; unificação ainda parcial.**
