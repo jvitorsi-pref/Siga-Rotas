@@ -730,9 +730,9 @@ No Web, clicar num trecho da rota o oculta (e clicar de novo o mostra), o que re
 | Novos testes | **9** (7 do módulo + 1 da WebView + 1 do Canvas) |
 | `APK/test/trechoNoMapa.test.js` | **7/7**, incluindo zoom alto/baixo, sobreposição, oculto, `MultiLineString` e geometria inválida |
 | `npm test` | **299/299** |
-| `npm test --prefix APK` | **204/204** |
+| `npm test --prefix APK` | **204/204** naquele momento (**208/208** após o F13) |
 | Exportação Android/Hermes | **614 módulos**, **9,15 MB** |
-| Inventário | **142 arquivos**, **21 protegidos**, **3 exceções aprovadas**, **0 não aprovadas** |
+| Inventário | **142 arquivos** naquele momento (**143** após o F13), **21 protegidos**, **3 exceções aprovadas**, **0 não aprovadas** |
 | `git diff --check` | Sem erros |
 
 **Rota real da API** (A→B→C→A, 3 pernas, 3.114,28 m): toque exatamente na geometria devolve a perna 0 com distância 0 e tolerância **8,75 m** no zoom 17; desvio de 15 m e de 40 m não devolve trecho; com a perna 0 oculta, o mesmo toque também não devolve nada. O cálculo da rota não participa deste caminho.
