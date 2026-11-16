@@ -53,7 +53,8 @@ import { RouteResultPanel } from './src/components/RouteResultPanel.js';
 import { RoadNetworkMap } from './src/components/RoadNetworkMap.js';
 import { trechosParaMapa } from './src/map/routePresentation.js';
 import { criarRevisoesEndereco } from './src/utils/revisoesEndereco.js';
-import { criarListaCircuito, opcoesCalculoCircuito } from './src/utils/planejamentoCircuito.js';
+import { criarListaCircuito, opcoesCalculoCircuito, resolverPontoNoMapa } from './src/utils/planejamentoCircuito.js';
+import { exportarRotaGpxMobile } from './src/services/mobileGpxExport.js';
 import { COLORS } from './src/theme/colors.js';
 
 export default function App() {
@@ -97,6 +98,12 @@ export default function App() {
   const restoreSegments = () => setVisibilidade({ rota: routeResult, ocultos: [] });
   const [routeError, setRouteError] = useState(null);
   const [partialGeometry, setPartialGeometry] = useState(null);
+  const [exportingGpx, setExportingGpx] = useState(false);
+  const [gpxFeedback, setGpxFeedback] = useState(null);
+
+  useEffect(() => {
+    setGpxFeedback(null);
+  }, [routeResult, routeError, lista]);
 
   // Barra de status inferior (idle | busy | ok | err)
   const [statusInfo, setStatusInfo] = useState({
@@ -291,23 +298,48 @@ export default function App() {
   const handleMapPickCoordinate = ({ lon, lat }) => {
     if (!pickingId) return;
     revisoesEndereco.current.invalidar(pickingId);
+    let resolvido = null;
+    try {
+      resolvido = resolverPontoNoMapa(lat, lon, { acao: 'selecionado' });
+    } catch {
+      resolvido = null;
+    }
     setLista((atual) => {
       const copia = cloneLista(atual);
       const ponto = copia.pontos.find((p) => p.id === pickingId);
       if (ponto) {
-        atualizarPonto(copia, ponto.id, {
-          latitude: lat,
-          longitude: lon,
-          status: STATUS.CONVERTIDO,
-          origem: 'mapa',
-          mensagem: 'Ponto selecionado no mapa.',
-          enderecoDigital: ponto.enderecoDigital || '',
-        });
+        if (resolvido) {
+          atualizarPonto(copia, ponto.id, {
+            latitude: resolvido.latitude,
+            longitude: resolvido.longitude,
+            status: resolvido.status,
+            origem: resolvido.origem,
+            mensagem: resolvido.mensagem,
+            enderecoDigital: resolvido.enderecoDigital,
+            codigoNormalizado: resolvido.codigoNormalizado,
+            codigoCompleto: resolvido.codigoCompleto,
+          });
+        } else {
+          atualizarPonto(copia, ponto.id, {
+            latitude: lat,
+            longitude: lon,
+            status: STATUS.CONVERTIDO,
+            origem: 'mapa',
+            mensagem: 'Ponto selecionado no mapa.',
+            enderecoDigital: ponto.enderecoDigital || '',
+          });
+        }
       }
       return cloneLista(copia);
     });
     setPickingId(null);
-    setStatus('Ponto definido no mapa. Calcule a rota.', 'idle');
+    if (resolvido?.naRegiao) {
+      setStatus(`Ponto definido no mapa (${resolvido.enderecoDigital}).`, 'ok');
+    } else if (resolvido) {
+      setStatus(resolvido.mensagem, 'err');
+    } else {
+      setStatus('Ponto definido no mapa. Calcule a rota.', 'idle');
+    }
   };
 
   const handleFocusMap = (ponto) => {
@@ -363,7 +395,37 @@ export default function App() {
     setRouteResult(null);
     setRouteError(null);
     setPartialGeometry(null);
+    setGpxFeedback(null);
     setStatus('Pronto', 'idle');
+  };
+
+  const handleExportGpx = async () => {
+    if (exportingGpx) return;
+    Keyboard.dismiss();
+    if (!routeResult || routeResult.ok === false || routeResult.parcial) {
+      const msg = 'Calcule uma rota completa antes de exportar em GPX.';
+      setGpxFeedback({ kind: 'err', text: msg });
+      setStatus(msg, 'err');
+      return;
+    }
+    setExportingGpx(true);
+    setGpxFeedback(null);
+    setStatus('Preparando exportação GPX…', 'busy');
+    try {
+      const res = await exportarRotaGpxMobile(routeResult, { pontos: lista.pontos });
+      if (res.ok) {
+        setGpxFeedback({ kind: 'ok', text: res.mensagem });
+        setStatus(res.mensagem, 'ok');
+      } else if (res.cancelado) {
+        setGpxFeedback({ kind: 'warn', text: res.mensagem });
+        setStatus(res.mensagem, 'idle');
+      } else {
+        setGpxFeedback({ kind: 'err', text: res.mensagem });
+        setStatus(res.mensagem, 'err');
+      }
+    } finally {
+      setExportingGpx(false);
+    }
   };
 
   // ─────────────── Cálculo da rota ───────────────
@@ -629,6 +691,9 @@ export default function App() {
               routeSegments={routeSegments}
               onToggleSegment={toggleSegment}
               onRestoreSegments={restoreSegments}
+              onExportGpx={handleExportGpx}
+              exportingGpx={exportingGpx}
+              gpxFeedback={gpxFeedback}
               routeError={routeError}
             />
 

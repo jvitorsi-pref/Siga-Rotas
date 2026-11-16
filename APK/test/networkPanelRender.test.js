@@ -26,7 +26,7 @@ test('painel renderiza carregamento antes de haver metadados',()=>{
 test('falha inicial deixa alerta e botão de nova tentativa, sem spinner infinito',()=>{
  let count=0;const retry=()=>count++,c=setup({meta:null,feedback:{kind:'err',text:'Sem rede local'},onRetry:retry});const ns=c.nodes(c.render());assert.equal(ns.some(n=>n.type==='ActivityIndicator'),false);assert.match(c.text(c.render()),/Sem rede local/);ns.find(n=>n.type==='TouchableOpacity'&&n.props.onPress===retry).props.onPress();assert.equal(count,1);
 });
-test('cache e erro de quota são apresentados sem declarar conexão ativa ou sincronização de coleta',()=>{
+test('cache e erro de quota são apresentados sem declarar conexão ativa',()=>{
  const c=setup({meta:{...meta,source:'wfs-cache',cache:{status:'memory-only',error:'Não salvo: quota'},remoteApi:{configured:true,supported:false}},feedback:{kind:'err',text:'Servidor indisponível'}}),text=c.text(c.render());assert.match(text,/Cache local do WFS/);assert.match(text,/apenas em memória/);assert.match(text,/quota/);assert.match(text,/Local no aparelho/);assert.match(text,/Servidor indisponível/);assert.match(text,/Delegação remota não implementada/);assert.doesNotMatch(text,/WFS ao vivo/);
 });
 test('botões de rede ficam desativados durante operação e mantêm seus callbacks',()=>{

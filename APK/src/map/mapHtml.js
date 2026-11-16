@@ -17,8 +17,8 @@ export const MAP_HTML = `<!DOCTYPE html>
     touch-action: none;
   }
   .basemap {
-    filter: grayscale(0.82) brightness(1.19) contrast(0.8) saturate(0.45);
-    opacity: 0.95;
+    filter: grayscale(0.75) contrast(0.88) brightness(1.06) saturate(0.5);
+    opacity: 0.92;
   }
   .ol-zoom {
     top: 12px;
@@ -35,7 +35,35 @@ export const MAP_HTML = `<!DOCTYPE html>
     border-radius: 6px !important;
     margin-bottom: 4px !important;
   }
-  .ol-attribution { display: none !important; }
+  .ol-attribution {
+    right: 8px !important;
+    bottom: 6px !important;
+    left: auto !important;
+    max-width: 170px !important;
+    background: rgba(255, 255, 255, 0.92) !important;
+    border: 1px solid #d0d7de !important;
+    border-radius: 6px !important;
+    padding: 2px 6px !important;
+    font-size: 10px !important;
+    line-height: 1.25 !important;
+    color: #374151 !important;
+    z-index: 4 !important;
+  }
+  .ol-attribution ul {
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 10px !important;
+    color: #374151 !important;
+  }
+  .ol-attribution a {
+    color: #045127 !important;
+    text-decoration: underline !important;
+  }
+  .ol-attribution button {
+    color: #045127 !important;
+    background: transparent !important;
+    font-weight: 700 !important;
+  }
   #fallback-canvas {
     display: none;
     width: 100%;
@@ -104,13 +132,17 @@ export const MAP_HTML = `<!DOCTYPE html>
       layers: [
         new ol.layer.Tile({
           className: 'basemap',
-          source: new ol.source.OSM()
+          source: new ol.source.OSM({
+            maxZoom: 19,
+            interpolate: true
+          })
         })
       ],
       view: new ol.View({
         center: ol.proj.fromLonLat([-46.4255, -23.7031]),
         zoom: 13,
-        maxZoom: 19
+        minZoom: 5,
+        maxZoom: 22
       })
     });
 
@@ -280,7 +312,7 @@ export const MAP_HTML = `<!DOCTYPE html>
         }
         var rExt = routeSource.getExtent();
         if (msg.fit !== false && isExtentValid(rExt)) {
-          map.getView().fit(rExt, { padding: [55, 55, 55, 55], maxZoom: 17, duration: 500 });
+          map.getView().fit(rExt, { padding: [55, 55, 55, 55], maxZoom: 18, duration: 500 });
         }
       } else if (msg.type === 'CENTER_POINT') {
         if (msg.lon != null && msg.lat != null) {
@@ -300,7 +332,7 @@ export const MAP_HTML = `<!DOCTYPE html>
       } else if (msg.type === 'FIT_ROUTE') {
         var rtExt = routeSource.getExtent();
         if (isExtentValid(rtExt)) {
-          map.getView().fit(rtExt, { padding: [55, 55, 55, 55], maxZoom: 17, duration: 450 });
+          map.getView().fit(rtExt, { padding: [55, 55, 55, 55], maxZoom: 18, duration: 450 });
         }
       }
     };
@@ -326,7 +358,7 @@ export const MAP_HTML = `<!DOCTYPE html>
 
   // Mesma faixa e a mesma relação zoom × resolução do OpenLayers 10, para que
   // o fallback não invente uma escala incompatível com o mapa vetorial.
-  var ZOOM_MIN = 5, ZOOM_MAX = 21;
+  var ZOOM_MIN = 5, ZOOM_MAX = 22;
   var ESCALA_BASE = 111319.49079327358 / 156543.03392804097;
 
   function zoomDaEscala(escala) {
@@ -524,9 +556,15 @@ export const MAP_HTML = `<!DOCTYPE html>
     zoomAt(e.clientX, e.clientY, Math.pow(2, -e.deltaY / 400));
   }, { passive: false });
 
+  canvas.addEventListener('dblclick', function (e) {
+    if (e.preventDefault) e.preventDefault();
+    zoomAt(e.clientX, e.clientY, 2);
+  });
+
   var ponteiros = {};
-  var toque = null;   // arrastar/soltar com um dedo
-  var pinca = null;   // dois dedos: distância e centro anteriores
+  var toque = null;       // arrastar/soltar com um dedo
+  var pinca = null;       // dois dedos: distância e centro anteriores
+  var ultimoToque = null; // duplo toque no mesmo ponto para aproximar
 
   function ponteirosAtivos() {
     var lista = [];
@@ -540,6 +578,7 @@ export const MAP_HTML = `<!DOCTYPE html>
     var lista = ponteirosAtivos();
     if (lista.length < 2) { pinca = null; return; }
     pinca = { distancia: distanciaEntre(lista[0], lista[1]), centro: centroEntre(lista[0], lista[1]) };
+    ultimoToque = null;
   }
 
   canvas.addEventListener('pointerdown', function (e) {
@@ -584,6 +623,7 @@ export const MAP_HTML = `<!DOCTYPE html>
     var dy = e.clientY - toque.y;
     if (Math.hypot(dx, dy) > 6) toque.moved = true;
     if (toque.moved) {
+      ultimoToque = null;
       view.centerLon -= dx / view.scale;
       view.centerLat += dy / view.scale;
       toque.x = e.clientX;
@@ -605,6 +645,19 @@ export const MAP_HTML = `<!DOCTYPE html>
       return;
     }
     if (toque && !toque.moved) {
+      var agora = Date.now();
+      var mesmoPonto = ultimoToque &&
+        Math.hypot(e.clientX - ultimoToque.x, e.clientY - ultimoToque.y) <= 24;
+      var intervaloDuplo = ultimoToque && (agora - ultimoToque.t) >= 20 && (agora - ultimoToque.t) <= 320;
+      if (e.pointerType === 'touch' && mesmoPonto && intervaloDuplo) {
+        ultimoToque = null;
+        toque = null;
+        zoomAt(e.clientX, e.clientY, 2);
+        return;
+      }
+      if (e.pointerType === 'touch') {
+        ultimoToque = { x: e.clientX, y: e.clientY, t: agora };
+      }
       var ll = xyToLonLat(e.clientX, e.clientY);
       postToRN({ type: 'MAP_CLICK', lon: ll[0], lat: ll[1] });
     }

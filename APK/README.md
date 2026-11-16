@@ -11,7 +11,7 @@ Adaptação do **Motor de Roteamento Viário de Santo André** (`siga:SIGA_EIXO_
 - Fonte “WFS — carregado nesta sessão” não indica conexão ativa. Cache local e snapshot embarcado são identificados separadamente. Falha de gravação informa quando uma atualização ficou apenas em memória.
 - Alternar Painel/Dividido/Mapa mantém a mesma WebView e a preferência da legenda. No modo Painel ela fica invisível e sem interação/acessibilidade, mas retida em memória para não perder a câmera. Redimensionar não reenquadra a rota; novos cálculos ou os comandos explícitos Rede/Rota continuam podendo enquadrar.
 - Se o CDN do OpenLayers falhar ou ultrapassar o prazo nominal de 3 s, o mapa vetorial Canvas inicia sem depender dele. Não troca de motor se o script chegar depois. O Canvas usa o fundo claro, rede/rotas/pontos locais, arraste, roda do mouse, pinça e os botões +/− no mesmo lugar/aparência do OpenLayers; não oferece tiles OSM offline, rotação, inércia nem teclado como o mapa vetorial completo.
-- O painel trata da **rede viária**, não de sincronização de dados coletados. **Coleta de localização está adiada** por decisão do usuário. Cálculo continua local; delegação por URL remota não está implementada.
+- O painel trata apenas da **rede viária** (consulta WFS, cache local e diagnóstico do grafo). Cálculo continua local; delegação por URL remota não está implementada.
 - Estado validado em código/testes: **299 testes Web / 195 APK**, exportação Android/Hermes. Execução/gestos, AsyncStorage real e aparência em aparelho ainda requerem homologação.
 
 ---
