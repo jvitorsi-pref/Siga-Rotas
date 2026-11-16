@@ -16,7 +16,16 @@ import { resumoRota } from '../utils/resumoRota.js';
 import { formatDistanceParts, formatStreetLength } from '../utils/formatters.js';
 import { COLORS } from '../theme/colors';
 
-export function RouteResultPanel({ routeResult, routeError, routeSegments = [], onToggleSegment, onRestoreSegments }) {
+export function RouteResultPanel({
+  routeResult,
+  routeError,
+  routeSegments = [],
+  onToggleSegment,
+  onRestoreSegments,
+  onExportGpx,
+  exportingGpx = false,
+  gpxFeedback = null,
+}) {
   const [streetsOpen, setStreetsOpen] = useState(true);
 
   if (!routeResult && !routeError) return null;
@@ -102,6 +111,45 @@ export function RouteResultPanel({ routeResult, routeError, routeSegments = [], 
         <TouchableOpacity style={styles.summaryHeader} accessibilityRole="button" onPress={onRestoreSegments}>
           <Text style={styles.summaryTitle}>Mostrar todos os trechos</Text>
         </TouchableOpacity>
+      )}
+
+      {routeResult?.ok !== false && !routeResult?.parcial && typeof onExportGpx === 'function' && (
+        <View style={styles.gpxSection}>
+          <TouchableOpacity
+            style={[styles.exportGpxBtn, exportingGpx && styles.exportGpxBtnDisabled]}
+            disabled={exportingGpx}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !!exportingGpx, busy: !!exportingGpx }}
+            onPress={onExportGpx}
+          >
+            <Text style={styles.exportGpxBtnText}>
+              {exportingGpx ? 'Salvando GPX…' : 'Exportar GPX'}
+            </Text>
+          </TouchableOpacity>
+
+          {!!gpxFeedback?.text && (
+            <View
+              style={[
+                styles.gpxFeedbackBox,
+                gpxFeedback.kind === 'err' && styles.gpxFeedbackErr,
+                gpxFeedback.kind === 'warn' && styles.gpxFeedbackWarn,
+                gpxFeedback.kind === 'ok' && styles.gpxFeedbackOk,
+              ]}
+            >
+              <Text
+                accessibilityRole={gpxFeedback.kind === 'err' ? 'alert' : undefined}
+                style={[
+                  styles.gpxFeedbackText,
+                  gpxFeedback.kind === 'err' && styles.gpxFeedbackTextErr,
+                  gpxFeedback.kind === 'warn' && styles.gpxFeedbackTextWarn,
+                  gpxFeedback.kind === 'ok' && styles.gpxFeedbackTextOk,
+                ]}
+              >
+                {gpxFeedback.text}
+              </Text>
+            </View>
+          )}
+        </View>
       )}
 
       {/* Lista numerada dos logradouros percorridos */}
@@ -278,6 +326,61 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 12,
     paddingVertical: 4,
+  },
+  gpxSection: {
+    marginTop: 12,
+    gap: 6,
+  },
+  exportGpxBtn: {
+    backgroundColor: COLORS.panel,
+    borderColor: COLORS.accent,
+    borderWidth: 1,
+    borderRadius: 7,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+  },
+  exportGpxBtnDisabled: {
+    opacity: 0.55,
+  },
+  exportGpxBtnText: {
+    color: COLORS.accent,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  gpxFeedbackBox: {
+    backgroundColor: COLORS.panel2,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 9,
+  },
+  gpxFeedbackOk: {
+    backgroundColor: 'rgba(46, 160, 67, 0.1)',
+    borderColor: 'rgba(46, 160, 67, 0.4)',
+  },
+  gpxFeedbackWarn: {
+    backgroundColor: COLORS.warnBg,
+    borderColor: COLORS.warnBorder,
+  },
+  gpxFeedbackErr: {
+    backgroundColor: COLORS.errBg,
+    borderColor: COLORS.errBorder,
+  },
+  gpxFeedbackText: {
+    color: COLORS.text,
+    fontSize: 11.5,
+    lineHeight: 16,
+  },
+  gpxFeedbackTextOk: {
+    color: COLORS.ok,
+  },
+  gpxFeedbackTextWarn: {
+    color: COLORS.warn,
+  },
+  gpxFeedbackTextErr: {
+    color: COLORS.err,
   },
   summaryTitle: {
     color: COLORS.muted,

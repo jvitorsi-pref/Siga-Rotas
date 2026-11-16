@@ -259,3 +259,38 @@ test('Canvas: zoom respeita os limites e os controles +/− têm área e rótulo
   assert.match(MAP_HTML, /id="fallback-zoom-out" aria-label="Afastar mapa"/);
   assert.match(MAP_HTML, /#fallback-zoom button \{[^}]*width: 36px/);
 });
+
+test('APK mapa: OpenLayers alcança zoom 22 com tiles OSM em 19, atribuição visível e filtro sem brilho estourado', () => {
+  assert.match(MAP_HTML, /source:\s*new ol\.source\.OSM\(\{\s*maxZoom:\s*19,\s*interpolate:\s*true/s);
+  assert.match(MAP_HTML, /minZoom:\s*5,\s*maxZoom:\s*22/);
+  const attrCss = MAP_HTML.match(/\.ol-attribution\s*\{[^}]*\}/)?.[0] || '';
+  assert.ok(attrCss.length > 0);
+  assert.doesNotMatch(attrCss, /display:\s*none/);
+  const basemapCss = MAP_HTML.match(/\.basemap\s*\{[^}]*\}/)?.[0] || '';
+  assert.doesNotMatch(basemapCss, /brightness\(1\.19\)/);
+  assert.match(basemapCss, /grayscale\(0\.75\)/);
+});
+
+test('Canvas: zoom alcança nível 22 e duplo clique / duplo toque aproxima no ponto tocado', () => {
+  const a = ambiente('canvas');
+  a.send({ type: 'SET_NETWORK', features: [{ geometry: legs[0].geometry }] });
+  const click = (x, y) => {
+    a.events.pointerdown({ clientX: x, clientY: y });
+    a.events.pointerup({ clientX: x, clientY: y });
+    return a.messages.at(-1);
+  };
+  for (let i = 0; i < 60; i++) a.events.wheel({ clientX: 200, clientY: 150, deltaY: -900 });
+  const larguraZ22 = click(220, 150).lon - click(200, 150).lon;
+  const esperadoZ22 = 20 / ((111319.49079327358 / 156543.03392804097) * Math.pow(2, 22));
+  assert.ok(Math.abs(larguraZ22 - esperadoZ22) < 1e-8, 'Canvas deve alcançar zoom 22');
+
+  // Testa duplo clique aproximando 2x em ponto específico
+  a.send({ type: 'FIT_NETWORK' });
+  const antesDbl = click(200, 150);
+  const passoAntes = click(220, 150).lon - antesDbl.lon;
+  a.events.dblclick({ clientX: 200, clientY: 150 });
+  const depoisDbl = click(200, 150);
+  const passoDepois = click(220, 150).lon - depoisDbl.lon;
+  assert.ok(Math.abs(antesDbl.lon - depoisDbl.lon) < 1e-9);
+  assert.ok(passoDepois < passoAntes * 0.6 && passoDepois > passoAntes * 0.4);
+});

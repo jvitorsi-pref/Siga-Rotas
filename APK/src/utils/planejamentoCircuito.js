@@ -1,1 +1,7 @@
-export { criarListaCircuito, opcoesCalculoCircuito, papelPontoCircuito } from '../../../public/planejamentoCircuito.js';
+export {
+  criarListaCircuito,
+  opcoesCalculoCircuito,
+  papelPontoCircuito,
+  assinaturaPlanejador,
+  resolverPontoNoMapa,
+} from '../../../public/planejamentoCircuito.js';

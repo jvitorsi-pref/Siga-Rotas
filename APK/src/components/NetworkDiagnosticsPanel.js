@@ -108,7 +108,7 @@ export function NetworkDiagnosticsPanel({
         {apresentacao.erros.map((e, i) => <Text key={`erro-${i}`} style={styles.warnText}>{e}</Text>)}
       </View>}
 
-      {/* Consulta/baixamento da rede, não sincronização de dados de coleta. */}
+      {/* Consulta e download da rede viária WFS. */}
       <View style={styles.syncActions}>
         <TouchableOpacity
           style={[styles.syncBtn, syncing && styles.syncBtnDisabled]}
