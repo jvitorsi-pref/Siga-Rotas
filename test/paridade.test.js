@@ -15,6 +15,13 @@ for (const name of ['config', 'enderecoDigital', 'enderecoDigitalService', 'geo'
   });
 }
 
+test('Android e Web compartilham a configuração de camada base (OSM padrão / Satélite Esri)', async () => {
+  const webModule = await import('../public/camadaBase.js');
+  const nativeModule = await import('../APK/src/map/camadaBase.js');
+  assert.deepEqual(Object.keys(nativeModule), Object.keys(webModule));
+  for (const key of Object.keys(webModule)) assert.equal(nativeModule[key], webModule[key]);
+});
+
 const [x, y] = project(-46.545, -23.66);
 const coord = (dx, dy) => unproject(x + dx, y + dy);
 const features = [

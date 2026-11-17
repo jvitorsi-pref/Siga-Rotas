@@ -1,6 +1,6 @@
 # Inventário técnico — unificação
 
-Gerado por `node tools/inventario-unificacao.mjs`. Base: `c7f8c3d5cf320ae43ca0148e65529e23bbbda241`.
+Gerado por `node tools/inventario-unificacao.mjs`. Base: `56d0598741d12d9223d65f070693e8605ab08efa`.
 
 Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não afirma validação visual nem execução Android. Vendor OpenLayers, snapshots e arquivos Android gerados são dependências/recursos, não incluídos na tabela de exports. Pacotes em `updates/` são históricos e não entram no grafo de imports ativo.
 
@@ -12,17 +12,17 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 
 | Arquivo | Linhas | Situação | Exports / reexports |
 |---|---:|---|---|
-| `APK/App.js` | 888 | Alterado | — |
+| `APK/App.js` | 914 | Alterado | — |
 | `APK/android/app/src/main/AndroidManifest.xml` | 34 | Igual à base | — |
 | `APK/app.json` | 45 | Igual à base | — |
 | `APK/eas.json` | 27 | Igual à base | — |
 | `APK/metro.config.js` | 10 | Igual à base | — |
-| `APK/package.json` | 34 | Alterado | — |
+| `APK/package.json` | 34 | Igual à base | — |
 | `APK/src/components/NavigationPanel.js` | 89 | Igual à base | NavigationPanel |
-| `APK/src/components/NetworkDiagnosticsPanel.js` | 293 | Alterado | NetworkDiagnosticsPanel |
+| `APK/src/components/NetworkDiagnosticsPanel.js` | 293 | Igual à base | NetworkDiagnosticsPanel |
 | `APK/src/components/PointCard.js` | 339 | Igual à base | PointCard |
-| `APK/src/components/RoadNetworkMap.js` | 326 | Alterado | RoadNetworkMap |
-| `APK/src/components/RouteResultPanel.js` | 462 | Alterado | RouteResultPanel |
+| `APK/src/components/RoadNetworkMap.js` | 456 | Alterado | RoadNetworkMap |
+| `APK/src/components/RouteResultPanel.js` | 462 | Igual à base | RouteResultPanel |
 | `APK/src/core/config.js` | 3 | Igual à base | → ../../../core/config.js |
 | `APK/src/core/enderecoDigital.js` | 3 | Igual à base | → ../../../core/enderecoDigital.js |
 | `APK/src/core/enderecoDigitalService.js` | 3 | Igual à base | → ../../../core/enderecoDigitalService.js |
@@ -33,12 +33,14 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `APK/src/core/router.js` | 3 | Igual à base | → ../../../core/router.js |
 | `APK/src/core/spatialIndex.js` | 3 | Igual à base | → ../../../core/spatialIndex.js |
 | `APK/src/core/wfs.js` | 530 | Igual à base | WfsError, parseServiceException, fetchNetwork, describeLayer, checkForUpdates |
-| `APK/src/map/mapHtml.js` | 757 | Alterado | MAP_HTML |
-| `APK/src/map/mapSync.js` | 43 | Igual à base | criarSincronizacaoMapa |
+| `APK/src/map/camadaBase.js` | 2 | Novo | → ../../../public/camadaBase.js |
+| `APK/src/map/mapHtml.js` | 897 | Alterado | MAP_HTML |
+| `APK/src/map/mapSync.js` | 45 | Alterado | criarSincronizacaoMapa |
 | `APK/src/map/routePresentation.js` | 13 | Igual à base | trechosParaMapa |
 | `APK/src/map/styleScript.js` | 24 | Igual à base | ESTILO_TRECHO_JS |
-| `APK/src/services/mobileGpxExport.js` | 13 | Novo | exportarRotaGpxMobile |
-| `APK/src/services/mobileGpxExportCore.js` | 105 | Novo | descreverPastaSaf, exportarRotaGpxMobileCore |
+| `APK/src/services/basemapPreference.js` | 15 | Novo | carregarCamadaBaseMobile, salvarCamadaBaseMobile |
+| `APK/src/services/mobileGpxExport.js` | 13 | Igual à base | exportarRotaGpxMobile |
+| `APK/src/services/mobileGpxExportCore.js` | 105 | Igual à base | descreverPastaSaf, exportarRotaGpxMobileCore |
 | `APK/src/services/mobileNavigationService.js` | 148 | Igual à base | criarNavegacaoMobile |
 | `APK/src/services/mobileNetworkService.js` | 13 | Igual à base | MobileNetworkService, mobileNetworkService |
 | `APK/src/services/mobileNetworkServiceCore.js` | 473 | Igual à base | STORAGE_KEY_SNAPSHOT, fingerprintOf, MobileNetworkServiceCore |
@@ -48,29 +50,30 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `APK/src/theme/colors.js` | 33 | Igual à base | COLORS |
 | `APK/src/utils/controlesTrajeto.js` | 13 | Igual à base | podeDescerParada, inverterTrajeto |
 | `APK/src/utils/formatters.js` | 139 | Igual à base | numeroDe, parseCoords, formatCoord, formatDistanceParts, formatStreetLength, TEXTO_ESTADO, classeEstado, reasonTitle |
-| `APK/src/utils/gpx.js` | 2 | Novo | → ../../../public/gpx.js |
+| `APK/src/utils/gpx.js` | 2 | Igual à base | → ../../../public/gpx.js |
 | `APK/src/utils/networkPresentation.js` | 14 | Igual à base | apresentarRede |
-| `APK/src/utils/planejamentoCircuito.js` | 8 | Alterado | — |
+| `APK/src/utils/planejamentoCircuito.js` | 8 | Igual à base | — |
 | `APK/src/utils/resumoRota.js` | 2 | Igual à base | — |
 | `APK/src/utils/revisoesEndereco.js` | 2 | Igual à base | — |
+| `APK/test/basemapPreference.test.js` | 41 | Novo | — |
 | `APK/test/circuitoUI.test.js` | 24 | Igual à base | — |
 | `APK/test/controlesTrajeto.test.js` | 33 | Igual à base | — |
 | `APK/test/enderecoDigital.test.js` | 514 | Igual à base | — |
 | `APK/test/enderecoUI.test.js` | 4 | Igual à base | — |
 | `APK/test/fidelity.test.js` | 416 | Igual à base | — |
-| `APK/test/gpxMobile.test.js` | 164 | Novo | — |
+| `APK/test/gpxMobile.test.js` | 164 | Igual à base | — |
 | `APK/test/graph.test.js` | 280 | Igual à base | — |
 | `APK/test/helpers.js` | 91 | Igual à base | ROOT, loadRealFeatures, feature, official, unofficial, road, offset |
-| `APK/test/mapRender.test.js` | 39 | Igual à base | — |
-| `APK/test/mapSync.test.js` | 38 | Igual à base | — |
-| `APK/test/mapaTrechos.test.js` | 297 | Alterado | — |
+| `APK/test/mapRender.test.js` | 70 | Alterado | — |
+| `APK/test/mapSync.test.js` | 48 | Alterado | — |
+| `APK/test/mapaTrechos.test.js` | 385 | Alterado | — |
 | `APK/test/mobileNetworkService.test.js` | 74 | Igual à base | — |
 | `APK/test/nativeGPS.test.js` | 83 | Igual à base | — |
 | `APK/test/navegacaoMobile.test.js` | 139 | Igual à base | — |
 | `APK/test/networkPanel.test.js` | 60 | Igual à base | — |
-| `APK/test/networkPanelRender.test.js` | 41 | Alterado | — |
+| `APK/test/networkPanelRender.test.js` | 41 | Igual à base | — |
 | `APK/test/resumoRota.test.js` | 4 | Igual à base | — |
-| `APK/test/routeResultRender.test.js` | 40 | Alterado | — |
+| `APK/test/routeResultRender.test.js` | 40 | Igual à base | — |
 | `APK/test/router.test.js` | 509 | Igual à base | — |
 | `APK/test/wfs.test.js` | 295 | Igual à base | — |
 | `core/config.js` | 202 | Igual à base | WFS_BASE_URL, LAYER_NAME, KNOWN_ATTRIBUTES, METRIC_CRS, GRAPH_DEFAULTS, WFS_DEFAULTS, UPDATE_DEFAULTS, MAP_VIEW |
@@ -89,40 +92,42 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `core/simulador.js` | 344 | Igual à base | VELOCIDADE_BASE, VELOCIDADES, criarSimulador |
 | `core/spatialIndex.js` | 147 | Igual à base | GridIndex, computeBBox |
 | `core/wfs.js` | 528 | Igual à base | WfsError, parseServiceException, fetchNetwork, describeLayer, checkForUpdates |
-| `package.json` | 49 | Alterado | — |
-| `public/app.js` | 1636 | Alterado | — |
-| `public/exportarGpxWeb.js` | 196 | Novo | exportarRotaGpxWeb |
-| `public/gpx.js` | 237 | Novo | nomeArquivoGpx, gerarGpxRota |
-| `public/index.html` | 241 | Alterado | — |
+| `package.json` | 49 | Igual à base | — |
+| `public/app.js` | 1759 | Alterado | — |
+| `public/camadaBase.js` | 203 | Novo | CAMADA_PADRAO, CAMADA_SATELITE, CHAVE_CAMADA_BASE, CAMADAS_BASE, normalizarCamadaBase, opcoesCamadasBase, lerPreferenciaCamadaSync, salvarPreferenciaCamadaSync, lerPreferenciaCamadaAsync, salvarPreferenciaCamadaAsync, criarMonitorSatelite |
+| `public/exportarGpxWeb.js` | 196 | Igual à base | exportarRotaGpxWeb |
+| `public/gpx.js` | 237 | Igual à base | nomeArquivoGpx, gerarGpxRota |
+| `public/index.html` | 252 | Alterado | — |
 | `public/manifest.webmanifest` | 39 | Igual à base | — |
 | `public/navegacaoUI.js` | 668 | Igual à base | criarInterfaceNavegacao |
-| `public/planejamentoCircuito.js` | 107 | Alterado | criarListaCircuito, opcoesCalculoCircuito, papelPontoCircuito, assinaturaPlanejador, resolverPontoNoMapa |
+| `public/planejamentoCircuito.js` | 107 | Igual à base | criarListaCircuito, opcoesCalculoCircuito, papelPontoCircuito, assinaturaPlanejador, resolverPontoNoMapa |
 | `public/resumoRota.js` | 41 | Igual à base | rotuloModo, resumoRota |
 | `public/revisoesEndereco.js` | 11 | Igual à base | criarRevisoesEndereco |
-| `public/styles.css` | 1186 | Alterado | — |
-| `public/sw.js` | 104 | Alterado | — |
+| `public/styles.css` | 1260 | Alterado | — |
+| `public/sw.js` | 105 | Alterado | — |
 | `server/index.js` | 445 | Igual à base | parsePoint, createServer |
 | `server/networkService.js` | 561 | Igual à base | SNAPSHOT_PATH, NetworkService |
 | `test/api.test.js` | 166 | Igual à base | — |
+| `test/camadaBase.test.js` | 140 | Novo | — |
 | `test/caminhoMinimo.test.js` | 376 | Igual à base | — |
 | `test/cenariosCircuito.js` | 45 | Igual à base | testarCircuitos |
 | `test/cenariosEnderecoUI.js` | 66 | Igual à base | testarEnderecos |
 | `test/cenariosResumoRota.js` | 27 | Igual à base | testarResumo |
-| `test/circuitoUI.test.js` | 26 | Alterado | — |
+| `test/circuitoUI.test.js` | 26 | Igual à base | — |
 | `test/circular.test.js` | 400 | Igual à base | — |
 | `test/coresTrechos.test.js` | 213 | Igual à base | — |
 | `test/enderecoDigital.test.js` | 513 | Igual à base | — |
 | `test/enderecoUI.test.js` | 4 | Igual à base | — |
 | `test/fidelity.test.js` | 415 | Igual à base | — |
-| `test/gpx.test.js` | 248 | Novo | — |
+| `test/gpx.test.js` | 248 | Igual à base | — |
 | `test/graph.test.js` | 279 | Igual à base | — |
 | `test/helpers.js` | 90 | Igual à base | ROOT, loadRealFeatures, feature, official, unofficial, road, offset |
-| `test/mapaIntegracao.test.js` | 94 | Novo | — |
+| `test/mapaIntegracao.test.js` | 132 | Alterado | — |
 | `test/navegacao.test.js` | 454 | Igual à base | — |
 | `test/ordemOtimizada.test.js` | 430 | Igual à base | — |
 | `test/ordemParadas.test.js` | 450 | Igual à base | — |
 | `test/otimizacaoAuditoria.test.js` | 331 | Igual à base | — |
-| `test/paridade.test.js` | 50 | Igual à base | — |
+| `test/paridade.test.js` | 57 | Alterado | — |
 | `test/pwa.test.js` | 109 | Igual à base | — |
 | `test/resumoRota.test.js` | 19 | Igual à base | — |
 | `test/router.test.js` | 508 | Igual à base | — |
@@ -138,7 +143,7 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `tools/fetch-network.js` | 94 | Igual à base | — |
 | `tools/gerar-icones-pwa.mjs` | 48 | Igual à base | — |
 | `tools/inspect-layer.js` | 135 | Igual à base | — |
-| `tools/inventario-unificacao.mjs` | 49 | Alterado | — |
+| `tools/inventario-unificacao.mjs` | 49 | Igual à base | — |
 | `tools/report-network.js` | 170 | Igual à base | — |
 | `tools/validar-circular.mjs` | 195 | Igual à base | — |
 | `tools/validar-mapa.mjs` | 93 | Igual à base | — |

@@ -30,7 +30,7 @@ function ambiente(engine, cdn = 'error') {
       return [Math.min(...coords.map(p=>p[0])), Math.min(...coords.map(p=>p[1])), Math.max(...coords.map(p=>p[0])), Math.max(...coords.map(p=>p[1]))];
     } }),
   });
-  const layers = [];
+  const layers = [], baseLayers = [];
   class Vector {
     constructor() { this.features = []; sources.push(this); }
     clear() { this.features = []; }
@@ -41,27 +41,47 @@ function ambiente(engine, cdn = 'error') {
       return [Math.min(...ext.map(e=>e[0])), Math.min(...ext.map(e=>e[1])), Math.max(...ext.map(e=>e[2])), Math.max(...ext.map(e=>e[3]))];
     }
   }
-  class Options { constructor(opts) { Object.assign(this, opts); } }
+  class Options {
+    constructor(opts) {
+      Object.assign(this, opts);
+      this._listeners = {};
+    }
+    setVisible(v) { this.visible = !!v; }
+    getVisible() { return this.visible !== false; }
+    on(evt, fn) { (this._listeners[evt] ||= []).push(fn); }
+    emit(evt, payload = {}) { for (const fn of this._listeners[evt] || []) fn(payload); }
+    refresh() { this.refreshed = (this.refreshed || 0) + 1; }
+  }
   const ol = {
-    Map: class { constructor(opts) { this.view = opts.view; } addLayer(layer) { layers.push(layer); } on() {} getView() { return this.view; } updateSize() { resizes.push(true); } },
+    Map: class {
+      constructor(opts) {
+        this.view = opts.view;
+        baseLayers.push(...(opts.layers || []));
+      }
+      addLayer(layer) { layers.push(layer); }
+      on() {}
+      getView() { return this.view; }
+      updateSize() { resizes.push(true); }
+    },
     View: class { fit(ext, opts) { fits.push({ ext: [...ext], opts }); } animate() {} getZoom() { return 13; } },
-    layer: { Tile: Options, Vector: Options }, source: { OSM: Options, Vector },
+    layer: { Tile: Options, Vector: Options }, source: { OSM: Options, XYZ: Options, Vector },
     style: { Style: Options, Stroke: Options, Fill: Options, Circle: Options, Text: Options },
     proj: { fromLonLat: p=>p, toLonLat: p=>p },
     format: { GeoJSON: class { readFeature(raw) { return feature(raw); } } },
     geom: { Point: Options }, Feature: Options,
   };
+  const navigator = { onLine: true };
   const window = { innerWidth: 400, innerHeight: 300, devicePixelRatio: 1, addEventListener(name, fn) { windowEvents[name] = fn; },
     ReactNativeWebView: { postMessage: s => messages.push(JSON.parse(s)) } };
   if (engine === 'openlayers') window.ol = ol;
-  const sandbox = { window, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout() {}, document: {
+  const sandbox = { window, navigator, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout() {}, document: {
     getElementById: id => id === 'map' ? { style: {} } : canvas,
     createElement: tag => ({ tag }), head: { appendChild: el => { if (el.tag === 'script') { scripts.push(el); if (cdn === 'error') el.onerror(); } } },
   } };
   vm.createContext(sandbox);
   const source = [...MAP_HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)][0][1];
   vm.runInContext(source, sandbox);
-  return { send: msg => window.__handleRNMessage(JSON.parse(JSON.stringify(msg))), strokes, fills, fits, sources, layers, messages, events, windowEvents, canvas, window, resizes, scripts, timers, ol, backgrounds };
+  return { send: msg => window.__handleRNMessage(JSON.parse(JSON.stringify(msg))), strokes, fills, fits, sources, layers, baseLayers, messages, events, windowEvents, canvas, window, navigator, resizes, scripts, timers, ol, backgrounds };
 }
 
 test('adaptador de trechos não altera legs, geometria, distâncias ou sequência', () => {
@@ -293,4 +313,72 @@ test('Canvas: zoom alcança nível 22 e duplo clique / duplo toque aproxima no p
   const passoDepois = click(220, 150).lon - depoisDbl.lon;
   assert.ok(Math.abs(antesDbl.lon - depoisDbl.lon) < 1e-9);
   assert.ok(passoDepois < passoAntes * 0.6 && passoDepois > passoAntes * 0.4);
+});
+
+test('APK OpenLayers: alterna entre OSM padrão e Satélite Esri sem recriar mapa, reenquadrar ou apagar rota/marcadores, e trata erros', () => {
+  const a = ambiente('openlayers');
+  assert.equal(a.baseLayers.length, 2);
+  const [osmLayer, satLayer] = a.baseLayers;
+  assert.equal(osmLayer.className, 'basemap');
+  assert.equal(satLayer.className, 'basemap-satellite');
+  assert.equal(osmLayer.getVisible(), true);
+  assert.equal(satLayer.getVisible(), false);
+  assert.equal(osmLayer.zIndex, 0);
+  assert.equal(satLayer.zIndex, 0);
+  assert.ok(a.layers.every((l) => l.zIndex >= 10), 'camadas vetoriais ficam acima das camadas base');
+  assert.match(satLayer.source.url, /server\.arcgisonline\.com\/ArcGIS\/rest\/services\/World_Imagery/);
+  assert.match(satLayer.source.attributions, /Esri/);
+  assert.equal(satLayer.source.attributionsCollapsible, false);
+
+  a.send({ type: 'SET_NETWORK', features: [{ properties: { COD_LOG: 1 }, geometry: legs[0].geometry }], fit: true });
+  a.send({ type: 'SET_ROUTE', geometry: legs[0].geometry, segments: trechosParaMapa(legs), fit: true });
+  a.send({ type: 'SET_MARKERS', markers: [{ tipo: 'origem', rotulo: 'A', latitude: -23.7, longitude: -46.5 }] });
+  const fitsAntes = a.fits.length;
+
+  a.send({ type: 'SET_BASEMAP', mode: 'satelite' });
+  assert.equal(osmLayer.getVisible(), false);
+  assert.equal(satLayer.getVisible(), true);
+  assert.equal(a.fits.length, fitsAntes, 'trocar mapa de fundo não reenquadra');
+  assert.equal(a.sources[1].features.length, 1, 'rede viária preservada');
+  assert.equal(a.sources[2].features.length, 2, 'rota preservada');
+  assert.equal(a.sources[3].features.length, 1, 'marcadores preservados');
+
+  // 3 falhas consecutivas de tiles geram aviso sem quebrar camadas
+  satLayer.source.emit('tileloaderror');
+  satLayer.source.emit('tileloaderror');
+  assert.equal(a.messages.some((m) => m.type === 'BASEMAP_STATUS' && m.status === 'unavailable'), false);
+  satLayer.source.emit('tileloaderror');
+  const indisponivel = a.messages.filter((m) => m.type === 'BASEMAP_STATUS').at(-1);
+  assert.equal(indisponivel.status, 'unavailable');
+
+  // Carregamento posterior recupera status
+  satLayer.source.emit('tileloadend');
+  assert.equal(a.messages.filter((m) => m.type === 'BASEMAP_STATUS').at(-1).status, 'ready');
+
+  // Ficar offline avisa imediatamente; voltar ao Mapa padrão restaura OSM e limpa aviso
+  a.windowEvents.offline();
+  assert.equal(a.messages.filter((m) => m.type === 'BASEMAP_STATUS').at(-1).status, 'offline');
+  a.send({ type: 'SET_BASEMAP', mode: 'osm' });
+  assert.equal(osmLayer.getVisible(), true);
+  assert.equal(satLayer.getVisible(), false);
+  assert.equal(a.messages.filter((m) => m.type === 'BASEMAP_STATUS').at(-1).status, 'ready');
+});
+
+test('APK Canvas offline: SET_BASEMAP preserva câmera e malha vetorial e reporta indisponibilidade de satélite', () => {
+  const a = ambiente('canvas');
+  a.send({ type: 'SET_NETWORK', features: [{ geometry: legs[0].geometry }] });
+  const click = (x, y) => {
+    a.events.pointerdown({ clientX: x, clientY: y });
+    a.events.pointerup({ clientX: x, clientY: y });
+    return a.messages.at(-1);
+  };
+  const centroAntes = click(200, 150);
+  a.send({ type: 'SET_BASEMAP', mode: 'satelite' });
+  assert.equal(a.messages.filter((m) => m.type === 'BASEMAP_STATUS').at(-1).status, 'unavailable');
+  const centroDepois = click(200, 150);
+  assert.equal(centroDepois.lon, centroAntes.lon);
+  assert.equal(centroDepois.lat, centroAntes.lat);
+
+  a.send({ type: 'SET_BASEMAP', mode: 'osm' });
+  assert.equal(a.messages.filter((m) => m.type === 'BASEMAP_STATUS').at(-1).status, 'ready');
 });

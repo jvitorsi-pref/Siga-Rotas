@@ -91,3 +91,41 @@ test('Req 5: UI Web inclui botão Exportar GPX e conecta exportarRotaGpxWeb', ()
   assert.match(appJs, /exportarRotaGpxWeb\(state\.rotaAtual/);
   assert.match(appJs, /exportarGpx,\s*\n\s*\};/);
 });
+
+test('Req 6: Web alterna entre Mapa padrão (OSM) e Satélite (Esri) preservando estilo OSM, atribuição, camada vetorial acima e persistência', () => {
+  // Controles na interface Web seguindo identidade visual
+  assert.match(html, /id="basemap-control"/);
+  assert.match(html, /id="basemap-switch"[^>]*role="group"[^>]*aria-label="Mapa de fundo"/);
+  assert.match(html, /data-basemap="osm"[^>]*>Mapa padrão</);
+  assert.match(html, /data-basemap="satelite"[^>]*>Satélite</);
+  assert.match(html, /id="basemap-notice"/);
+  assert.match(html, /id="basemap-fallback-btn"[^>]*>Usar mapa padrão</);
+
+  // CSS preserva filtro .basemap apenas para OSM, mantém satélite natural e evita sobreposições
+  assert.match(css, /\.basemap-switch button\[aria-pressed="true"\]\s*\{[^}]*background:\s*var\(--accent-strong\)/);
+  assert.match(css, /\.basemap-satellite\s*\{\s*opacity:\s*1;\s*\}/);
+  const simBannerCss = css.match(/\.sim-banner\s*\{[^}]*\}/)?.[0] || '';
+  assert.match(simBannerCss, /top:\s*54px/);
+  assert.match(css, /@media \(max-width: 900px\)[\s\S]*?\.pick-banner\s*\{[^}]*top:\s*52px/);
+
+  // app.js preserva OSM e adiciona XYZ Esri com zIndex 0 abaixo da rede/rotas/marcadores
+  assert.match(appJs, /const osmLayer = new ol\.layer\.Tile\(\{[\s\S]*?className:\s*'basemap'[\s\S]*?zIndex:\s*0[\s\S]*?new ol\.source\.OSM\(\{\s*maxZoom:\s*19,\s*interpolate:\s*true/);
+  assert.match(appJs, /const satSource = new ol\.source\.XYZ\(\{[\s\S]*?attributionsCollapsible:\s*false/);
+  assert.match(appJs, /const satLayer = new ol\.layer\.Tile\(\{[\s\S]*?className:\s*'basemap-satellite'[\s\S]*?zIndex:\s*0/);
+  assert.match(appJs, /layers:\s*\[osmLayer,\s*satLayer\]/);
+  assert.match(appJs, /axisCasingLayer[\s\S]*?zIndex:\s*10/);
+  assert.match(appJs, /axisLayer[\s\S]*?zIndex:\s*11/);
+  assert.match(appJs, /routeLayer[\s\S]*?zIndex:\s*20/);
+  assert.match(appJs, /markerLayer[\s\S]*?zIndex:\s*25/);
+
+  // Troca mútua sem recriar mapa e com persistência localStorage
+  assert.match(appJs, /lerPreferenciaCamadaSync\(window\.localStorage\)/);
+  assert.match(appJs, /salvarPreferenciaCamadaSync\(proximo,\s*window\.localStorage\)/);
+  assert.match(appJs, /osmLayer\.setVisible\(proximo === CAMADA_PADRAO\);\s*\n\s*satLayer\.setVisible\(proximo === CAMADA_SATELITE\);/);
+  assert.match(appJs, /tileloaderror/);
+  assert.match(appJs, /window\.addEventListener\('offline'/);
+
+  // SW cacheia camadaBase.js sem cachear tiles de terceiros
+  assert.match(swJs, /'\/camadaBase\.js'/);
+  assert.match(swJs, /url\.origin !== self\.location\.origin\) return;/);
+});

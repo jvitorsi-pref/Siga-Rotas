@@ -36,6 +36,15 @@ import {
 import { coresDosTrechos } from '../core/coresTrechos.js';
 import { criarInterfaceNavegacao } from './navegacaoUI.js';
 import { exportarRotaGpxWeb } from './exportarGpxWeb.js';
+import {
+  CAMADA_PADRAO,
+  CAMADA_SATELITE,
+  CAMADAS_BASE,
+  normalizarCamadaBase,
+  lerPreferenciaCamadaSync,
+  salvarPreferenciaCamadaSync,
+  criarMonitorSatelite,
+} from './camadaBase.js';
 
 (function () {
   'use strict';
@@ -81,6 +90,8 @@ import { exportarRotaGpxWeb } from './exportarGpxWeb.js';
     // ocultado pelo usuário — é o que resolve os trechos que passam pelo
     // mesmo caminho e ficam sobrepostos
     trechos: [],
+    // camada base ativa: 'osm' (padrão OpenStreetMap) | 'satelite' (Esri World Imagery)
+    camadaBase: lerPreferenciaCamadaSync(window.localStorage),
   };
 
   const revisoesEndereco = criarRevisoesEndereco();
@@ -113,6 +124,10 @@ import { exportarRotaGpxWeb } from './exportarGpxWeb.js';
     pickLabel: $('#pick-label'),
     pickCancel: $('#pick-cancel'),
     map: $('#map'),
+    basemapSwitch: $('#basemap-switch'),
+    basemapNotice: $('#basemap-notice'),
+    basemapNoticeText: $('#basemap-notice-text'),
+    basemapFallbackBtn: $('#basemap-fallback-btn'),
     startNav: $('#start-nav'),
     exportGpx: $('#export-gpx'),
     exportGpxFeedback: $('#export-gpx-feedback'),
@@ -121,21 +136,40 @@ import { exportarRotaGpxWeb } from './exportarGpxWeb.js';
   /* ─────────────── Mapa ─────────────── */
 
   const MAP_VIEW = { center: [-46.4255, -23.7031], zoom: 13 };
+  const satDef = CAMADAS_BASE[CAMADA_SATELITE];
+
+  const osmLayer = new ol.layer.Tile({
+    // classe aplicada ao container da camada: o CSS aplica um filtro
+    // equilibrado ao mapa-base para que a rede viária e a rota ganhem contraste.
+    className: 'basemap',
+    visible: state.camadaBase === CAMADA_PADRAO,
+    zIndex: 0,
+    source: new ol.source.OSM({
+      maxZoom: 19,
+      interpolate: true,
+    }),
+    opacity: 1,
+  });
+
+  const satSource = new ol.source.XYZ({
+    url: satDef.url,
+    maxZoom: satDef.maxZoom,
+    interpolate: satDef.interpolate,
+    attributions: satDef.atribuicaoHtml,
+    attributionsCollapsible: false,
+  });
+
+  const satLayer = new ol.layer.Tile({
+    className: 'basemap-satellite',
+    visible: state.camadaBase === CAMADA_SATELITE,
+    zIndex: 0,
+    source: satSource,
+    opacity: 1,
+  });
 
   const map = new ol.Map({
     target: els.map,
-    layers: [
-      new ol.layer.Tile({
-        // classe aplicada ao container da camada: o CSS aplica um filtro
-        // equilibrado ao mapa-base para que a rede viária e a rota ganhem contraste.
-        className: 'basemap',
-        source: new ol.source.OSM({
-          maxZoom: 19,
-          interpolate: true,
-        }),
-        opacity: 1,
-      }),
-    ],
+    layers: [osmLayer, satLayer],
     view: new ol.View({
       center: ol.proj.fromLonLat(MAP_VIEW.center),
       zoom: MAP_VIEW.zoom,
@@ -144,6 +178,88 @@ import { exportarRotaGpxWeb } from './exportarGpxWeb.js';
     }),
   });
   new ResizeObserver(() => map.updateSize()).observe(document.querySelector('.map-wrap'));
+
+  function atualizarAvisoSatelite(estadoSat) {
+    if (!els.basemapNotice || !els.basemapNoticeText) return;
+    const exibir =
+      state.camadaBase === CAMADA_SATELITE &&
+      (estadoSat.status === 'offline' || estadoSat.status === 'indisponivel') &&
+      !!estadoSat.mensagem;
+    els.basemapNotice.hidden = !exibir;
+    els.basemapNoticeText.textContent = exibir ? estadoSat.mensagem : '';
+  }
+
+  const monitorSatelite = criarMonitorSatelite({
+    aoMudarEstado: atualizarAvisoSatelite,
+  });
+
+  function atualizarBotoesCamadaBase() {
+    if (!els.basemapSwitch) return;
+    for (const btn of els.basemapSwitch.querySelectorAll('[data-basemap]')) {
+      const ativo = btn.dataset.basemap === state.camadaBase;
+      btn.setAttribute('aria-pressed', String(ativo));
+    }
+  }
+
+  function definirCamadaBase(modo, { persistir = true } = {}) {
+    const proximo = normalizarCamadaBase(modo);
+    state.camadaBase = proximo;
+    osmLayer.setVisible(proximo === CAMADA_PADRAO);
+    satLayer.setVisible(proximo === CAMADA_SATELITE);
+    atualizarBotoesCamadaBase();
+    monitorSatelite.definirAtiva(proximo === CAMADA_SATELITE, {
+      online: typeof navigator !== 'undefined' ? navigator.onLine !== false : true,
+    });
+    if (persistir) {
+      salvarPreferenciaCamadaSync(proximo, window.localStorage);
+    }
+    return proximo;
+  }
+
+  if (satSource && typeof satSource.on === 'function') {
+    satSource.on('tileloadstart', () => {
+      monitorSatelite.aoIniciarTile({
+        online: typeof navigator !== 'undefined' ? navigator.onLine !== false : true,
+      });
+    });
+    satSource.on('tileloadend', () => {
+      monitorSatelite.aoCarregarTile();
+    });
+    satSource.on('tileloaderror', () => {
+      monitorSatelite.aoErroTile({
+        online: typeof navigator !== 'undefined' ? navigator.onLine !== false : true,
+      });
+    });
+  }
+
+  window.addEventListener('offline', () => {
+    monitorSatelite.aoMudarConexao(false);
+  });
+  window.addEventListener('online', () => {
+    monitorSatelite.aoMudarConexao(true);
+    if (state.camadaBase === CAMADA_SATELITE && typeof satSource.refresh === 'function') {
+      satSource.refresh();
+    }
+  });
+
+  if (els.basemapSwitch) {
+    els.basemapSwitch.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-basemap]');
+      if (!btn) return;
+      const selecionado = definirCamadaBase(btn.dataset.basemap, { persistir: true });
+      const info = CAMADAS_BASE[selecionado];
+      setStatus(`Mapa de fundo alterado para ${info.rotulo} (${info.provedor}).`, 'idle');
+    });
+  }
+
+  if (els.basemapFallbackBtn) {
+    els.basemapFallbackBtn.addEventListener('click', () => {
+      definirCamadaBase(CAMADA_PADRAO, { persistir: true });
+      setStatus('Mapa padrão (OpenStreetMap) restaurado.', 'idle');
+    });
+  }
+
+  definirCamadaBase(state.camadaBase, { persistir: false });
 
   // ── Camada da rede viária ──────────────────────────────────────────────
   //
@@ -156,6 +272,7 @@ import { exportarRotaGpxWeb } from './exportarGpxWeb.js';
   const axisCasingSource = new ol.source.Vector({ features: [] });
   const axisCasingLayer = new ol.layer.Vector({
     source: axisCasingSource,
+    zIndex: 10,
     declutter: true,
     style: new ol.style.Style({
       stroke: new ol.style.Stroke({
@@ -169,6 +286,7 @@ import { exportarRotaGpxWeb } from './exportarGpxWeb.js';
 
   const axisLayer = new ol.layer.Vector({
     source: axisSource,
+    zIndex: 11,
     declutter: true,
     style: (feature) => {
       // eixos não oficializados (COD_LOG = 0) ganham traço tracejado e cor
@@ -190,6 +308,7 @@ import { exportarRotaGpxWeb } from './exportarGpxWeb.js';
   const routeSource = new ol.source.Vector({ features: [] });
   const routeLayer = new ol.layer.Vector({
     source: routeSource,
+    zIndex: 20,
     // Cada trecho da rota é uma feature própria e tem a **sua cor**
     // (`core/coresTrechos.js`): o halo branco e o contorno escuro são
     // iguais para todos — é o núcleo que assume a cor do trecho, o que
@@ -252,6 +371,7 @@ import { exportarRotaGpxWeb } from './exportarGpxWeb.js';
   const markerSource = new ol.source.Vector({ features: [] });
   const markerLayer = new ol.layer.Vector({
     source: markerSource,
+    zIndex: 25,
     style: (feature) => {
       const kind = feature.get('kind'); // 'origem' | 'parada' | 'destino'
       const rotulo = feature.get('rotulo') || '';
@@ -1590,10 +1710,12 @@ import { exportarRotaGpxWeb } from './exportarGpxWeb.js';
 
   // exposto para automação e depuração no console do navegador
   // versão do front-end (ajuda a identificar cache antigo no navegador)
-  window.__appVersion = '20261116-1';
+  window.__appVersion = '20261117-1';
   window.__app = {
     map,
     state,
+    osmLayer,
+    satLayer,
     axisSource,
     axisCasingSource,
     routeSource,
@@ -1606,6 +1728,7 @@ import { exportarRotaGpxWeb } from './exportarGpxWeb.js';
     setStatus,
     renderizarPontos,
     ajustarEnquadramento,
+    definirCamadaBase,
     exportarGpx,
   };
   // a rota atual é lida sempre do estado (nunca fica desatualizada)

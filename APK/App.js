@@ -55,6 +55,8 @@ import { trechosParaMapa } from './src/map/routePresentation.js';
 import { criarRevisoesEndereco } from './src/utils/revisoesEndereco.js';
 import { criarListaCircuito, opcoesCalculoCircuito, resolverPontoNoMapa } from './src/utils/planejamentoCircuito.js';
 import { exportarRotaGpxMobile } from './src/services/mobileGpxExport.js';
+import { CAMADA_PADRAO, CAMADAS_BASE, normalizarCamadaBase } from './src/map/camadaBase.js';
+import { carregarCamadaBaseMobile, salvarCamadaBaseMobile } from './src/services/basemapPreference.js';
 import { COLORS } from './src/theme/colors.js';
 
 export default function App() {
@@ -113,9 +115,21 @@ export default function App() {
 
   // Modo de layout mobile: 'split' (mapa + painel), 'map' (mapa expandido), 'panel' (painel expandido)
   const [layoutMode, setLayoutMode] = useState('split');
+  const [basemapMode, setBasemapMode] = useState(CAMADA_PADRAO);
+  const basemapTouchedRef = useRef(false);
 
   const setStatus = useCallback((text, kind = 'idle') => {
     setStatusInfo({ text, kind });
+  }, []);
+
+  useEffect(() => {
+    let ativo = true;
+    void carregarCamadaBaseMobile().then((salvo) => {
+      if (ativo && !basemapTouchedRef.current) {
+        setBasemapMode(normalizarCamadaBase(salvo));
+      }
+    });
+    return () => { ativo = false; };
   }, []);
 
   const cloneLista = (l) => {
@@ -428,6 +442,16 @@ export default function App() {
     }
   };
 
+  const handleChangeBasemap = (modo) => {
+    Keyboard.dismiss();
+    const proximo = normalizarCamadaBase(modo);
+    basemapTouchedRef.current = true;
+    setBasemapMode(proximo);
+    void salvarCamadaBaseMobile(proximo);
+    const info = CAMADAS_BASE[proximo];
+    setStatus(`Mapa de fundo alterado para ${info.rotulo} (${info.provedor}).`, 'idle');
+  };
+
   // ─────────────── Cálculo da rota ───────────────
 
   const handleCalculate = async (modo = 'usuario') => {
@@ -588,6 +612,8 @@ export default function App() {
             <RoadNetworkMap
               ref={mapRef}
               visible={layoutMode !== 'panel'}
+              basemapMode={basemapMode}
+              onChangeBasemap={handleChangeBasemap}
               features={networkFeatures}
               markers={lista.pontos}
               routeGeometry={activeRouteGeometry}

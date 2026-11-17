@@ -1069,7 +1069,7 @@ summary:hover { color: var(--text); }
 /* faixa de "modo de teste" — sempre visível na simulação */
 .sim-banner {
   position: absolute;
-  top: 14px;
+  top: 54px;
   left: 14px;
   z-index: 8;
   background: rgba(124, 58, 237, .92);
@@ -1174,6 +1174,79 @@ summary:hover { color: var(--text); }
 .app[data-layout="panel"] { grid-template-columns: 1fr; }
 .app[data-layout="panel"] .map-wrap { display: none; }
 .app[data-layout="panel"] .panel { max-height: none; }
+.basemap-control {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: calc(100% - 76px);
+}
+.basemap-switch {
+  display: flex;
+  background: rgba(255, 255, 255, .96);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .12);
+}
+.basemap-switch button {
+  padding: 5px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.basemap-switch button + button {
+  border-left: 1px solid var(--border);
+}
+.basemap-switch button:hover:not([aria-pressed="true"]) {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.basemap-switch button[aria-pressed="true"] {
+  background: var(--accent-strong);
+  color: #ffffff;
+  font-weight: 700;
+}
+.basemap-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, .96);
+  border: 1px solid rgba(180, 83, 9, .45);
+  border-radius: 7px;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--warn);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .12);
+  max-width: 340px;
+}
+.basemap-notice[hidden] { display: none; }
+.basemap-notice__btn {
+  border: 1px solid var(--accent);
+  background: #ffffff;
+  color: var(--accent);
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.basemap-notice__btn:hover {
+  background: rgba(4, 81, 39, .08);
+}
+.basemap-satellite {
+  opacity: 1;
+}
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 900px) {
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: 57px 42% minmax(0, 1fr); }
@@ -1182,4 +1255,5 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .panel { grid-row: 3; max-height: none; border-right: none; }
   .app[data-layout="map"], .app[data-layout="panel"] { grid-template-rows: 57px minmax(0, 1fr); }
   .app[data-layout="panel"] .panel { grid-row: 2; }
+  .pick-banner { top: 52px; max-width: calc(100% - 28px); }
 }

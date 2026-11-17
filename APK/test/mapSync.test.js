@@ -35,3 +35,13 @@ test('limpar rota oculta cancela enquadramento pendente e rede vazia remove fei�
 test('cancelar pedido de centralização oculto não recentraliza em posição antiga ao voltar',()=>{
  const a=setup(),p=base();a.sync.atualizar(p);a.sent.length=0;a.sync.atualizar({...p,visible:false,centerRequest:{longitude:-46.5,latitude:-23.7}});a.sync.atualizar({...p,visible:false,centerRequest:null});a.sync.atualizar(p);assert.equal(a.sent.some(m=>m.type==='CENTER_POINT'),false);
 });
+test('alternar basemapMode envia apenas SET_BASEMAP sem reenquadrar ou reenviar rede/rota e restaura na nova sessão',()=>{
+ const a=setup(),p={...base(),basemapMode:'osm'};a.sync.atualizar(p);
+ assert.ok(a.sent.some(m=>m.type==='SET_BASEMAP'&&m.mode==='osm'));
+ a.sent.length=0;
+ a.sync.atualizar({...p,basemapMode:'satelite'});
+ assert.deepEqual(a.sent,[{type:'SET_BASEMAP',mode:'satelite'}]);
+ a.sent.length=0;
+ a.sync.atualizar({...p,basemapMode:'satelite',session:2});
+ assert.ok(a.sent.some(m=>m.type==='SET_BASEMAP'&&m.mode==='satelite'));
+});

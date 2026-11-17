@@ -13,6 +13,8 @@ export function criarSincronizacaoMapa(enviar) {
     if (!pronto) return;
     if (ultimo.session !== p.session) { ultimo = {}; enquadrado = false; pendente = null; }
     const features = p.features || VAZIO, geometry = p.routeGeometry || null;
+    const modoBase = p.basemapMode === 'satelite' ? 'satelite' : 'osm';
+    if (ultimo.basemapMode !== modoBase) enviar({ type: 'SET_BASEMAP', mode: modoBase });
     if (ultimo.features !== features) {
       enviar({ type: 'SET_NETWORK', features, fit: false });
       if (features.length && !enquadrado && pendente !== 'route') pendente = 'network';
@@ -36,7 +38,7 @@ export function criarSincronizacaoMapa(enviar) {
     } else if (visivel && pendente) {
       enviar({ type: pendente === 'route' ? 'FIT_ROUTE' : 'FIT_NETWORK' }); pendente = null; enquadrado = true;
     }
-    ultimo = { ...p, features, routeGeometry: geometry, position: p.navigationPosition, visible: visivel };
+    ultimo = { ...p, features, routeGeometry: geometry, position: p.navigationPosition, visible: visivel, basemapMode: modoBase };
   }
   return { atualizar, comando, redimensionar };
 }
