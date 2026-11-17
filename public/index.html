@@ -124,6 +124,17 @@
   <main class="map-wrap">
     <div id="map" class="map"></div>
 
+    <div class="basemap-control" id="basemap-control">
+      <div class="basemap-switch" id="basemap-switch" role="group" aria-label="Mapa de fundo">
+        <button type="button" data-basemap="osm" aria-pressed="true">Mapa padrão</button>
+        <button type="button" data-basemap="satelite" aria-pressed="false">Satélite</button>
+      </div>
+      <div class="basemap-notice" id="basemap-notice" role="status" hidden>
+        <span class="basemap-notice__text" id="basemap-notice-text"></span>
+        <button type="button" class="basemap-notice__btn" id="basemap-fallback-btn">Usar mapa padrão</button>
+      </div>
+    </div>
+
     <div class="legend">
       <div><span class="swatch swatch--axis"></span> Eixo viário oficial</div>
       <div><span class="swatch swatch--axis-unofficial"></span> Eixo não oficializado</div>

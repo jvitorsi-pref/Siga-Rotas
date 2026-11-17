@@ -6,16 +6,17 @@ import { createRequire } from 'node:module';
 import { COLORS } from '../src/theme/colors.js';
 import { MAP_HTML } from '../src/map/mapHtml.js';
 import { criarSincronizacaoMapa } from '../src/map/mapSync.js';
+import * as camadaBase from '../src/map/camadaBase.js';
 const require=createRequire(new URL('../package.json',import.meta.url));
 const code=require('@babel/core').transformSync(readFileSync(new URL('../src/components/RoadNetworkMap.js',import.meta.url),'utf8'),{babelrc:false,configFile:false,plugins:[require.resolve('@babel/plugin-transform-react-jsx'),require.resolve('@babel/plugin-transform-modules-commonjs')]}).code;
-function setup(){
- const slots=[],effects=[],sent=[];let index=0,props={visible:true,features:[{geometry:{type:'LineString',coordinates:[[0,0],[1,1]]}}],markers:[],routeGeometry:{type:'LineString',coordinates:[[0,0],[1,1]]},routeSegments:[]};
+function setup(initial={}){
+ const slots=[],effects=[],sent=[];let index=0,props={visible:true,basemapMode:'osm',features:[{geometry:{type:'LineString',coordinates:[[0,0],[1,1]]}}],markers:[],routeGeometry:{type:'LineString',coordinates:[[0,0],[1,1]]},routeSegments:[],...initial};
  const ref={current:null};
  const React={createElement:(type,props,...children)=>({type,props:{...props,children}}),forwardRef:fn=>fn,
  useRef:initial=>{const i=index++;return slots[i]??(slots[i]={current:initial});},useState:initial=>{const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],fn=>{slots[i]=typeof fn==='function'?fn(slots[i]):fn;}];},
  useEffect:(fn,deps)=>{const i=index++,last=slots[i];if(!last||deps.some((d,j)=>d!==last[j]))effects.push(fn);slots[i]=deps;},useImperativeHandle:(r,fn)=>{r.current=fn();}};
  const native=Object.fromEntries(['View','Text','TouchableOpacity','ActivityIndicator','ScrollView'].map(n=>[n,n]));native.StyleSheet={create:s=>s};
- const deps={react:React,'react-native':native,'react-native-webview':{WebView:'WebView'},'../theme/colors':{COLORS},'../map/mapHtml.js':{MAP_HTML},'../map/mapSync.js':{criarSincronizacaoMapa}};
+ const deps={react:React,'react-native':native,'react-native-webview':{WebView:'WebView'},'../theme/colors':{COLORS},'../map/mapHtml.js':{MAP_HTML},'../map/mapSync.js':{criarSincronizacaoMapa},'../map/camadaBase.js':camadaBase};
  const module={exports:{}};new Function('require','module','exports',code)(n=>{assert.ok(n in deps,n);return deps[n];},module,module.exports);
  function nodes(n,out=[]){if(Array.isArray(n)){for(const child of n)nodes(child,out);}else if(n&&typeof n==='object'){out.push(n);nodes(n.props?.children,out);}return out;}
  function text(n){if(Array.isArray(n))return n.map(text).join(' ');if(n==null||typeof n==='boolean')return '';return typeof n==='object'?text(n.props?.children):String(n);}
@@ -36,6 +37,35 @@ test('novo MAP_READY repõe camadas após recarga da WebView sem reiniciar legen
 test('App mantém mapa montado, invisível e fora da acessibilidade quando exibe só painel',()=>{
  const app=readFileSync(new URL('../App.js',import.meta.url),'utf8');assert.doesNotMatch(app,/layoutMode !== 'panel' &&/);assert.match(app,/visible=\{layoutMode !== 'panel'\}/);assert.match(app,/no-hide-descendants/);assert.match(app,/mapAreaHidden: \{ position: 'absolute'[\s\S]*?opacity: 0/);
 });
+test('seletor Mapa padrão / Satélite alterna camada base sem recriar WebView e trata indisponibilidade',()=>{
+ const escolhidos=[];
+ const c=setup({onChangeBasemap:(m)=>escolhidos.push(m)});
+ const first=c.ready();
+ const radioOsm=c.nodes(first.tree).find(n=>n.type==='TouchableOpacity'&&c.text(n)==='Mapa padrão');
+ const radioSat=c.nodes(first.tree).find(n=>n.type==='TouchableOpacity'&&c.text(n)==='Satélite');
+ assert.equal(radioOsm.props.accessibilityState.selected,true);
+ assert.equal(radioSat.props.accessibilityState.selected,false);
+
+ radioSat.props.onPress();
+ assert.deepEqual(escolhidos,['satelite']);
+
+ c.sent.length=0;
+ const satView=c.render({basemapMode:'satelite'});
+ assert.strictEqual(first.web.props.ref,satView.web.props.ref);
+ assert.deepEqual(c.sent,[{type:'SET_BASEMAP',mode:'satelite'}]);
+ assert.equal(c.nodes(satView.tree).find(n=>n.type==='TouchableOpacity'&&c.text(n)==='Satélite').props.accessibilityState.selected,true);
+
+ // Aviso não bloqueante aparece quando satélite falha/offline e oferece retorno rápido
+ satView.web.props.onMessage({nativeEvent:{data:JSON.stringify({type:'BASEMAP_STATUS',mode:'satelite',status:'unavailable',message:'Satélite indisponível sem conexão.'})}});
+ const comAviso=c.render();
+ assert.match(c.text(comAviso.tree),/Satélite indisponível sem conexão/);
+ const voltarBtn=c.nodes(comAviso.tree).find(n=>n.type==='TouchableOpacity'&&c.text(n)==='Usar mapa padrão');
+ assert.ok(voltarBtn);
+ voltarBtn.props.onPress();
+ assert.deepEqual(escolhidos,['satelite','osm']);
+
+ const voltaOsm=c.render({basemapMode:'osm'});
+ assert.doesNotMatch(c.text(voltaOsm.tree),/Satélite indisponível sem conexão/);
 test('toque no mapa: com seleção ativa define o ponto; sem seleção alterna o trecho', () => {
   const c = setup();
   const escolhidos = [], cliques = [];

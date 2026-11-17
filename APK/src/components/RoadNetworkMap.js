@@ -28,12 +28,15 @@ import { COLORS } from '../theme/colors';
 
 import { criarSincronizacaoMapa } from '../map/mapSync.js';
 import { MAP_HTML } from '../map/mapHtml.js';
+import { CAMADA_PADRAO, CAMADA_SATELITE, opcoesCamadasBase, normalizarCamadaBase } from '../map/camadaBase.js';
 const MAP_SOURCE = { html: MAP_HTML };
 
 export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
   {
     features,
     visible = true,
+    basemapMode = CAMADA_PADRAO,
+    onChangeBasemap,
     markers,
     routeGeometry,
     routeSegments,
@@ -56,6 +59,9 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
   const [mapReady, setMapReady] = useState(false);
   const [mapSession, setMapSession] = useState(0);
   const [showLegend, setShowLegend] = useState(true);
+  const [basemapStatus, setBasemapStatus] = useState(null);
+  const modoBaseAtivo = normalizarCamadaBase(basemapMode);
+  const opcoesBase = opcoesCamadasBase();
 
   if (!syncRef.current) syncRef.current = criarSincronizacaoMapa(payload => {
     if (!webviewRef.current) return;
@@ -72,9 +78,16 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
 
   useEffect(() => {
     syncRef.current.atualizar({ ready: mapReady, session: mapSession, visible,
+      basemapMode: modoBaseAtivo,
       features, markers, routeGeometry, routeSegments, navigationPosition,
       centerRequest, suppressRouteFit });
-  }, [mapReady, mapSession, visible, features, markers, routeGeometry, routeSegments, navigationPosition, centerRequest, suppressRouteFit]);
+  }, [mapReady, mapSession, visible, modoBaseAtivo, features, markers, routeGeometry, routeSegments, navigationPosition, centerRequest, suppressRouteFit]);
+
+  useEffect(() => {
+    if (modoBaseAtivo === CAMADA_PADRAO) {
+      setBasemapStatus(null);
+    }
+  }, [modoBaseAtivo]);
 
   const handleWebViewMessage = (event) => {
     try {
@@ -82,6 +95,12 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
       if (data.type === 'MAP_READY') {
         setMapReady(true);
         setMapSession(n => n + 1);
+      } else if (data.type === 'BASEMAP_STATUS') {
+        if (data.status === 'offline' || data.status === 'unavailable') {
+          setBasemapStatus({ status: data.status, message: data.message });
+        } else {
+          setBasemapStatus(null);
+        }
       } else if (data.type === 'MAP_CLICK') {
         // Com a seleção de ponto ativa, o toque define o ponto. Sem seleção,
         // o toque pode ocultar/mostrar um trecho da rota (paridade com o Web).
@@ -111,8 +130,55 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
         showsHorizontalScrollIndicator={false}
       />
 
+      {/* Seletor de mapa de fundo (Mapa padrão / Satélite) */}
+      <View style={styles.basemapControl}>
+        <View
+          style={styles.basemapSwitch}
+          accessibilityRole="radiogroup"
+          accessibilityLabel="Mapa de fundo"
+        >
+          {opcoesBase.map((opcao, idx) => {
+            const ativo = modoBaseAtivo === opcao.id;
+            return (
+              <TouchableOpacity
+                key={opcao.id}
+                style={[
+                  styles.basemapBtn,
+                  idx > 0 && styles.basemapBtnBorder,
+                  ativo && styles.basemapBtnActive,
+                ]}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: ativo }}
+                onPress={() => onChangeBasemap?.(opcao.id)}
+              >
+                <Text
+                  style={[
+                    styles.basemapBtnText,
+                    ativo && styles.basemapBtnTextActive,
+                  ]}
+                >
+                  {opcao.rotulo}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        {modoBaseAtivo === CAMADA_SATELITE && basemapStatus?.message ? (
+          <View style={styles.basemapNotice}>
+            <Text style={styles.basemapNoticeText}>{basemapStatus.message}</Text>
+            <TouchableOpacity
+              style={styles.basemapNoticeBtn}
+              accessibilityRole="button"
+              onPress={() => onChangeBasemap?.(CAMADA_PADRAO)}
+            >
+              <Text style={styles.basemapNoticeBtnText}>Usar mapa padrão</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+      </View>
+
       {(isSimulating || isGPS) && (
-        <View pointerEvents="none" style={{ position: 'absolute', top: 8, left: 8, right: 58, padding: 7, borderWidth: 1, borderColor: COLORS.accent, backgroundColor: COLORS.panel, borderRadius: 7 }}>
+        <View pointerEvents="none" style={{ position: 'absolute', top: 50, left: 12, right: 58, padding: 7, borderWidth: 1, borderColor: COLORS.accent, backgroundColor: COLORS.panel, borderRadius: 7 }}>
           <Text style={{ color: COLORS.accent, fontSize: 11, fontWeight: '700' }}>{isSimulating ? 'MODO DE TESTE — posição simulada, não é GPS real' : 'GPS real — navegação em primeiro plano'}</Text>
         </View>
       )}
@@ -231,11 +297,75 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     fontSize: 13,
   },
-  pickBanner: {
+  basemapControl: {
     position: 'absolute',
     top: 12,
-    left: 14,
-    right: 60,
+    left: 12,
+    maxWidth: '72%',
+    gap: 6,
+  },
+  basemapSwitch: {
+    flexDirection: 'row',
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 7,
+    overflow: 'hidden',
+  },
+  basemapBtn: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+  },
+  basemapBtnBorder: {
+    borderLeftWidth: 1,
+    borderLeftColor: COLORS.border,
+  },
+  basemapBtnActive: {
+    backgroundColor: COLORS.accentStrong,
+  },
+  basemapBtnText: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  basemapBtnTextActive: {
+    color: COLORS.white,
+    fontWeight: '700',
+  },
+  basemapNotice: {
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    borderColor: COLORS.warnBorder,
+    borderWidth: 1,
+    borderRadius: 7,
+    paddingVertical: 6,
+    paddingHorizontal: 9,
+    gap: 6,
+    alignItems: 'flex-start',
+  },
+  basemapNoticeText: {
+    color: COLORS.warn,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  basemapNoticeBtn: {
+    borderColor: COLORS.accent,
+    borderWidth: 1,
+    borderRadius: 5,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    backgroundColor: COLORS.white,
+  },
+  basemapNoticeBtnText: {
+    color: COLORS.accent,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  pickBanner: {
+    position: 'absolute',
+    top: 50,
+    left: 12,
+    right: 58,
     backgroundColor: 'rgba(255, 255, 255, 0.97)',
     borderColor: COLORS.accent,
     borderWidth: 1,
@@ -270,7 +400,7 @@ const styles = StyleSheet.create({
   },
   quickControls: {
     position: 'absolute',
-    bottom: 36,
+    bottom: 48,
     right: 12,
     flexDirection: 'row',
     gap: 6,

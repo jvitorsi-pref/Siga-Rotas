@@ -1,4 +1,5 @@
 import { ESTILO_TRECHO_JS } from './styleScript.js';
+import { CAMADAS_BASE, CAMADA_PADRAO, CAMADA_SATELITE } from './camadaBase.js';
 
 export const MAP_HTML = `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -20,6 +21,9 @@ export const MAP_HTML = `<!DOCTYPE html>
     filter: grayscale(0.75) contrast(0.88) brightness(1.06) saturate(0.5);
     opacity: 0.92;
   }
+  .basemap-satellite {
+    opacity: 1;
+  }
   .ol-zoom {
     top: 12px;
     right: 12px;
@@ -39,20 +43,20 @@ export const MAP_HTML = `<!DOCTYPE html>
     right: 8px !important;
     bottom: 6px !important;
     left: auto !important;
-    max-width: 170px !important;
+    max-width: 205px !important;
     background: rgba(255, 255, 255, 0.92) !important;
     border: 1px solid #d0d7de !important;
     border-radius: 6px !important;
     padding: 2px 6px !important;
-    font-size: 10px !important;
-    line-height: 1.25 !important;
+    font-size: 9.5px !important;
+    line-height: 1.2 !important;
     color: #374151 !important;
     z-index: 4 !important;
   }
   .ol-attribution ul {
     margin: 0 !important;
     padding: 0 !important;
-    font-size: 10px !important;
+    font-size: 9.5px !important;
     color: #374151 !important;
   }
   .ol-attribution a {
@@ -112,6 +116,13 @@ export const MAP_HTML = `<!DOCTYPE html>
   }
 
   var estiloTrecho = ${ESTILO_TRECHO_JS};
+  var CAMADAS_BASE = ${JSON.stringify(CAMADAS_BASE)};
+  var CAMADA_PADRAO = ${JSON.stringify(CAMADA_PADRAO)};
+  var CAMADA_SATELITE = ${JSON.stringify(CAMADA_SATELITE)};
+
+  function normalizarCamadaBase(valor) {
+    return valor === CAMADA_SATELITE ? CAMADA_SATELITE : CAMADA_PADRAO;
+  }
 
   var state = {
     features: [],
@@ -119,25 +130,49 @@ export const MAP_HTML = `<!DOCTYPE html>
     segments: [],
     position: null,
     markers: [],
-    picking: false
+    picking: false,
+    basemapMode: CAMADA_PADRAO
   };
 
   // =========================================================================
-  // MODO 1: OpenLayers 10 (com mapa-base OSM + camadas vetoriais)
+  // MODO 1: OpenLayers 10 (com mapa-base OSM / Satélite + camadas vetoriais)
   // =========================================================================
   if (window.ol) {
     var ol = window.ol;
+    var osmLayer = new ol.layer.Tile({
+      className: 'basemap',
+      visible: true,
+      zIndex: 0,
+      source: new ol.source.OSM({
+        maxZoom: 19,
+        interpolate: true
+      }),
+      opacity: 1
+    });
+    var satDef = CAMADAS_BASE[CAMADA_SATELITE];
+    var satSource = ol.source && typeof ol.source.XYZ === 'function'
+      ? new ol.source.XYZ({
+          url: satDef.url,
+          maxZoom: satDef.maxZoom,
+          interpolate: satDef.interpolate,
+          attributions: satDef.atribuicaoHtml,
+          attributionsCollapsible: false
+        })
+      : null;
+    var satLayer = satSource
+      ? new ol.layer.Tile({
+          className: 'basemap-satellite',
+          visible: false,
+          zIndex: 0,
+          source: satSource,
+          opacity: 1
+        })
+      : null;
+
+    var baseLayers = satLayer ? [osmLayer, satLayer] : [osmLayer];
     var map = new ol.Map({
       target: document.getElementById('map'),
-      layers: [
-        new ol.layer.Tile({
-          className: 'basemap',
-          source: new ol.source.OSM({
-            maxZoom: 19,
-            interpolate: true
-          })
-        })
-      ],
+      layers: baseLayers,
       view: new ol.View({
         center: ol.proj.fromLonLat([-46.4255, -23.7031]),
         zoom: 13,
@@ -146,9 +181,91 @@ export const MAP_HTML = `<!DOCTYPE html>
       })
     });
 
+    var errosSatelite = 0;
+    var satCarregado = false;
+    function emitirStatusBase(status, message) {
+      postToRN({
+        type: 'BASEMAP_STATUS',
+        mode: state.basemapMode,
+        status: status,
+        message: message || ''
+      });
+    }
+
+    function aplicarCamadaBase(modo) {
+      var proximo = normalizarCamadaBase(modo);
+      state.basemapMode = proximo;
+      errosSatelite = 0;
+      if (proximo === CAMADA_SATELITE && satLayer) {
+        if (typeof osmLayer.setVisible === 'function') osmLayer.setVisible(false);
+        else osmLayer.visible = false;
+        if (typeof satLayer.setVisible === 'function') satLayer.setVisible(true);
+        else satLayer.visible = true;
+        satCarregado = false;
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          emitirStatusBase('offline', 'Sem conexão com a internet: imagens de satélite exigem rede ativa. Você pode voltar para o Mapa padrão.');
+        } else {
+          emitirStatusBase('loading', '');
+        }
+      } else if (proximo === CAMADA_SATELITE && !satLayer) {
+        emitirStatusBase('unavailable', 'Camada de satélite indisponível nesta versão do mapa.');
+      } else {
+        if (satLayer) {
+          if (typeof satLayer.setVisible === 'function') satLayer.setVisible(false);
+          else satLayer.visible = false;
+        }
+        if (typeof osmLayer.setVisible === 'function') osmLayer.setVisible(true);
+        else osmLayer.visible = true;
+        emitirStatusBase('ready', '');
+      }
+    }
+
+    if (satSource && typeof satSource.on === 'function') {
+      satSource.on('tileloadstart', function () {
+        if (state.basemapMode !== CAMADA_SATELITE) return;
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          emitirStatusBase('offline', 'Sem conexão com a internet: imagens de satélite exigem rede ativa. Você pode voltar para o Mapa padrão.');
+        }
+      });
+      satSource.on('tileloadend', function () {
+        if (state.basemapMode !== CAMADA_SATELITE) return;
+        errosSatelite = 0;
+        satCarregado = true;
+        emitirStatusBase('ready', '');
+      });
+      satSource.on('tileloaderror', function () {
+        if (state.basemapMode !== CAMADA_SATELITE) return;
+        errosSatelite += 1;
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          emitirStatusBase('offline', 'Sem conexão com a internet: imagens de satélite indisponíveis. O mapa padrão continua disponível.');
+          return;
+        }
+        var limite = satCarregado ? 5 : 3;
+        if (errosSatelite >= limite) {
+          emitirStatusBase('unavailable', 'Não foi possível carregar as imagens de satélite no momento. Você pode voltar para o Mapa padrão.');
+        }
+      });
+    }
+
+    if (window.addEventListener) {
+      window.addEventListener('offline', function () {
+        if (state.basemapMode === CAMADA_SATELITE) {
+          emitirStatusBase('offline', 'Conexão perdida: novas imagens de satélite não podem ser baixadas offline.');
+        }
+      });
+      window.addEventListener('online', function () {
+        if (state.basemapMode === CAMADA_SATELITE) {
+          errosSatelite = 0;
+          emitirStatusBase('loading', '');
+          if (satSource && typeof satSource.refresh === 'function') satSource.refresh();
+        }
+      });
+    }
+
     var axisCasingSource = new ol.source.Vector({ features: [] });
     var axisCasingLayer = new ol.layer.Vector({
       source: axisCasingSource,
+      zIndex: 10,
       declutter: true,
       style: new ol.style.Style({
         stroke: new ol.style.Stroke({
@@ -181,6 +298,7 @@ export const MAP_HTML = `<!DOCTYPE html>
 
     var axisLayer = new ol.layer.Vector({
       source: axisSource,
+      zIndex: 11,
       declutter: true,
       style: function (feature) {
         return Number(feature.get('COD_LOG')) === 0 ? styleUnofficial : styleOfficial;
@@ -190,6 +308,7 @@ export const MAP_HTML = `<!DOCTYPE html>
     var routeSource = new ol.source.Vector({ features: [] });
     var routeLayer = new ol.layer.Vector({
       source: routeSource,
+      zIndex: 20,
       style: function (feature) {
         var t = estiloTrecho({ cor: feature.get('cor'), retorno: feature.get('retorno'),
           visivel: feature.get('visivel'), situacao: feature.get('situacao') });
@@ -205,6 +324,7 @@ export const MAP_HTML = `<!DOCTYPE html>
     var markerSource = new ol.source.Vector({ features: [] });
     var markerLayer = new ol.layer.Vector({
       source: markerSource,
+      zIndex: 25,
       style: function (feature) {
         var kind = feature.get('kind');
         var rotulo = feature.get('rotulo') || '';
@@ -229,7 +349,7 @@ export const MAP_HTML = `<!DOCTYPE html>
     map.addLayer(routeLayer);
     map.addLayer(markerLayer);
     var positionSource = new ol.source.Vector({ features: [] });
-    map.addLayer(new ol.layer.Vector({ source: positionSource,
+    map.addLayer(new ol.layer.Vector({ source: positionSource, zIndex: 30,
       style: function (feature) { return new ol.style.Style({ image: new ol.style.Circle({ radius: 7,
         fill: new ol.style.Fill({ color: feature.get('simulado') ? '#7c3aed' : '#045127' }),
         stroke: new ol.style.Stroke({ color: '#ffffff', width: 2.5 }) }) }); }
@@ -336,6 +456,8 @@ export const MAP_HTML = `<!DOCTYPE html>
         if (isExtentValid(rtExt)) {
           map.getView().fit(rtExt, { padding: [55, 55, 55, 55], maxZoom: 18, duration: 450 });
         }
+      } else if (msg.type === 'SET_BASEMAP') {
+        aplicarCamadaBase(msg.mode);
       }
     };
 
@@ -729,6 +851,24 @@ export const MAP_HTML = `<!DOCTYPE html>
         // sem afastar quem já está mais perto.
         if (zoomDaEscala(view.scale) < 17) view.scale = escalaDoZoom(17);
         draw();
+      }
+    } else if (msg.type === 'SET_BASEMAP') {
+      var proximoBase = normalizarCamadaBase(msg.mode);
+      state.basemapMode = proximoBase;
+      if (proximoBase === CAMADA_SATELITE) {
+        postToRN({
+          type: 'BASEMAP_STATUS',
+          mode: CAMADA_SATELITE,
+          status: 'unavailable',
+          message: 'Satélite indisponível sem conexão; exibindo malha viária local.'
+        });
+      } else {
+        postToRN({
+          type: 'BASEMAP_STATUS',
+          mode: CAMADA_PADRAO,
+          status: 'ready',
+          message: ''
+        });
       }
     }
   };
