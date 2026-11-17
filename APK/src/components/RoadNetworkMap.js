@@ -270,7 +270,7 @@ const styles = StyleSheet.create({
   },
   quickControls: {
     position: 'absolute',
-    bottom: 12,
+    bottom: 36,
     right: 12,
     flexDirection: 'row',
     gap: 6,

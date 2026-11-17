@@ -1,25 +1,18 @@
 /* ==========================================================================
-   public/sw.js — Service Worker (aplicativo utilizável sem conexão)
+   public/sw.js — Service Worker (esqueleto do aplicativo)
    --------------------------------------------------------------------------
-   O que este arquivo faz — e, principalmente, o que ele NÃO faz:
-
-     • guarda o "esqueleto" do aplicativo (HTML, CSS, JS) para que a
-       aplicação abra mesmo sem rede;
-     • NÃO guarda respostas de `/api/*`: a rede viária tem vários MB e muda
-       com frequência, e o roteiro de dados coletados (sensíveis) não tem
-       por que ficar duplicado no cache do navegador;
-     • NÃO baixa tiles de mapas de terceiros: os tiles do OpenStreetMap
-       têm política de uso e o download massivo depende de autorização.
+   • guarda o "esqueleto" do aplicativo (HTML, CSS, JS) para abertura rápida;
+   • NÃO guarda respostas de `/api/*`: a rede viária tem vários MB e muda
+     com frequência;
+   • NÃO baixa tiles de mapas de terceiros: os tiles do OpenStreetMap
+     têm política de uso e o download massivo depende de autorização.
 
    Estratégia: **rede primeiro, cache como reserva** (network-first). Com
-   rede, o usuário sempre recebe a versão atual do aplicativo (sem risco de
-   servir código velho); sem rede, o esqueleto salvo é usado.
-
-   Os dados coletados (rota, pontos GPS, localizações) NÃO passam por aqui:
-   ficam no IndexedDB, que é do aplicativo (`core/armazenamentoLocal.js`).
+   rede, o usuário sempre recebe a versão atual do aplicativo; sem rede, o
+   esqueleto salvo é usado.
    ========================================================================== */
 
-const CACHE = 'siga-rotas-v8';
+const CACHE = 'siga-rotas-v9';
 
 /** Arquivos do esqueleto do aplicativo. */
 const ESQUELETO = [
@@ -28,8 +21,8 @@ const ESQUELETO = [
   '/styles.css',
   '/logo-siga-app.png',
   '/app.js',
-  '/coletaUI.js',
-  '/planoPersistido.js',
+  '/gpx.js',
+  '/exportarGpxWeb.js',
   '/planejamentoCircuito.js',
   '/revisoesEndereco.js',
   '/resumoRota.js',
@@ -50,9 +43,6 @@ const ESQUELETO = [
   '/core/simulador.js',
   '/core/instrucoes.js',
   '/core/navegacao.js',
-  '/core/coleta.js',
-  '/core/recuperacaoColeta.js',
-  '/core/armazenamentoLocal.js',
 ];
 
 self.addEventListener('install', (event) => {

@@ -6,7 +6,7 @@ testarCircuitos('Web',ui,calcularRotaComParadas);
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { assinaturaPlanejador } from '../public/planoPersistido.js';
+import { assinaturaPlanejador } from '../public/planejamentoCircuito.js';
 const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 test('Web: botões separados e Enter apontam para ações explícitas sem seletores antigos',()=>{
  const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');

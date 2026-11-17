@@ -18,7 +18,7 @@ nenhum momento.
 
 ---
 
-**Unificação em andamento:** o APK define a referência visual e o Web, as funcionalidades. O fluxo atual usa circuitos e dois botões de cálculo; coleta de localização está adiada. Consulte [UNIFICACAO.md](docs/UNIFICACAO.md) para resultados atuais e pendências; as seções históricas abaixo não equivalem a homologação do produto integrado.
+**Estado atual:** o APK define a referência visual e o Web acompanha as mesmas funcionalidades. O fluxo atual usa circuitos (`A → paradas → A`), dois botões de cálculo, preenchimento automático de Endereço Digital (Plus Code) ao selecionar pontos no mapa, zoom mais profundo com atribuição OSM visível e exportação da rota em GPX 1.1 com escolha de pasta; a funcionalidade experimental de coleta de campo foi removida do aplicativo ativo. Consulte [UNIFICACAO.md](docs/UNIFICACAO.md) para o histórico da unificação; as seções históricas abaixo permanecem como registro das rodadas anteriores.
 
 ## 1. Sumário
 

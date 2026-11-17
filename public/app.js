@@ -26,11 +26,16 @@ import {
 } from '../core/pontoTrajeto.js';
 import { resumoRota } from './resumoRota.js';
 import { criarRevisoesEndereco } from './revisoesEndereco.js';
-import { criarListaCircuito, opcoesCalculoCircuito, papelPontoCircuito } from './planejamentoCircuito.js';
-import { prepararPlanoSalvo, assinaturaPlanejador } from './planoPersistido.js';
+import {
+  criarListaCircuito,
+  opcoesCalculoCircuito,
+  papelPontoCircuito,
+  assinaturaPlanejador,
+  resolverPontoNoMapa,
+} from './planejamentoCircuito.js';
 import { coresDosTrechos } from '../core/coresTrechos.js';
-import { criarInterfaceNavegacao } from './navegacaoUI.js?v=20261028-5';
-import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
+import { criarInterfaceNavegacao } from './navegacaoUI.js';
+import { exportarRotaGpxWeb } from './exportarGpxWeb.js';
 
 (function () {
   'use strict';
@@ -109,6 +114,8 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     pickCancel: $('#pick-cancel'),
     map: $('#map'),
     startNav: $('#start-nav'),
+    exportGpx: $('#export-gpx'),
+    exportGpxFeedback: $('#export-gpx-feedback'),
   };
 
   /* ─────────────── Mapa ─────────────── */
@@ -120,17 +127,20 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     layers: [
       new ol.layer.Tile({
         // classe aplicada ao container da camada: o CSS aplica um filtro
-        // que clareia e dessatura o mapa-base, para que a rede viária
-        // (e a rota) se destaquem.
+        // equilibrado ao mapa-base para que a rede viária e a rota ganhem contraste.
         className: 'basemap',
-        source: new ol.source.OSM(),
+        source: new ol.source.OSM({
+          maxZoom: 19,
+          interpolate: true,
+        }),
         opacity: 1,
       }),
     ],
     view: new ol.View({
       center: ol.proj.fromLonLat(MAP_VIEW.center),
       zoom: MAP_VIEW.zoom,
-      maxZoom: 19,
+      minZoom: 5,
+      maxZoom: 22,
     }),
   });
   new ResizeObserver(() => map.updateSize()).observe(document.querySelector('.map-wrap'));
@@ -243,19 +253,23 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
   const markerLayer = new ol.layer.Vector({
     source: markerSource,
     style: (feature) => {
-      const kind = feature.get('kind'); // 'origin' | 'parada' | 'destino'
+      const kind = feature.get('kind'); // 'origem' | 'parada' | 'destino'
       const rotulo = feature.get('rotulo') || '';
       const color =
-        kind === 'origin' ? '#2ea043' : kind === 'destino' ? '#f85149' : '#045127';
+        kind === TIPOS.ORIGEM || kind === 'origin'
+          ? '#2ea043'
+          : kind === TIPOS.DESTINO || kind === 'destino'
+            ? '#f85149'
+            : '#045127';
       return new ol.style.Style({
         image: new ol.style.Circle({
-          radius: 8,
+          radius: 10,
           fill: new ol.style.Fill({ color }),
           stroke: new ol.style.Stroke({ color: '#fff', width: 2.5 }),
         }),
         text: new ol.style.Text({
           text: rotulo,
-          font: 'bold 11px sans-serif',
+          font: 'bold 12px sans-serif',
           fill: new ol.style.Fill({ color: '#fff' }),
           offsetY: 0,
           offsetX: 0,
@@ -300,23 +314,26 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     const ponto = state.lista.pontos.find((p) => p.id === id);
     if (!ponto) return;
     revisoesEndereco.invalidar(id);
+    const resolvido = resolverPontoNoMapa(lonLat[1], lonLat[0], { acao: 'movido' });
     atualizarPonto(state.lista, id, {
-      latitude: lonLat[1],
-      longitude: lonLat[0],
-      // o Endereço Digital anterior deixa de valer para a nova posição:
-      // o código é zerado (nada é inventado) e o ponto passa a ser
-      // "convertido" a partir da nova coordenada.
-      enderecoDigital: '',
-      codigoNormalizado: null,
-      codigoCompleto: null,
-      status: STATUS.CONVERTIDO,
-      origem: 'mapa',
-      mensagem: `Movido no mapa: ${lonLat[1].toFixed(6)}, ${lonLat[0].toFixed(6)}`,
+      latitude: resolvido.latitude,
+      longitude: resolvido.longitude,
+      enderecoDigital: resolvido.enderecoDigital,
+      codigoNormalizado: resolvido.codigoNormalizado,
+      codigoCompleto: resolvido.codigoCompleto,
+      status: resolvido.status,
+      origem: resolvido.origem,
+      mensagem: resolvido.mensagem,
     });
     renderizarPontos();
-    setStatus(`Ponto ${ponto.rotulo} movido. Recalculando a rota...`, 'busy');
+    setStatus(
+      resolvido.naRegiao
+        ? `Ponto ${ponto.rotulo} movido (${resolvido.enderecoDigital}).`
+        : `Ponto ${ponto.rotulo} movido fora do Endereço Digital.`,
+      resolvido.naRegiao ? 'busy' : 'err',
+    );
     // recalcula automaticamente quando o trajeto está completo
-    if (podeCalcular(state.lista)) calculate();
+    if (podeCalcular(state.lista).ok) calculate();
   });
 
   /* ─────────────── Utilidades ─────────────── */
@@ -663,20 +680,33 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     const lonLat = ol.proj.toLonLat(evt.coordinate);
     const pt = { lon: lonLat[0], lat: lonLat[1] };
     const ponto = state.lista.pontos.find((p) => p.id === state.picking);
+    let resolvido = null;
     if (ponto) {
       revisoesEndereco.invalidar(ponto.id);
+      resolvido = resolverPontoNoMapa(pt.lat, pt.lon, { acao: 'selecionado' });
       atualizarPonto(state.lista, ponto.id, {
-        latitude: pt.lat,
-        longitude: pt.lon,
-        status: STATUS.CONVERTIDO,
-        origem: 'mapa',
-        mensagem: 'Ponto selecionado no mapa.',
-        enderecoDigital: ponto.enderecoDigital || '',
+        latitude: resolvido.latitude,
+        longitude: resolvido.longitude,
+        status: resolvido.status,
+        origem: resolvido.origem,
+        mensagem: resolvido.mensagem,
+        enderecoDigital: resolvido.enderecoDigital,
+        codigoNormalizado: resolvido.codigoNormalizado,
+        codigoCompleto: resolvido.codigoCompleto,
       });
       renderizarPontos();
     }
     stopPicking();
-    setStatus('Ponto definido. Calcule a rota.', 'idle');
+    if (resolvido?.naRegiao) {
+      setStatus(
+        'Ponto ' + (ponto ? ponto.rotulo : '') + ' definido (' + resolvido.enderecoDigital + ').',
+        'ok',
+      );
+    } else if (resolvido) {
+      setStatus(resolvido.mensagem, 'err');
+    } else {
+      setStatus('Ponto definido. Calcule a rota.', 'idle');
+    }
   });
 
   // so conta como "movido pelo usuario" depois do primeiro enquadramento
@@ -949,8 +979,58 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     }
   }
 
+  function limparFeedbackGpx() {
+    if (!els.exportGpxFeedback) return;
+    els.exportGpxFeedback.hidden = true;
+    els.exportGpxFeedback.className = 'gpx-feedback';
+    els.exportGpxFeedback.textContent = '';
+  }
+
+  function mostrarFeedbackGpx(mensagem, tipo) {
+    if (!els.exportGpxFeedback) return;
+    els.exportGpxFeedback.hidden = false;
+    els.exportGpxFeedback.className = 'gpx-feedback gpx-feedback--' + (tipo || 'warn');
+    els.exportGpxFeedback.textContent = mensagem;
+  }
+
+  async function exportarGpx() {
+    const rotaValida =
+      state.rotaAtual &&
+      assinaturaRota === assinaturaPlanejador(state) &&
+      state.rotaAtual.ok !== false &&
+      !state.rotaAtual.parcial;
+    if (!rotaValida) {
+      const msg = 'Calcule uma rota completa antes de exportar em GPX.';
+      mostrarFeedbackGpx(msg, 'err');
+      setStatus(msg, 'err');
+      return { ok: false, motivo: 'SEM_ROTA', mensagem: msg };
+    }
+
+    if (els.exportGpx) els.exportGpx.disabled = true;
+    limparFeedbackGpx();
+    setStatus('Preparando exportação GPX…', 'busy');
+    try {
+      const res = await exportarRotaGpxWeb(state.rotaAtual, { pontos: state.lista.pontos });
+      if (res.ok) {
+        mostrarFeedbackGpx(res.mensagem, res.modo === 'download' ? 'warn' : 'ok');
+        setStatus(res.mensagem, 'ok');
+      } else if (res.cancelado) {
+        mostrarFeedbackGpx(res.mensagem, 'warn');
+        setStatus(res.mensagem, 'idle');
+      } else {
+        mostrarFeedbackGpx(res.mensagem, 'err');
+        setStatus(res.mensagem, 'err');
+      }
+      return res;
+    } finally {
+      if (els.exportGpx) els.exportGpx.disabled = false;
+    }
+  }
+
   function showError(title, message) {
     state.rotaAtual = null;
+    limparFeedbackGpx();
+    if (els.exportGpx) els.exportGpx.hidden = true;
     if (els.startNav) els.startNav.hidden = true;
     els.resultBlock.hidden = false;
     els.distanceValue.className = 'distance__value is-error';
@@ -1012,7 +1092,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     map.getView().fit([minX, minY, maxX, maxY], {
       padding: [70, 70, 70, 70],
       duration: 600,
-      maxZoom: 17,
+      maxZoom: 18,
     });
   }
 
@@ -1167,8 +1247,8 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     // a rota atual é o PLANO da navegação ativa
     state.rotaAtual = data;
     assinaturaRota = assinaturaPlanejador(state);
-    // a interface de coleta precisa saber que há uma rota para salvar
-    if (window.__app && window.__app.coleta) window.__app.coleta.aoCalcularRota(data);
+    limparFeedbackGpx();
+    if (els.exportGpx) els.exportGpx.hidden = !!(data.ok === false || data.parcial);
     if (els.startNav) els.startNav.hidden = false;
     // se havia navegação em curso, ela é encerrada: o trajeto planejado
     // mudou e a navegação antiga não valeria mais
@@ -1271,13 +1351,16 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
   function reaplicarOrdem(mensagem) {
     renderizarPontos();
     if (mensagem) setStatus(mensagem, 'busy');
-    if (podeCalcular(state.lista)) {
+    if (podeCalcular(state.lista).ok) {
       calculate();
       return;
     }
     // o trajeto deixou de ser calculável (falta coordenada, não há
     // paradas…): o desenho e a legenda são limpos, para não deixar
     // geometrias antigas no mapa
+    state.rotaAtual = null;
+    limparFeedbackGpx();
+    if (els.exportGpx) els.exportGpx.hidden = true;
     routeSource.clear();
     atualizarLegenda([]);
     els.resultBlock.hidden = true;
@@ -1474,6 +1557,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
 
   els.calc.addEventListener('click', () => calculate('usuario'));
   els.calcOptimized.addEventListener('click', () => calculate('otimizada'));
+  if (els.exportGpx) els.exportGpx.addEventListener('click', () => void exportarGpx());
 
   els.addStop.addEventListener('click', () => {
     adicionarPonto(state.lista, {});
@@ -1492,6 +1576,8 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     inicializarPontos();
     atualizarLegenda();
     state.rotaAtual = null;
+    limparFeedbackGpx();
+    if (els.exportGpx) els.exportGpx.hidden = true;
     if (els.startNav) els.startNav.hidden = true;
     els.resultBlock.hidden = true;
     const alert = document.getElementById('route-alert');
@@ -1504,7 +1590,7 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
 
   // exposto para automação e depuração no console do navegador
   // versão do front-end (ajuda a identificar cache antigo no navegador)
-  window.__appVersion = '20261029-1';
+  window.__appVersion = '20261116-1';
   window.__app = {
     map,
     state,
@@ -1518,35 +1604,9 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
     atualizarLegenda,
     definirEstadoTrechos,
     setStatus,
-    // ganchos usados pela interface de coleta de campo (restaurar uma rota
-    // salva repõe a lista de pontos e redesenha o painel)
     renderizarPontos,
-    abrirPlanoSalvo(registro) {
-      const plano = prepararPlanoSalvo(registro); // valida tudo antes de alterar estado
-      revisoesEndereco.limpar();
-      revisaoCalculo++; // uma resposta de rede antiga não pode substituir o plano aberto
-      els.calc.disabled = false;
-      stopPicking();
-      els.calcOptimized.disabled = false;
-      state.lista = plano.lista;
-      state.lista.circuito = true;
-      state.circuito = true;
-      state.modo = plano.modo;
-      renderizarPontos();
-      if (!plano.circuito) {
-        // Plano antigo aberto não contém retorno: nunca inventar a geometria faltante.
-        state.rotaAtual = null;
-        routeSource.clear();
-        els.resultBlock.hidden = true;
-        els.startNav.hidden = true;
-        window.__app.nav?.encerrar(true);
-        setStatus('Pontos recuperados. Calcule o circuito para incluir o retorno a A.', 'idle');
-        return null;
-      }
-      showRoute(plano.rota);
-      return plano.rota;
-    },
     ajustarEnquadramento,
+    exportarGpx,
   };
   // a rota atual é lida sempre do estado (nunca fica desatualizada)
   Object.defineProperty(window.__app, 'rotaAtual', {
@@ -1557,13 +1617,6 @@ import { criarInterfaceColeta } from './coletaUI.js?v=20261029-1';
   // depois de `window.__app` existir, porque ela usa o mapa e os ganchos.
   const navUI = criarInterfaceNavegacao(window.__app);
   window.__app.nav = navUI;
-
-  // Interface de coleta de campo: rota planejada salva no aparelho, coleta
-  // do trajeto real e localização de residências — tudo persistido local
-  // (IndexedDB), sem depender de rede.
-  const coletaUI = criarInterfaceColeta(window.__app);
-  window.__app.coleta = coletaUI;
-  void coletaUI.abrir();
 
   // Service Worker: permite abrir o aplicativo sem conexão (o esqueleto do
   // aplicativo fica em cache; os dados da API nunca são cacheados).

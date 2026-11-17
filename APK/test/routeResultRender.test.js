@@ -24,3 +24,16 @@ test('APK: JSX real não promete ótimo global nem inventa economia quando ela e
 test('APK: erro de rota não recebe resumo de otimização bem-sucedida',()=>{
  const text=render({routeResult:{modo:'otimizada',distance:10},routeError:{title:'Sem caminho',message:'Trecho indisponível'}});assert.match(text,/Trecho indisponível/);assert.doesNotMatch(text,/Ordem otimizada/);
 });
+test('APK: botão Exportar GPX aparece para rota completa, dispara callback e exibe feedback',()=>{
+ let cliques=0;
+ const routeResult={ok:true,parcial:false,modo:'usuario',distance:100,sequenciaCompleta:['A','B','A'],legs:[{de:'A',para:'B',distance:50},{de:'B',para:'A',retorno:true,distance:50}]};
+ const React={createElement:(type,props,...children)=>({type,props:{...props,children}}),useState:v=>[v,()=>{}]};
+ const deps={react:React,'react-native':{View:'View',Text:'Text',TouchableOpacity:'TouchableOpacity',StyleSheet:{create:s=>s}},'../theme/colors':{COLORS},'../utils/resumoRota.js':{resumoRota},'../utils/formatters.js':{formatDistanceParts,formatStreetLength}};
+ const module={exports:{}};new Function('require','module','exports',code)(n=>deps[n],module,module.exports);
+ const tree=module.exports.RouteResultPanel({routeResult,onExportGpx:()=>cliques++,gpxFeedback:{kind:'ok',text:'GPX salvo em Download'}});
+ const nodes=(n,out=[])=>{if(Array.isArray(n)){for(const c of n)nodes(c,out);}else if(n&&typeof n==='object'){out.push(n);nodes(typeof n.type==='function'?n.type(n.props):n.props?.children,out);}return out;};
+ const btn=nodes(tree).find(n=>n.type==='TouchableOpacity'&&JSON.stringify(n.props.children).includes('Exportar GPX'));
+ assert.ok(btn);btn.props.onPress();assert.equal(cliques,1);
+ assert.match(render({routeResult,onExportGpx:()=>{},gpxFeedback:{kind:'ok',text:'GPX salvo em Download'}}),/GPX salvo em Download/);
+ assert.doesNotMatch(render({routeResult:{...routeResult,parcial:true},onExportGpx:()=>{}}),/Exportar GPX/);
+});
