@@ -80,6 +80,13 @@ def enableProguardInReleaseBuilds = (findProperty('android.enableProguardInRelea
  */
 def jscFlavor = 'org.webkit:android-jsc:+'
 
+// Propriedades opcionais de assinatura (android/keystore.properties, fora do Git).
+def keystorePropsFile = rootProject.file('keystore.properties')
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystoreProps.load(new FileInputStream(keystorePropsFile))
+}
+
 android {
     ndkVersion rootProject.ext.ndkVersion
 
@@ -101,15 +108,31 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        // Assinatura de distribuição: só existe quando android/keystore.properties
+        // aponta para um keystore próprio (arquivo ignorado pelo Git). Sem ele, o
+        // release continua compilando com a chave de debug, como antes — útil para
+        // testes, mas NÃO serve para publicar em loja.
+        release {
+            if (keystorePropsFile.exists() && keystoreProps['storeFile']) {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            // Use a chave própria quando keystore.properties existir; caso contrário,
+            // mantém a chave de debug para não quebrar o fluxo de teste atual.
+            if (keystorePropsFile.exists() && keystoreProps['storeFile']) {
+                signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
+            }
             shrinkResources (findProperty('android.enableShrinkResourcesInReleaseBuilds')?.toBoolean() ?: false)
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"

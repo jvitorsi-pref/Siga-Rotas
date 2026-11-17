@@ -36,3 +36,15 @@ test('novo MAP_READY repõe camadas após recarga da WebView sem reiniciar legen
 test('App mantém mapa montado, invisível e fora da acessibilidade quando exibe só painel',()=>{
  const app=readFileSync(new URL('../App.js',import.meta.url),'utf8');assert.doesNotMatch(app,/layoutMode !== 'panel' &&/);assert.match(app,/visible=\{layoutMode !== 'panel'\}/);assert.match(app,/no-hide-descendants/);assert.match(app,/mapAreaHidden: \{ position: 'absolute'[\s\S]*?opacity: 0/);
 });
+test('toque no mapa: com seleção ativa define o ponto; sem seleção alterna o trecho', () => {
+  const c = setup();
+  const escolhidos = [], cliques = [];
+  const comSelecao = c.render({ pickingPoint: { id: 'p1' }, onMapPickCoordinate: p => escolhidos.push(p), onMapClick: p => cliques.push(p) });
+  comSelecao.web.props.onMessage({ nativeEvent: { data: JSON.stringify({ type: 'MAP_CLICK', lon: -46.5, lat: -23.7, zoom: 17 }) } });
+  assert.deepEqual(escolhidos, [{ lon: -46.5, lat: -23.7 }]);
+  assert.deepEqual(cliques, [], 'seleção de ponto não alterna trecho');
+  const semSelecao = c.render({ pickingPoint: null });
+  semSelecao.web.props.onMessage({ nativeEvent: { data: JSON.stringify({ type: 'MAP_CLICK', lon: -46.5, lat: -23.7, zoom: 17 }) } });
+  assert.deepEqual(cliques, [{ lon: -46.5, lat: -23.7, zoom: 17 }]);
+  assert.equal(escolhidos.length, 1);
+});
