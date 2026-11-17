@@ -66,4 +66,15 @@ test('seletor Mapa padrão / Satélite alterna camada base sem recriar WebView e
 
  const voltaOsm=c.render({basemapMode:'osm'});
  assert.doesNotMatch(c.text(voltaOsm.tree),/Satélite indisponível sem conexão/);
+test('toque no mapa: com seleção ativa define o ponto; sem seleção alterna o trecho', () => {
+  const c = setup();
+  const escolhidos = [], cliques = [];
+  const comSelecao = c.render({ pickingPoint: { id: 'p1' }, onMapPickCoordinate: p => escolhidos.push(p), onMapClick: p => cliques.push(p) });
+  comSelecao.web.props.onMessage({ nativeEvent: { data: JSON.stringify({ type: 'MAP_CLICK', lon: -46.5, lat: -23.7, zoom: 17 }) } });
+  assert.deepEqual(escolhidos, [{ lon: -46.5, lat: -23.7 }]);
+  assert.deepEqual(cliques, [], 'seleção de ponto não alterna trecho');
+  const semSelecao = c.render({ pickingPoint: null });
+  semSelecao.web.props.onMessage({ nativeEvent: { data: JSON.stringify({ type: 'MAP_CLICK', lon: -46.5, lat: -23.7, zoom: 17 }) } });
+  assert.deepEqual(cliques, [{ lon: -46.5, lat: -23.7, zoom: 17 }]);
+  assert.equal(escolhidos.length, 1);
 });

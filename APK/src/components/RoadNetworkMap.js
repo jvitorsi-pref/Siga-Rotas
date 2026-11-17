@@ -50,6 +50,7 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
     pickingPoint,
     onCancelPick,
     onMapPickCoordinate,
+    onMapClick,
   },
   ref
 ) {
@@ -101,8 +102,12 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
           setBasemapStatus(null);
         }
       } else if (data.type === 'MAP_CLICK') {
-        if (onMapPickCoordinate) {
+        // Com a seleção de ponto ativa, o toque define o ponto. Sem seleção,
+        // o toque pode ocultar/mostrar um trecho da rota (paridade com o Web).
+        if (pickingPoint && onMapPickCoordinate) {
           onMapPickCoordinate({ lon: data.lon, lat: data.lat });
+        } else if (onMapClick) {
+          onMapClick({ lon: data.lon, lat: data.lat, zoom: data.zoom });
         }
       }
     } catch {
