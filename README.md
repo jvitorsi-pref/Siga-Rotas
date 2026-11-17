@@ -18,7 +18,7 @@ nenhum momento.
 
 ---
 
-**Estado atual:** o APK define a referência visual e o Web acompanha as mesmas funcionalidades. O fluxo atual usa circuitos (`A → paradas → A`), dois botões de cálculo, preenchimento automático de Endereço Digital (Plus Code) ao selecionar pontos no mapa, alternância instantânea e persistente entre **Mapa padrão** (OpenStreetMap) e **Satélite** (Esri World Imagery), zoom mais profundo com atribuição visível e exportação da rota em GPX 1.1 com escolha de pasta; a funcionalidade experimental de coleta de campo foi removida do aplicativo ativo. Consulte [UNIFICACAO.md](docs/UNIFICACAO.md) para o histórico da unificação; as seções históricas abaixo permanecem como registro das rodadas anteriores.
+**Estado atual:** o APK define a referência visual e o Web acompanha as mesmas funcionalidades. O fluxo atual usa circuitos (`A → paradas → A`), dois botões de cálculo, preenchimento automático de Endereço Digital (Plus Code) ao selecionar pontos no mapa, alternância instantânea e persistente entre **Mapa padrão** (OpenStreetMap) e **Satélite** (Esri World Imagery), zoom mais profundo com atribuição visível e exportação da rota em GPX 1.1 (download direto na Web e salvamento SAF no APK); a funcionalidade experimental de coleta de campo foi removida do aplicativo ativo. Consulte [UNIFICACAO.md](docs/UNIFICACAO.md) para o histórico da unificação; as seções históricas abaixo permanecem como registro das rodadas anteriores.
 
 ## 1. Sumário
 

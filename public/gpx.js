@@ -24,7 +24,9 @@ function coordValida(lon, lat) {
 }
 
 function fmtCoord(valor) {
-  return Number(valor).toFixed(7);
+  const n = Number(valor);
+  const limpo = Object.is(n, -0) || Math.abs(n) < 5e-8 ? 0 : n;
+  return limpo.toFixed(7);
 }
 
 function fmtDistancia(metros) {
@@ -33,22 +35,35 @@ function fmtDistancia(metros) {
   return `${(metros / 1000).toFixed(2)} km`;
 }
 
+function normalizarLinha(coords) {
+  if (!Array.isArray(coords)) return [];
+  const pontos = [];
+  for (const c of coords) {
+    if (!Array.isArray(c) || c.length < 2) continue;
+    const lon = Number(c[0]);
+    const lat = Number(c[1]);
+    if (!coordValida(lon, lat)) continue;
+    pontos.push([lon, lat]);
+  }
+  return pontos;
+}
+
+function extrairLinhasGeometria(geometry) {
+  if (!geometry || !Array.isArray(geometry.coordinates)) return [];
+  if (geometry.type === 'MultiLineString') {
+    return geometry.coordinates.map(normalizarLinha).filter((pts) => pts.length >= 2);
+  }
+  const linha = normalizarLinha(geometry.coordinates);
+  return linha.length >= 2 ? [linha] : [];
+}
+
 function extrairSegmentos(route) {
   const legs = Array.isArray(route?.legs) ? route.legs : [];
   const segmentos = [];
 
   for (const leg of legs) {
-    const coords = leg?.geometry?.coordinates;
-    if (!Array.isArray(coords)) continue;
-    const pontos = [];
-    for (const c of coords) {
-      if (!Array.isArray(c) || c.length < 2) continue;
-      const lon = Number(c[0]);
-      const lat = Number(c[1]);
-      if (!coordValida(lon, lat)) continue;
-      pontos.push([lon, lat]);
-    }
-    if (pontos.length >= 2) {
+    const linhas = extrairLinhasGeometria(leg?.geometry);
+    for (const pontos of linhas) {
       segmentos.push({
         de: leg.de || '',
         para: leg.para || '',
@@ -58,16 +73,21 @@ function extrairSegmentos(route) {
     }
   }
 
-  if (segmentos.length === 0 && Array.isArray(route?.geometry?.coordinates)) {
-    const pontos = [];
-    for (const c of route.geometry.coordinates) {
-      if (!Array.isArray(c) || c.length < 2) continue;
-      const lon = Number(c[0]);
-      const lat = Number(c[1]);
-      if (!coordValida(lon, lat)) continue;
-      pontos.push([lon, lat]);
+  // Garante inclusão do trecho de retorno quando enviado separado de legs
+  if (route?.circular === true && !segmentos.some((s) => s.retorno) && route?.retorno?.geometry) {
+    const linhasRetorno = extrairLinhasGeometria(route.retorno.geometry);
+    for (const pontos of linhasRetorno) {
+      segmentos.push({
+        de: route.retorno.de || '',
+        para: route.retorno.para || '',
+        retorno: true,
+        pontos,
+      });
     }
-    if (pontos.length >= 2) {
+  }
+
+  if (segmentos.length === 0 && route?.geometry) {
+    for (const pontos of extrairLinhasGeometria(route.geometry)) {
       segmentos.push({ de: '', para: '', retorno: false, pontos });
     }
   }
@@ -76,11 +96,28 @@ function extrairSegmentos(route) {
 }
 
 function ordenarWaypoints(route, pontosLista) {
-  const base = Array.isArray(route?.pontos) && route.pontos.length
+  let base = Array.isArray(route?.pontos) && route.pontos.length
     ? route.pontos
     : Array.isArray(pontosLista)
       ? pontosLista
       : [];
+
+  if (base.length === 0 && route?.origin?.input && route?.destination?.input) {
+    base = [
+      {
+        rotulo: 'A',
+        latitude: route.origin.input.lat,
+        longitude: route.origin.input.lon,
+        ordem: 1,
+      },
+      {
+        rotulo: 'B',
+        latitude: route.destination.input.lat,
+        longitude: route.destination.input.lon,
+        ordem: 2,
+      },
+    ];
+  }
 
   // Enriquecer pontos da rota com enderecoDigital da lista quando necessário.
   const porRotulo = new Map();
@@ -90,14 +127,23 @@ function ordenarWaypoints(route, pontosLista) {
     }
   }
 
+  const ordemPorSequencia = new Map();
+  if (Array.isArray(route?.sequencia)) {
+    route.sequencia.forEach((rot, idx) => {
+      if (rot && !ordemPorSequencia.has(rot)) ordemPorSequencia.set(rot, idx + 1);
+    });
+  }
+
   const comDados = base.map((p, i) => {
-    const extra = p?.rotulo ? porRotulo.get(p.rotulo) : null;
+    const rotulo = p?.rotulo || String.fromCharCode(65 + i);
+    const extra = porRotulo.get(rotulo) || null;
+    const ordemSeq = ordemPorSequencia.get(rotulo);
     return {
-      rotulo: p?.rotulo || extra?.rotulo || String.fromCharCode(65 + i),
+      rotulo,
       latitude: Number(p?.latitude ?? extra?.latitude),
       longitude: Number(p?.longitude ?? extra?.longitude),
       enderecoDigital: p?.enderecoDigital || extra?.enderecoDigital || '',
-      ordem: Number.isFinite(p?.ordem) ? p.ordem : i + 1,
+      ordem: Number.isFinite(p?.ordem) ? p.ordem : (ordemSeq ?? i + 1),
       indiceOriginal: i,
     };
   }).filter((p) => coordValida(p.longitude, p.latitude));
@@ -207,11 +253,13 @@ export function gerarGpxRota(route, opcoes = {}) {
     const descWpt = [papel, w.enderecoDigital ? `Plus Code: ${w.enderecoDigital}` : '']
       .filter(Boolean)
       .join(' · ');
+    const simbolo = idx === 0 ? 'Flag, Green' : 'Flag, Blue';
     linhas.push(
       `  <wpt lat="${fmtCoord(w.latitude)}" lon="${fmtCoord(w.longitude)}">`,
       `    <name>${escapeXml(nomeWpt)}</name>`,
       `    <cmt>${escapeXml(papel)}</cmt>`,
       `    <desc>${escapeXml(descWpt)}</desc>`,
+      `    <sym>${escapeXml(simbolo)}</sym>`,
       '  </wpt>',
     );
   });

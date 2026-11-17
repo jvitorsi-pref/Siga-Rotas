@@ -66,6 +66,7 @@ test('seletor Mapa padrão / Satélite alterna camada base sem recriar WebView e
 
  const voltaOsm=c.render({basemapMode:'osm'});
  assert.doesNotMatch(c.text(voltaOsm.tree),/Satélite indisponível sem conexão/);
+});
 test('toque no mapa: com seleção ativa define o ponto; sem seleção alterna o trecho', () => {
   const c = setup();
   const escolhidos = [], cliques = [];
