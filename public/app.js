@@ -886,7 +886,26 @@ import { criarClienteRede } from './clienteRede.js';
     try {
       const res = await fetch('/api/network');
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
+      const ct = res.headers?.get?.('content-type') || '';
+      let data;
+      if (typeof res.text === 'function' && ct && !/json/i.test(ct)) {
+        const bruto = await res.text();
+        try {
+          data = JSON.parse(bruto);
+        } catch {
+          const titulo = bruto.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim();
+          throw new Error(
+            'A URL ' +
+              (res.url || '/api/network') +
+              ' respondeu ' +
+              ct +
+              (titulo ? ' ("' + titulo + '")' : '') +
+              ' em vez de JSON.',
+          );
+        }
+      } else {
+        data = await res.json();
+      }
       const features = (data.features || []).map((f) => ({
         type: 'Feature',
         geometry: f.geometry,
@@ -1714,7 +1733,7 @@ import { criarClienteRede } from './clienteRede.js';
 
   // exposto para automação e depuração no console do navegador
   // versão do front-end (ajuda a identificar cache antigo no navegador)
-  window.__appVersion = '20261117-3';
+  window.__appVersion = '20261117-4';
   window.__app = {
     map,
     state,

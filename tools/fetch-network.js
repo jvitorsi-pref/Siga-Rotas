@@ -86,8 +86,22 @@ const payload = {
   features: result.features,
 };
 
+const serializado = JSON.stringify(payload);
 await mkdir(path.dirname(out), { recursive: true });
-await writeFile(out, JSON.stringify(payload), 'utf8');
+await writeFile(out, serializado, 'utf8');
+
+if (!arg('--out', '')) {
+  const modPath = path.resolve(ROOT, 'public/network.snapshot.js');
+  await writeFile(
+    modPath,
+    '// Snapshot estático da rede viária em módulo ESM (fallback automático quando .json é bloqueado ou interceptado no IIS/WebForms)\n' +
+      'export default JSON.parse(' +
+      JSON.stringify(serializado) +
+      ');\n',
+    'utf8',
+  );
+  console.log(`  módulo fallback : ${modPath}`);
+}
 
 console.log(`\n  snapshot gravado: ${out}`);
 console.log(`  total: ${((Date.now() - t0) / 1000).toFixed(1)} s\n`);

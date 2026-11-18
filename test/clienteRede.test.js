@@ -406,3 +406,118 @@ test('simulação HTTP estática estilo IIS/WebForms (<iframe src="../../SigaApp
   assert.equal(solicitadas.includes('/sw.js'), false);
 });
 
+test('quando IIS/ASP.NET devolve HTML (<!DOCTYPE ...) para .json, clienteRede cai automaticamente para public/network.snapshot.js', async () => {
+  const cliente = criarClienteRede({
+    location: {
+      pathname: '/SigaApp/SigaRotas/public/index.html',
+      href: 'https://portal.sa.gov.br/SigaApp/SigaRotas/public/index.html',
+      search: '',
+    },
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      url: 'https://portal.sa.gov.br/SigaApp/SigaRotas/Erro.aspx',
+      headers: { get: () => 'text/html; charset=utf-8' },
+      text: async () => ' <!DOCTYPE html><html><head><title>Portal SIGA</title></head><body>Erro</body></html>',
+    }),
+  });
+
+  const resNet = await cliente.fetchApi('/api/network');
+  assert.equal(resNet.status, 200);
+  const net = await resNet.json();
+  assert.ok(net.features.length > 4000, 'deve carregar a rede real via fallback ESM');
+  assert.deepEqual(net.meta.warnings, [], 'fallback bem-sucedido não deve gerar alerta vermelho');
+
+  const resRota = await cliente.fetchApi('/api/rota-paradas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      modo: 'usuario',
+      circular: true,
+      pontos: [
+        { rotulo: 'A', latitude: -23.6635, longitude: -46.5320 },
+        { rotulo: 'B', latitude: -23.6650, longitude: -46.5300 },
+      ],
+    }),
+  });
+  const rota = await resRota.json();
+  assert.equal(rota.ok, true);
+  assert.ok(rota.distance > 0);
+});
+
+test('snapshotUrl explícito que devolve HTML produz erro diagnóstico claro em vez de Unexpected token <', async () => {
+  const cliente = criarClienteRede({
+    location: {
+      pathname: '/SigaApp/SigaRotas/public/index.html',
+      href: 'https://portal.sa.gov.br/SigaApp/SigaRotas/public/index.html?snapshotUrl=../custom.json',
+      search: '?snapshotUrl=../custom.json',
+    },
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      url: 'https://portal.sa.gov.br/Login.aspx',
+      headers: { get: () => 'text/html; charset=utf-8' },
+      text: async () => ' <!DOCTYPE html><html><head><title>Autenticação</title></head></html>',
+    }),
+  });
+
+  await assert.rejects(
+    () => cliente.fetchApi('/api/network'),
+    /Login\.aspx.*devolveu HTML.*Autenticação/i,
+  );
+});
+
+test('simulação HTTP estática no IIS sem pasta data/ e com customErrors HTML funciona via import(./network.snapshot.js)', async (t) => {
+  const MIME = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.png': 'image/png',
+  };
+
+  const server = http.createServer((req, res) => {
+    const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
+    const prefix = '/SigaApp/SigaRotas/';
+    if (pathname.startsWith(prefix)) {
+      const rel = pathname.slice(prefix.length);
+      // Simula ambiente onde data/network.snapshot.json foi interceptado por .aspx HTML
+      if (rel.startsWith('data/')) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(' <!DOCTYPE html><html><head><title>Erro customizado</title></head></html>');
+        return;
+      }
+      const abs = path.resolve(ROOT_DIR, rel);
+      if (abs.startsWith(ROOT_DIR + path.sep) && existsSync(abs) && statSync(abs).isFile()) {
+        const ext = path.extname(abs).toLowerCase();
+        res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+        res.end(readFileSync(abs));
+        return;
+      }
+    }
+    res.writeHead(404);
+    res.end('Not found');
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+  const iframeUrl = `${base}/SigaApp/SigaRotas/public/index.html`;
+
+  const modHttpRes = await fetch(new URL('./network.snapshot.js', iframeUrl).href);
+  assert.equal(modHttpRes.status, 200);
+  assert.match(modHttpRes.headers.get('content-type') || '', /javascript/i);
+
+  const cliente = criarClienteRede({
+    location: {
+      pathname: '/SigaApp/SigaRotas/public/index.html',
+      href: iframeUrl,
+      search: '',
+    },
+    fetchImpl: fetch,
+  });
+
+  const net = await (await cliente.fetchApi('/api/network')).json();
+  assert.ok(net.features.length > 4000);
+});
+

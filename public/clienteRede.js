@@ -163,9 +163,49 @@ export function criarClienteRede(opcoes = {}) {
     opcoes.fetchImpl ||
     (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null);
 
+  const snapshotModuleLoader =
+    opcoes.snapshotModuleLoader ||
+    (() => import('./network.snapshot.js'));
+
   let promessaModo = null;
   let promessaRede = null;
   let estadoRede = null;
+
+  function construirEstadoSnapshot(snap, avisosIniciais = []) {
+    const t0 = Date.now();
+    const graph = buildGraph(snap.features, opcoes.graphOptions);
+    const elapsedMs = Date.now() - t0;
+    const warnings = [...avisosIniciais, ...(Array.isArray(snap.warnings) ? snap.warnings : [])];
+    return {
+      graph,
+      features: snap.features,
+      diagnostics: graph.diagnostics,
+      source: snap.source || 'snapshot',
+      strategy: snap.strategy || 'snapshot',
+      builtAt: Date.now(),
+      elapsedMs,
+      serverTotal: snap.serverTotal ?? snap.features.length,
+      attributes: Array.isArray(snap.attributes) ? snap.attributes : [],
+      warnings,
+    };
+  }
+
+  async function lerSnapshotJson(res, rel, alvo) {
+    const ct = res.headers?.get?.('content-type') || '';
+    if (typeof res.text === 'function') {
+      const bruto = await res.text();
+      const limpo = bruto.trimStart();
+      if (limpo.startsWith('<')) {
+        const titulo = limpo.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim();
+        throw new Error(
+          `${rel} (${res.url || alvo}) devolveu HTML (${ct || 'text/html'}` +
+            `${titulo ? `: "${titulo}"` : ''}) em vez de JSON.`,
+        );
+      }
+      return JSON.parse(bruto);
+    }
+    return res.json();
+  }
 
   async function resolverModo() {
     if (promessaModo) return promessaModo;
@@ -206,9 +246,6 @@ export function criarClienteRede(opcoes = {}) {
   }
 
   async function carregarSnapshot(avisosIniciais = []) {
-    if (!fetchFn) {
-      throw new Error('fetch indisponível para carregar o snapshot da rede.');
-    }
     const candidatos = cfg.snapshotUrl
       ? [cfg.snapshotUrl]
       : ehCaminhoPublicoEstatico(cfg.pathname)
@@ -216,41 +253,45 @@ export function criarClienteRede(opcoes = {}) {
         : ['../data/network.snapshot.json', 'data/network.snapshot.json'];
 
     let ultimaFalha = null;
-    for (const rel of candidatos) {
-      const alvo = resolverUrlAbsoluta(rel, cfg.href);
-      try {
-        const res = await fetchFn(alvo);
-        if (!res.ok) {
-          ultimaFalha = new Error(
-            `HTTP ${res.status} ao carregar ${rel}. Se estiver no IIS, verifique o web.config (MIME .json).`,
-          );
-          continue;
+    if (fetchFn) {
+      for (const rel of candidatos) {
+        const alvo = resolverUrlAbsoluta(rel, cfg.href);
+        try {
+          const res = await fetchFn(alvo);
+          if (!res.ok) {
+            ultimaFalha = new Error(
+              `HTTP ${res.status} ao carregar ${rel} (${res.url || alvo}).`,
+            );
+            continue;
+          }
+          const snap = await lerSnapshotJson(res, rel, alvo);
+          if (!snap || !Array.isArray(snap.features) || snap.features.length === 0) {
+            ultimaFalha = new Error(`Snapshot inválido ou vazio em ${rel}.`);
+            continue;
+          }
+          return construirEstadoSnapshot(snap, avisosIniciais);
+        } catch (err) {
+          ultimaFalha = err;
         }
-        const snap = await res.json();
-        if (!snap || !Array.isArray(snap.features) || snap.features.length === 0) {
-          ultimaFalha = new Error(`Snapshot inválido ou vazio em ${rel}.`);
-          continue;
-        }
-        const t0 = Date.now();
-        const graph = buildGraph(snap.features, opcoes.graphOptions);
-        const elapsedMs = Date.now() - t0;
-        const warnings = [...avisosIniciais, ...(Array.isArray(snap.warnings) ? snap.warnings : [])];
-        return {
-          graph,
-          features: snap.features,
-          diagnostics: graph.diagnostics,
-          source: snap.source || 'snapshot',
-          strategy: snap.strategy || 'snapshot',
-          builtAt: Date.now(),
-          elapsedMs,
-          serverTotal: snap.serverTotal ?? snap.features.length,
-          attributes: Array.isArray(snap.attributes) ? snap.attributes : [],
-          warnings,
-        };
-      } catch (err) {
-        ultimaFalha = err;
       }
     }
+
+    // Fallback automático: quando .json não é publicado ou é interceptado
+    // por páginas HTML do IIS/ASP.NET (ex.: <customErrors> / Login), importa
+    // o módulo ESM local (`public/network.snapshot.js`), servido pelo mesmo
+    // pipeline de `.js` que já carregou `app.js` e `clienteRede.js`.
+    if (!cfg.snapshotUrl && typeof snapshotModuleLoader === 'function') {
+      try {
+        const mod = await snapshotModuleLoader();
+        const snap = mod?.default || mod;
+        if (snap && Array.isArray(snap.features) && snap.features.length > 0) {
+          return construirEstadoSnapshot(snap, avisosIniciais);
+        }
+      } catch (err) {
+        ultimaFalha = ultimaFalha || err;
+      }
+    }
+
     throw ultimaFalha || new Error('Não foi possível carregar o snapshot local da rede.');
   }
 

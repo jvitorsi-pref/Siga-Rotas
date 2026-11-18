@@ -11,9 +11,10 @@ O Siga-Rotas pode ser incorporado diretamente na página `.aspx` usando o `<ifra
 
 ## Como funciona sem Node.js no servidor IIS
 
-1. Copie a pasta completa do projeto (`public/`, `core/`, `data/` e `web.config`) para `~/SigaApp/SigaRotas/`.
+1. Copie o projeto para `~/SigaApp/SigaRotas/` (especialmente `public/`, `core/`, e opcionalmente `data/` e `web.config`).
 2. Ao abrir `../../SigaApp/SigaRotas/public/index.html`:
-   - `public/clienteRede.js` detecta automaticamente a execução em pasta estática (`/public/`) e carrega `../data/network.snapshot.json` usando o `web.config` incluído na raiz (MIME types `.json`, `.geojson`, `.webmanifest`, `.js`).
+   - `public/clienteRede.js` detecta automaticamente a execução em pasta estática (`/public/`).
+   - Primeiro tenta carregar `../data/network.snapshot.json`; caso `.json` seja bloqueado, não tenha sido publicado ou o ASP.NET redirecione/devolva uma página HTML (`<!DOCTYPE ...>`), ele cai automaticamente para `public/network.snapshot.js` (servido pelo mesmo pipeline de módulos `.js` de `app.js`).
    - O cálculo de rotas (A*, TSP/otimização, circuito com retorno à origem), Plus Code local (`core/enderecoDigitalService.js`), navegação com simulação/GPS e exportação GPX executam integralmente no navegador com os módulos puros de `core/`.
    - O registro do Service Worker (`/sw.js`) é omitido automaticamente dentro de `<iframe>` / subpasta `/public/`, evitando requisições 404 na raiz do portal WebForms.
 
