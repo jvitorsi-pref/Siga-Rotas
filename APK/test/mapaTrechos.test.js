@@ -289,6 +289,7 @@ test('Canvas: clique informa o zoom para a tolerância do toque no trecho', () =
   assert.equal(clique.type, 'MAP_CLICK');
   assert.ok(Math.abs(clique.zoom - 17) < 1e-9);
   assert.match(MAP_HTML, /zoom: map\.getView\(\)\.getZoom\(\)/);
+});
 
 test('APK mapa: OpenLayers alcança zoom 22 com tiles OSM em 19, atribuição visível e filtro sem brilho estourado', () => {
   assert.match(MAP_HTML, /source:\s*new ol\.source\.OSM\(\{\s*maxZoom:\s*19,\s*interpolate:\s*true/s);

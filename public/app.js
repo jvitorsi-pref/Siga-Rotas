@@ -1132,11 +1132,8 @@ import {
     try {
       const res = await exportarRotaGpxWeb(state.rotaAtual, { pontos: state.lista.pontos });
       if (res.ok) {
-        mostrarFeedbackGpx(res.mensagem, res.modo === 'download' ? 'warn' : 'ok');
+        mostrarFeedbackGpx(res.mensagem, 'ok');
         setStatus(res.mensagem, 'ok');
-      } else if (res.cancelado) {
-        mostrarFeedbackGpx(res.mensagem, 'warn');
-        setStatus(res.mensagem, 'idle');
       } else {
         mostrarFeedbackGpx(res.mensagem, 'err');
         setStatus(res.mensagem, 'err');
@@ -1710,7 +1707,7 @@ import {
 
   // exposto para automação e depuração no console do navegador
   // versão do front-end (ajuda a identificar cache antigo no navegador)
-  window.__appVersion = '20261117-1';
+  window.__appVersion = '20261117-2';
   window.__app = {
     map,
     state,
