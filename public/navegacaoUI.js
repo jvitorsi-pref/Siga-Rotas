@@ -242,7 +242,8 @@ export function criarInterfaceNavegacao(app) {
       'aviso',
     );
     try {
-      const res = await fetch('/api/rota-paradas', {
+      const fetchFn = typeof app?.fetchApi === 'function' ? app.fetchApi : fetch;
+      const res = await fetchFn('/api/rota-paradas', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         // modo "usuario": a ordem das paradas restantes é preservada
