@@ -1,6 +1,6 @@
 # Inventário técnico — unificação
 
-Gerado por `node tools/inventario-unificacao.mjs`. Base: `cc72d0339133e3bfcd845b1e2a5038d9404d8425`.
+Gerado por `node tools/inventario-unificacao.mjs`. Base: `60c55571682649cb2a9ce91604ed4d114aeb8f7e`.
 
 Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não afirma validação visual nem execução Android. Vendor OpenLayers, snapshots e arquivos Android gerados são dependências/recursos, não incluídos na tabela de exports. Pacotes em `updates/` são históricos e não entram no grafo de imports ativo.
 
@@ -96,19 +96,20 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `core/spatialIndex.js` | 147 | Igual à base | GridIndex, computeBBox |
 | `core/wfs.js` | 528 | Igual à base | WfsError, parseServiceException, fetchNetwork, describeLayer, checkForUpdates |
 | `package.json` | 49 | Igual à base | — |
-| `public/app.js` | 1774 | Alterado | — |
+| `public/app.js` | 1793 | Alterado | — |
 | `public/camadaBase.js` | 203 | Igual à base | CAMADA_PADRAO, CAMADA_SATELITE, CHAVE_CAMADA_BASE, CAMADAS_BASE, normalizarCamadaBase, opcoesCamadasBase, lerPreferenciaCamadaSync, salvarPreferenciaCamadaSync, lerPreferenciaCamadaAsync, salvarPreferenciaCamadaAsync, criarMonitorSatelite |
-| `public/clienteRede.js` | 477 | Novo | detectarConfiguracaoAmbiente, criarClienteRede |
+| `public/clienteRede.js` | 518 | Alterado | detectarConfiguracaoAmbiente, criarClienteRede |
 | `public/exportarGpxWeb.js` | 70 | Igual à base | exportarRotaGpxWeb |
 | `public/gpx.js` | 285 | Igual à base | nomeArquivoGpx, gerarGpxRota |
 | `public/index.html` | 252 | Igual à base | — |
 | `public/manifest.webmanifest` | 39 | Igual à base | — |
-| `public/navegacaoUI.js` | 669 | Alterado | criarInterfaceNavegacao |
+| `public/navegacaoUI.js` | 669 | Igual à base | criarInterfaceNavegacao |
+| `public/network.snapshot.js` | 3 | Novo | — |
 | `public/planejamentoCircuito.js` | 107 | Igual à base | criarListaCircuito, opcoesCalculoCircuito, papelPontoCircuito, assinaturaPlanejador, resolverPontoNoMapa |
 | `public/resumoRota.js` | 41 | Igual à base | rotuloModo, resumoRota |
 | `public/revisoesEndereco.js` | 11 | Igual à base | criarRevisoesEndereco |
 | `public/styles.css` | 1260 | Igual à base | — |
-| `public/sw.js` | 113 | Alterado | — |
+| `public/sw.js` | 113 | Igual à base | — |
 | `server/index.js` | 445 | Igual à base | parsePoint, createServer |
 | `server/networkService.js` | 561 | Igual à base | SNAPSHOT_PATH, NetworkService |
 | `test/api.test.js` | 166 | Igual à base | — |
@@ -119,7 +120,7 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `test/cenariosResumoRota.js` | 27 | Igual à base | testarResumo |
 | `test/circuitoUI.test.js` | 26 | Igual à base | — |
 | `test/circular.test.js` | 400 | Igual à base | — |
-| `test/clienteRede.test.js` | 409 | Novo | — |
+| `test/clienteRede.test.js` | 524 | Alterado | — |
 | `test/coresTrechos.test.js` | 213 | Igual à base | — |
 | `test/enderecoDigital.test.js` | 513 | Igual à base | — |
 | `test/enderecoUI.test.js` | 4 | Igual à base | — |
@@ -145,7 +146,7 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `tools/diagnose-connections.js` | 160 | Igual à base | — |
 | `tools/diagnose-detours.js` | 126 | Igual à base | — |
 | `tools/experiment-tolerance.js` | 94 | Igual à base | — |
-| `tools/fetch-network.js` | 94 | Igual à base | — |
+| `tools/fetch-network.js` | 108 | Alterado | — |
 | `tools/gerar-icones-pwa.mjs` | 48 | Igual à base | — |
 | `tools/inspect-layer.js` | 135 | Igual à base | — |
 | `tools/inventario-unificacao.mjs` | 49 | Igual à base | — |
