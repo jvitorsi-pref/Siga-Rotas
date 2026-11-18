@@ -45,9 +45,16 @@ import {
   salvarPreferenciaCamadaSync,
   criarMonitorSatelite,
 } from './camadaBase.js';
+import { criarClienteRede } from './clienteRede.js';
 
 (function () {
   'use strict';
+
+  // Adaptador Servidor / WebForms-IIS: preserva todas as chamadas fetch('/api/...')
+  // transparentemente — usa o backend Node quando disponível ou executa o motor
+  // puro (core/) com o snapshot local quando aberto em iframe estático no IIS.
+  const clienteRede = criarClienteRede();
+  const fetch = (url, init) => clienteRede.fetchApi(url, init);
 
   const ol = window.ol;
   document.querySelectorAll('[data-layout-mode]').forEach((button) => {
@@ -1707,7 +1714,7 @@ import {
 
   // exposto para automação e depuração no console do navegador
   // versão do front-end (ajuda a identificar cache antigo no navegador)
-  window.__appVersion = '20261117-2';
+  window.__appVersion = '20261117-3';
   window.__app = {
     map,
     state,
@@ -1726,6 +1733,8 @@ import {
     renderizarPontos,
     ajustarEnquadramento,
     definirCamadaBase,
+    fetchApi: fetch,
+    clienteRede,
     exportarGpx,
   };
   // a rota atual é lida sempre do estado (nunca fica desatualizada)
@@ -1738,9 +1747,18 @@ import {
   const navUI = criarInterfaceNavegacao(window.__app);
   window.__app.nav = navUI;
 
-  // Service Worker: permite abrir o aplicativo sem conexão (o esqueleto do
-  // aplicativo fica em cache; os dados da API nunca são cacheados).
-  if ('serviceWorker' in navigator && window.isSecureContext !== false) {
+  // Service Worker: apenas quando a aplicação roda diretamente na raiz (PWA Node);
+  // dentro de <iframe> ou em subpasta estática (/public/) do WebForms/IIS, o SW
+  // na raiz não existe nem deve assumir o escopo do portal pai.
+  const emIframe = (() => {
+    try {
+      return window.self !== window.top;
+    } catch {
+      return true;
+    }
+  })();
+  const naRaiz = !/\/public(?:\/|$)/i.test(window.location?.pathname || '/');
+  if ('serviceWorker' in navigator && window.isSecureContext !== false && !emIframe && naRaiz) {
     window.addEventListener('load', () => {
       navigator.serviceWorker
         .register('/sw.js')

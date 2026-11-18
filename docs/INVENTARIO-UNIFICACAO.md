@@ -1,6 +1,6 @@
 # Inventário técnico — unificação
 
-Gerado por `node tools/inventario-unificacao.mjs`. Base: `6cab745f386527d46d44d12105679ece6de2789f`.
+Gerado por `node tools/inventario-unificacao.mjs`. Base: `cc72d0339133e3bfcd845b1e2a5038d9404d8425`.
 
 Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não afirma validação visual nem execução Android. Vendor OpenLayers, snapshots e arquivos Android gerados são dependências/recursos, não incluídos na tabela de exports. Pacotes em `updates/` são históricos e não entram no grafo de imports ativo.
 
@@ -66,9 +66,9 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `APK/test/gradleLauncher.test.js` | 54 | Igual à base | — |
 | `APK/test/graph.test.js` | 280 | Igual à base | — |
 | `APK/test/helpers.js` | 91 | Igual à base | ROOT, loadRealFeatures, feature, official, unofficial, road, offset |
-| `APK/test/mapRender.test.js` | 82 | Alterado | — |
+| `APK/test/mapRender.test.js` | 82 | Igual à base | — |
 | `APK/test/mapSync.test.js` | 48 | Igual à base | — |
-| `APK/test/mapaTrechos.test.js` | 396 | Alterado | — |
+| `APK/test/mapaTrechos.test.js` | 396 | Igual à base | — |
 | `APK/test/mobileNetworkService.test.js` | 74 | Igual à base | — |
 | `APK/test/nativeGPS.test.js` | 83 | Igual à base | — |
 | `APK/test/navegacaoMobile.test.js` | 139 | Igual à base | — |
@@ -96,18 +96,19 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `core/spatialIndex.js` | 147 | Igual à base | GridIndex, computeBBox |
 | `core/wfs.js` | 528 | Igual à base | WfsError, parseServiceException, fetchNetwork, describeLayer, checkForUpdates |
 | `package.json` | 49 | Igual à base | — |
-| `public/app.js` | 1756 | Alterado | — |
+| `public/app.js` | 1774 | Alterado | — |
 | `public/camadaBase.js` | 203 | Igual à base | CAMADA_PADRAO, CAMADA_SATELITE, CHAVE_CAMADA_BASE, CAMADAS_BASE, normalizarCamadaBase, opcoesCamadasBase, lerPreferenciaCamadaSync, salvarPreferenciaCamadaSync, lerPreferenciaCamadaAsync, salvarPreferenciaCamadaAsync, criarMonitorSatelite |
-| `public/exportarGpxWeb.js` | 70 | Alterado | exportarRotaGpxWeb |
-| `public/gpx.js` | 285 | Alterado | nomeArquivoGpx, gerarGpxRota |
+| `public/clienteRede.js` | 477 | Novo | detectarConfiguracaoAmbiente, criarClienteRede |
+| `public/exportarGpxWeb.js` | 70 | Igual à base | exportarRotaGpxWeb |
+| `public/gpx.js` | 285 | Igual à base | nomeArquivoGpx, gerarGpxRota |
 | `public/index.html` | 252 | Igual à base | — |
 | `public/manifest.webmanifest` | 39 | Igual à base | — |
-| `public/navegacaoUI.js` | 668 | Igual à base | criarInterfaceNavegacao |
+| `public/navegacaoUI.js` | 669 | Alterado | criarInterfaceNavegacao |
 | `public/planejamentoCircuito.js` | 107 | Igual à base | criarListaCircuito, opcoesCalculoCircuito, papelPontoCircuito, assinaturaPlanejador, resolverPontoNoMapa |
 | `public/resumoRota.js` | 41 | Igual à base | rotuloModo, resumoRota |
 | `public/revisoesEndereco.js` | 11 | Igual à base | criarRevisoesEndereco |
 | `public/styles.css` | 1260 | Igual à base | — |
-| `public/sw.js` | 105 | Alterado | — |
+| `public/sw.js` | 113 | Alterado | — |
 | `server/index.js` | 445 | Igual à base | parsePoint, createServer |
 | `server/networkService.js` | 561 | Igual à base | SNAPSHOT_PATH, NetworkService |
 | `test/api.test.js` | 166 | Igual à base | — |
@@ -118,11 +119,12 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `test/cenariosResumoRota.js` | 27 | Igual à base | testarResumo |
 | `test/circuitoUI.test.js` | 26 | Igual à base | — |
 | `test/circular.test.js` | 400 | Igual à base | — |
+| `test/clienteRede.test.js` | 409 | Novo | — |
 | `test/coresTrechos.test.js` | 213 | Igual à base | — |
 | `test/enderecoDigital.test.js` | 513 | Igual à base | — |
 | `test/enderecoUI.test.js` | 4 | Igual à base | — |
 | `test/fidelity.test.js` | 415 | Igual à base | — |
-| `test/gpx.test.js` | 329 | Alterado | — |
+| `test/gpx.test.js` | 329 | Igual à base | — |
 | `test/graph.test.js` | 279 | Igual à base | — |
 | `test/helpers.js` | 90 | Igual à base | ROOT, loadRealFeatures, feature, official, unofficial, road, offset |
 | `test/mapaIntegracao.test.js` | 132 | Igual à base | — |
