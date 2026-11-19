@@ -128,11 +128,36 @@ export const MAP_HTML = `<!DOCTYPE html>
     features: [],
     routeGeometry: null,
     segments: [],
+    altRoutes: [],
+    highlightSegments: [],
+    occurrences: [],
+    showOccurrences: true,
     position: null,
     markers: [],
     picking: false,
     basemapMode: CAMADA_PADRAO
   };
+
+  function corOcorrencia(classificacao) {
+    if (classificacao === 'evita' || classificacao === 'bloqueio_total') return '#dc2626';
+    if (classificacao === 'penaliza' || classificacao === 'penalidade_severa') return '#d97706';
+    return '#0284c7';
+  }
+  function glifoCategoria(categoria) {
+    var mapa = {
+      escadaria: '≡',
+      terreno_irregular: '≈',
+      rua_ingreme: '↗',
+      passagem_estreita: '⇥',
+      buracos: '●',
+      alagamento: '∿',
+      obra_bloqueio: '✕',
+      calcada_inexistente: '!',
+      obstaculo: '▲',
+      outras: '•'
+    };
+    return mapa[categoria] || '•';
+  }
 
   // =========================================================================
   // MODO 1: OpenLayers 10 (com mapa-base OSM / Satélite + camadas vetoriais)
@@ -355,6 +380,78 @@ export const MAP_HTML = `<!DOCTYPE html>
         stroke: new ol.style.Stroke({ color: '#ffffff', width: 2.5 }) }) }); }
     }));
 
+    // Camadas colaborativas adicionadas após positionSource para preservar índices 0..4
+    var altRouteSource = new ol.source.Vector({ features: [] });
+    var altRouteLayer = new ol.layer.Vector({
+      source: altRouteSource,
+      zIndex: 18,
+      style: function () {
+        return [
+          new ol.style.Style({ stroke: new ol.style.Stroke({ color: 'rgba(255,255,255,0.8)', width: 7, lineCap: 'round', lineJoin: 'round' }) }),
+          new ol.style.Style({ stroke: new ol.style.Stroke({ color: 'rgba(100,116,139,0.75)', width: 4, lineCap: 'round', lineJoin: 'round', lineDash: [10, 6] }) })
+        ];
+      }
+    });
+    var occSegmentSource = new ol.source.Vector({ features: [] });
+    var occSegmentLayer = new ol.layer.Vector({
+      source: occSegmentSource,
+      zIndex: 19,
+      style: function (feature) {
+        var c = corOcorrencia(feature.get('classificacao'));
+        return [
+          new ol.style.Style({ stroke: new ol.style.Stroke({ color: 'rgba(255,255,255,0.9)', width: 9, lineCap: 'round', lineJoin: 'round' }) }),
+          new ol.style.Style({ stroke: new ol.style.Stroke({ color: c, width: 5, lineCap: 'round', lineJoin: 'round' }) })
+        ];
+      }
+    });
+    var occSource = new ol.source.Vector({ features: [] });
+    var occClusterSource = ol.source && typeof ol.source.Cluster === 'function'
+      ? new ol.source.Cluster({ distance: 38, minDistance: 22, source: occSource })
+      : occSource;
+    var occLayer = new ol.layer.Vector({
+      source: occClusterSource,
+      zIndex: 23,
+      visible: true,
+      style: function (feature) {
+        var inner = typeof feature.get === 'function' ? feature.get('features') : null;
+        if (inner && inner.length > 1) {
+          var temBloqueio = inner.some(function (it) { return it.get('classificacao') === 'evita'; });
+          var temSevera = inner.some(function (it) { return it.get('classificacao') === 'penaliza'; });
+          var corCl = temBloqueio ? '#dc2626' : (temSevera ? '#d97706' : '#0284c7');
+          return new ol.style.Style({
+            image: new ol.style.Circle({
+              radius: 13,
+              fill: new ol.style.Fill({ color: corCl }),
+              stroke: new ol.style.Stroke({ color: '#ffffff', width: 2.5 })
+            }),
+            text: new ol.style.Text({
+              text: String(inner.length),
+              font: 'bold 11px sans-serif',
+              fill: new ol.style.Fill({ color: '#ffffff' })
+            })
+          });
+        }
+        var target = inner && inner.length === 1 ? inner[0] : feature;
+        var cls = target.get('classificacao');
+        var glyph = glifoCategoria(target.get('categoria'));
+        return new ol.style.Style({
+          image: new ol.style.Circle({
+            radius: 10,
+            fill: new ol.style.Fill({ color: corOcorrencia(cls) }),
+            stroke: new ol.style.Stroke({ color: '#ffffff', width: 2.2 })
+          }),
+          text: new ol.style.Text({
+            text: glyph,
+            font: 'bold 11px sans-serif',
+            fill: new ol.style.Fill({ color: '#ffffff' })
+          })
+        });
+      }
+    });
+    map.addLayer(altRouteLayer);
+    map.addLayer(occSegmentLayer);
+    map.addLayer(occLayer);
+
     var geojson = new ol.format.GeoJSON({
       dataProjection: 'EPSG:4326',
       featureProjection: 'EPSG:3857'
@@ -365,6 +462,40 @@ export const MAP_HTML = `<!DOCTYPE html>
     }
 
     map.on('singleclick', function (evt) {
+      if (!state.picking && typeof map.forEachFeatureAtPixel === 'function') {
+        var clicadaOcc = map.forEachFeatureAtPixel(evt.pixel, function (feat) { return feat; }, {
+          layerFilter: function (layer) { return layer === occLayer; },
+          hitTolerance: 8
+        });
+        if (clicadaOcc) {
+          var sub = typeof clicadaOcc.get === 'function' ? clicadaOcc.get('features') : null;
+          if (sub && sub.length > 1) {
+            var cGeom = clicadaOcc.getGeometry && clicadaOcc.getGeometry();
+            if (cGeom && typeof cGeom.getCoordinates === 'function') {
+              map.getView().animate({
+                center: cGeom.getCoordinates(),
+                zoom: Math.min((map.getView().getZoom() || 14) + 2, 19),
+                duration: 260
+              });
+              return;
+            }
+          }
+          var alvoOcc = sub && sub.length === 1 ? sub[0] : clicadaOcc;
+          var occId = alvoOcc.get && alvoOcc.get('occId');
+          if (occId) {
+            postToRN({ type: 'OCC_CLICK', id: occId });
+            return;
+          }
+        }
+        var clicadaAlt = map.forEachFeatureAtPixel(evt.pixel, function (feat) { return feat; }, {
+          layerFilter: function (layer) { return layer === altRouteLayer; },
+          hitTolerance: 8
+        });
+        if (clicadaAlt && clicadaAlt.get && clicadaAlt.get('altId')) {
+          postToRN({ type: 'ALT_ROUTE_CLICK', id: clicadaAlt.get('altId') });
+          return;
+        }
+      }
       var lonLat = ol.proj.toLonLat(evt.coordinate);
       postToRN({
         type: 'MAP_CLICK',
@@ -458,6 +589,51 @@ export const MAP_HTML = `<!DOCTYPE html>
         }
       } else if (msg.type === 'SET_BASEMAP') {
         aplicarCamadaBase(msg.mode);
+      } else if (msg.type === 'SET_PICKING') {
+        state.picking = !!msg.picking;
+      } else if (msg.type === 'SET_ALT_ROUTES') {
+        altRouteSource.clear();
+        var alts = msg.altRoutes || [];
+        for (var ai = 0; ai < alts.length; ai++) {
+          var alt = alts[ai];
+          if (!alt || !alt.geometry || !alt.geometry.coordinates || alt.geometry.coordinates.length < 2) continue;
+          altRouteSource.addFeature(geojson.readFeature({
+            type: 'Feature',
+            properties: { altId: alt.id },
+            geometry: alt.geometry
+          }));
+        }
+      } else if (msg.type === 'SET_HIGHLIGHT_SEGMENTS') {
+        occSegmentSource.clear();
+        var hSegs = msg.segments || [];
+        for (var hi = 0; hi < hSegs.length; hi++) {
+          var hs = hSegs[hi];
+          if (!hs || !hs.geometry || !hs.geometry.coordinates || hs.geometry.coordinates.length < 2) continue;
+          occSegmentSource.addFeature(geojson.readFeature({
+            type: 'Feature',
+            properties: { classificacao: hs.classificacao || 'informativo' },
+            geometry: hs.geometry
+          }));
+        }
+      } else if (msg.type === 'SET_OCCURRENCES') {
+        occSource.clear();
+        var occs = msg.occurrences || [];
+        for (var oi = 0; oi < occs.length; oi++) {
+          var occ = occs[oi];
+          var occLoc = (occ && occ.localizacao) || occ;
+          if (!occ || occLoc.latitude == null || occLoc.longitude == null) continue;
+          var of = new ol.Feature({
+            geometry: new ol.geom.Point(ol.proj.fromLonLat([occLoc.longitude, occLoc.latitude])),
+            occId: occ.id,
+            categoria: occ.categoria,
+            classificacao: occ.classificacao
+          });
+          occSource.addFeature(of);
+        }
+      } else if (msg.type === 'SET_SHOW_OCCURRENCES') {
+        state.showOccurrences = msg.show !== false;
+        if (typeof occLayer.setVisible === 'function') occLayer.setVisible(state.showOccurrences);
+        else occLayer.visible = state.showOccurrences;
       }
     };
 
@@ -613,6 +789,34 @@ export const MAP_HTML = `<!DOCTYPE html>
     ctx.strokeStyle = '#c2620d'; ctx.lineWidth = 1.7 * dpr;
     ctx.setLineDash([4 * dpr, 3 * dpr]); ctx.stroke(); ctx.setLineDash([]);
 
+    // Rotas alternativas não selecionadas (tracejado discreto)
+    for (var ari = 0; ari < state.altRoutes.length; ari++) {
+      var altItem = state.altRoutes[ari];
+      if (!altItem || !altItem.geometry) continue;
+      var altLines = geometryLines(altItem.geometry);
+      ctx.setLineDash([10 * dpr, 6 * dpr]);
+      for (var al = 0; al < altLines.length; al++) {
+        ctx.beginPath(); drawRing(altLines[al]);
+        ctx.strokeStyle = 'rgba(100,116,139,0.75)';
+        ctx.lineWidth = 4 * dpr;
+        ctx.stroke();
+      }
+    }
+    ctx.setLineDash([]);
+
+    // Segmentos destacados por ocorrências
+    for (var hsi = 0; hsi < state.highlightSegments.length; hsi++) {
+      var hSeg = state.highlightSegments[hsi];
+      if (!hSeg || !hSeg.geometry) continue;
+      var hLines = geometryLines(hSeg.geometry);
+      for (var hl = 0; hl < hLines.length; hl++) {
+        ctx.beginPath(); drawRing(hLines[hl]);
+        ctx.strokeStyle = corOcorrencia(hSeg.classificacao);
+        ctx.lineWidth = 6 * dpr;
+        ctx.stroke();
+      }
+    }
+
     // Um desenho por perna: ocultar nunca modifica a geometria da rota.
     var segments = state.segments.length ? state.segments : [{ geometry: state.routeGeometry }];
     for (var si = 0; si < segments.length; si++) {
@@ -657,6 +861,26 @@ export const MAP_HTML = `<!DOCTYPE html>
       ctx.beginPath(); ctx.arc(np[0], np[1], 7 * dpr, 0, Math.PI * 2);
       ctx.fillStyle = state.position.simulado === true ? '#7c3aed' : '#045127'; ctx.fill();
       ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.5 * dpr; ctx.stroke();
+    }
+    if (state.showOccurrences && state.occurrences.length) {
+      for (var oci = 0; oci < state.occurrences.length; oci++) {
+        var oc = state.occurrences[oci];
+        var ocLoc = (oc && oc.localizacao) || oc;
+        if (!oc || ocLoc.latitude == null || ocLoc.longitude == null) continue;
+        var op = lonLatToXY(ocLoc.longitude, ocLoc.latitude);
+        ctx.beginPath();
+        ctx.arc(op[0], op[1], 10 * dpr, 0, Math.PI * 2);
+        ctx.fillStyle = corOcorrencia(oc.classificacao);
+        ctx.fill();
+        ctx.lineWidth = 2.2 * dpr;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold ' + Math.round(11 * dpr) + 'px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(glifoCategoria(oc.categoria), op[0], op[1]);
+      }
     }
   }
 
@@ -783,6 +1007,27 @@ export const MAP_HTML = `<!DOCTYPE html>
         ultimoToque = { x: e.clientX, y: e.clientY, t: agora };
       }
       var ll = xyToLonLat(e.clientX, e.clientY);
+      if (!state.picking && state.showOccurrences && state.occurrences.length) {
+        var hitOcc = null;
+        var hitDist = Infinity;
+        var dprClick = window.devicePixelRatio || 1;
+        for (var ho = 0; ho < state.occurrences.length; ho++) {
+          var cand = state.occurrences[ho];
+          var candLoc = (cand && cand.localizacao) || cand;
+          if (!cand || candLoc.latitude == null || candLoc.longitude == null) continue;
+          var ptOcc = lonLatToXY(candLoc.longitude, candLoc.latitude);
+          var distPx = Math.hypot(ptOcc[0] / dprClick - e.clientX, ptOcc[1] / dprClick - e.clientY);
+          if (distPx <= 16 && distPx < hitDist) {
+            hitDist = distPx;
+            hitOcc = cand;
+          }
+        }
+        if (hitOcc) {
+          postToRN({ type: 'OCC_CLICK', id: hitOcc.id });
+          toque = null;
+          return;
+        }
+      }
       postToRN({
         type: 'MAP_CLICK',
         lon: ll[0],
@@ -870,6 +1115,20 @@ export const MAP_HTML = `<!DOCTYPE html>
           message: ''
         });
       }
+    } else if (msg.type === 'SET_PICKING') {
+      state.picking = !!msg.picking;
+    } else if (msg.type === 'SET_ALT_ROUTES') {
+      state.altRoutes = msg.altRoutes || [];
+      draw();
+    } else if (msg.type === 'SET_HIGHLIGHT_SEGMENTS') {
+      state.highlightSegments = msg.segments || [];
+      draw();
+    } else if (msg.type === 'SET_OCCURRENCES') {
+      state.occurrences = msg.occurrences || [];
+      draw();
+    } else if (msg.type === 'SET_SHOW_OCCURRENCES') {
+      state.showOccurrences = msg.show !== false;
+      draw();
     }
   };
 

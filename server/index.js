@@ -29,15 +29,24 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { NetworkService } from './networkService.js';
+import { OcorrenciasService } from './ocorrenciasService.js';
 import { routeOnGraph } from '../core/router.js';
 import { calcularRotaComParadas } from '../core/rotaParadas.js';
 import { criarServicoEnderecoDigital, MODOS } from '../core/enderecoDigitalService.js';
 import { UPDATE_DEFAULTS } from '../core/config.js';
+import {
+  CATEGORIAS_OCORRENCIA,
+  CLASSIFICACAO_META,
+} from '../ocorrencias/catalogo.js';
+import { normalizarPreferencias } from '../ocorrencias/preferencias.js';
+import { associarSegmentoDaRede } from '../ocorrencias/regras.js';
+import { calcularRotaComAlternativas } from '../ocorrencias/roteamentoAlternativo.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const CORE_DIR = path.join(ROOT, 'core');
+const OCORRENCIAS_DIR = path.join(ROOT, 'ocorrencias');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -195,8 +204,17 @@ function sendJson(res, status, payload, compact, cors = { originHeader: null }) 
 async function serveStatic(req, res, pathname) {
   let rel = pathname === '/' ? '/index.html' : pathname;
   rel = decodeURIComponent(rel);
-  const baseDir = rel.startsWith('/core/') ? CORE_DIR : PUBLIC_DIR;
-  const filePath = path.join(baseDir, rel.startsWith('/core/') ? rel.slice('/core'.length) : rel);
+  const baseDir = rel.startsWith('/core/')
+    ? CORE_DIR
+    : rel.startsWith('/ocorrencias/')
+      ? OCORRENCIAS_DIR
+      : PUBLIC_DIR;
+  const subRel = rel.startsWith('/core/')
+    ? rel.slice('/core'.length)
+    : rel.startsWith('/ocorrencias/')
+      ? rel.slice('/ocorrencias'.length)
+      : rel;
+  const filePath = path.join(baseDir, subRel);
   if (!filePath.startsWith(baseDir)) {
     sendJson(res, 403, { error: 'Acesso negado' });
     return;
@@ -256,6 +274,8 @@ async function serveStatic(req, res, pathname) {
  */
 export function createServer(options = {}) {
   const service = options.service || new NetworkService(options.networkOptions);
+  const ocorrenciasService =
+    options.ocorrenciasService || new OcorrenciasService(options.ocorrenciasOptions);
   const allowedOrigins = parseAllowedOrigins(options.corsOrigins ?? process.env.CORS_ORIGINS ?? '');
   const apiToken = String(options.apiToken ?? process.env.SIGA_API_TOKEN ?? '').trim();
   const maxStops = Number.isFinite(options.maxStops) ? options.maxStops : 100;
@@ -460,7 +480,17 @@ export function createServer(options = {}) {
         const circular =
           (corpo?.circular ?? url.searchParams.get('circular') ?? false) === true ||
           (corpo?.circular ?? url.searchParams.get('circular')) === 'true';
-        const resultado = calcularRotaComParadas(state.graph, pontos, {
+
+        let preferenciasRaw = corpo?.preferencias ?? null;
+        if (!preferenciasRaw && url.searchParams.get('preferencias')) {
+          try {
+            preferenciasRaw = JSON.parse(url.searchParams.get('preferencias'));
+          } catch {
+            preferenciasRaw = null;
+          }
+        }
+        const ocorrenciasAtivas = await ocorrenciasService.listar({ incluirInativas: false });
+        const opcoesBase = {
           maxSnapDistance: options.maxSnapDistance ?? 100,
           modo:
             modo === 'otimizada'
@@ -469,8 +499,109 @@ export function createServer(options = {}) {
                 ? 'saida_curta'
                 : 'usuario',
           circular,
-        });
+        };
+        const usarAlternativas = preferenciasRaw != null || ocorrenciasAtivas.length > 0;
+        const resultado = usarAlternativas
+          ? calcularRotaComAlternativas(state.graph, pontos, {
+              ...opcoesBase,
+              preferencias: normalizarPreferencias(preferenciasRaw),
+              ocorrencias: ocorrenciasAtivas,
+            })
+          : calcularRotaComParadas(state.graph, pontos, opcoesBase);
         sendJson(res, resultado.ok ? 200 : 422, resultado, false, cors);
+        return;
+      }
+
+      // ------------------------------------------------------------------
+      // Ocorrências colaborativas de campo + associação precisa ao grafo
+      // ------------------------------------------------------------------
+      if (pathname === '/api/ocorrencias/segmento') {
+        const lat = Number(corpo?.latitude ?? url.searchParams.get('latitude'));
+        const lon = Number(corpo?.longitude ?? url.searchParams.get('longitude'));
+        const featureIdRaw = corpo?.featureIdPreferido ?? url.searchParams.get('featureIdPreferido');
+        const featureIdPreferido =
+          featureIdRaw !== null && featureIdRaw !== undefined && featureIdRaw !== ''
+            ? Number(featureIdRaw)
+            : null;
+        const state = await service.ensureReady();
+        const seg = associarSegmentoDaRede(state.graph, {
+          latitude: lat,
+          longitude: lon,
+          featureIdPreferido: Number.isFinite(featureIdPreferido) ? featureIdPreferido : null,
+        });
+        sendJson(res, seg.ok ? 200 : 422, seg, false, cors);
+        return;
+      }
+
+      if (pathname === '/api/ocorrencias' && req.method === 'GET') {
+        const incluirInativas = url.searchParams.get('incluirInativas') === 'true';
+        const categoria = url.searchParams.get('categoria') || null;
+        const lista = await ocorrenciasService.listar({ incluirInativas, categoria });
+        sendJson(res, 200, {
+          ok: true,
+          ocorrencias: lista,
+          catalogo: {
+            categorias: CATEGORIAS_OCORRENCIA,
+            classificacoes: CLASSIFICACAO_META,
+          },
+          atualizadoEm: new Date().toISOString(),
+        }, false, cors);
+        return;
+      }
+
+      if (pathname === '/api/ocorrencias' && req.method === 'POST') {
+        if (!corpo || typeof corpo !== 'object') {
+          sendJson(res, 400, {
+            ok: false,
+            reason: 'PARAMETROS_INVALIDOS',
+            message: 'Informe os dados da ocorrência em JSON.',
+          }, false, cors);
+          return;
+        }
+        const state = await service.ensureReady();
+        const usuarioId = corpo.usuarioId || req.headers['x-siga-usuario'] || '';
+        const resReg = await ocorrenciasService.registrar(corpo, {
+          graph: state.graph,
+          usuarioId,
+        });
+        const status = resReg.ok
+          ? 201
+          : resReg.reason === 'SEGMENTO_NAO_ENCONTRADO' || resReg.reason === 'REDE_VAZIA'
+            ? 422
+            : 400;
+        sendJson(res, status, resReg, false, cors);
+        return;
+      }
+
+      if (
+        req.method === 'POST' &&
+        (pathname === '/api/ocorrencias/interagir' ||
+          /^\/api\/ocorrencias\/[^/]+\/interagir$/.test(pathname))
+      ) {
+        if (!corpo || typeof corpo !== 'object') {
+          sendJson(res, 400, {
+            ok: false,
+            reason: 'PARAMETROS_INVALIDOS',
+            message: 'Informe id, tipo e usuarioId em JSON.',
+          }, false, cors);
+          return;
+        }
+        const match = pathname.match(/^\/api\/ocorrencias\/([^/]+)\/interagir$/);
+        const id = match ? decodeURIComponent(match[1]) : corpo.id;
+        const usuarioId = corpo.usuarioId || req.headers['x-siga-usuario'] || '';
+        const resInt = await ocorrenciasService.interagir({
+          id,
+          tipo: corpo.tipo,
+          usuarioId,
+        });
+        const status = resInt.ok
+          ? 200
+          : resInt.reason === 'OCORRENCIA_NAO_ENCONTRADA'
+            ? 404
+            : resInt.duplicada
+              ? 409
+              : 400;
+        sendJson(res, status, resInt, false, cors);
         return;
       }
 
@@ -549,6 +680,7 @@ export function createServer(options = {}) {
   });
 
   server.networkService = service;
+  server.ocorrenciasService = ocorrenciasService;
   return server;
 }
 

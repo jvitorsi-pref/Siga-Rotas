@@ -132,6 +132,8 @@ export function reasonTitle(reason) {
       return 'Endereço sem resolver';
     case 'REDE_VAZIA':
       return 'Rede viária indisponível';
+    case 'BLOQUEADO_POR_OCORRENCIA':
+      return 'Trajeto bloqueado por ocorrência';
     default:
       return 'Não foi possível calcular a rota';
   }

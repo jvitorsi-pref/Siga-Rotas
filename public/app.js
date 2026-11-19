@@ -46,6 +46,26 @@ import {
   criarMonitorSatelite,
 } from './camadaBase.js';
 import { criarClienteRede } from './clienteRede.js';
+import {
+  CATEGORIAS_OCORRENCIA,
+  CLASSIFICACAO_META,
+  CLASSIFICACOES,
+} from '../ocorrencias/catalogo.js';
+import { normalizarPreferencias } from '../ocorrencias/preferencias.js';
+import {
+  estiloClassificacao,
+  formatarDataHoraPtBr,
+  formatarDistanciaCurta,
+  gerarHtmlOpcoesCategoriasEvitar,
+  lerPreferenciasWeb,
+  obterDetalhesCategoria,
+  obterOuCriarUsuarioIdWeb,
+  resumoPreferenciasTexto,
+  rotuloStatusOcorrencia,
+  rotuloTemporalidade,
+  salvarPreferenciasWeb,
+  simboloCategoria,
+} from './ocorrenciasUI.js';
 
 (function () {
   'use strict';
@@ -99,6 +119,17 @@ import { criarClienteRede } from './clienteRede.js';
     trechos: [],
     // camada base ativa: 'osm' (padrão OpenStreetMap) | 'satelite' (Esri World Imagery)
     camadaBase: lerPreferenciaCamadaSync(window.localStorage),
+    // ocorrências colaborativas & preferências de trajeto
+    usuarioId: obterOuCriarUsuarioIdWeb(window.localStorage),
+    preferencias: lerPreferenciasWeb(window.localStorage),
+    ocorrencias: [],
+    mostrarOcorrenciasMapa: true,
+    rotasDisponiveis: [],
+    rotaSelecionadaId: null,
+    comparacaoAlternativas: null,
+    pickingOccurrence: false,
+    ocorrenciaSelecionada: null,
+    rascunhoOcorrencia: null,
   };
 
   const revisoesEndereco = criarRevisoesEndereco();
@@ -138,6 +169,39 @@ import { criarClienteRede } from './clienteRede.js';
     startNav: $('#start-nav'),
     exportGpx: $('#export-gpx'),
     exportGpxFeedback: $('#export-gpx-feedback'),
+    prefsSummaryText: $('#prefs-summary-text'),
+    prefsEvitarList: $('#prefs-evitar-list'),
+    btnNovaOcorrencia: $('#btn-nova-ocorrencia'),
+    occMapToggle: $('#occ-map-toggle'),
+    occMapAdd: $('#occ-map-add'),
+    occCount: $('#occ-count'),
+    legendAlt: $('#legend-alt'),
+    routeAlternatives: $('#route-alternatives'),
+    routeOccurrences: $('#route-occurrences'),
+    occModal: $('#occ-modal'),
+    occModalFechar: $('#occ-modal-fechar'),
+    occModalCancelar: $('#occ-modal-cancelar'),
+    occForm: $('#occ-form'),
+    occSegVia: $('#occ-seg-via'),
+    occSegMeta: $('#occ-seg-meta'),
+    occSegSelectWrap: $('#occ-seg-select-wrap'),
+    occSegSelect: $('#occ-seg-select'),
+    occCats: $('#occ-cats'),
+    occClassifs: $('#occ-classifs'),
+    occDesc: $('#occ-desc'),
+    occFormErro: $('#occ-form-erro'),
+    occModalSalvar: $('#occ-modal-salvar'),
+    occDetailModal: $('#occ-detail-modal'),
+    occDetailFechar: $('#occ-detail-fechar'),
+    occDetailClassif: $('#occ-detail-classif'),
+    occDetailTitulo: $('#occ-detail-titulo'),
+    occDetailVia: $('#occ-detail-via'),
+    occDetailDesc: $('#occ-detail-desc'),
+    occDetailStats: $('#occ-detail-stats'),
+    occDetailMsg: $('#occ-detail-msg'),
+    occActConfirmar: $('#occ-act-confirmar'),
+    occActResolver: $('#occ-act-resolver'),
+    occActContestar: $('#occ-act-contestar'),
   };
 
   /* ─────────────── Mapa ─────────────── */
@@ -374,6 +438,50 @@ import { criarClienteRede } from './clienteRede.js';
     },
   });
 
+  // ── Camada de rota alternativa simultânea (esmaecida) ─────────────────
+  const altRouteSource = new ol.source.Vector({ features: [] });
+  const altRouteLayer = new ol.layer.Vector({
+    source: altRouteSource,
+    zIndex: 18,
+    style: () => [
+      new ol.style.Style({
+        stroke: new ol.style.Stroke({
+          color: 'rgba(255,255,255,0.75)',
+          width: 7.5,
+          lineCap: 'round',
+          lineJoin: 'round',
+        }),
+      }),
+      new ol.style.Style({
+        stroke: new ol.style.Stroke({
+          color: 'rgba(71,85,105,0.52)',
+          width: 4.5,
+          lineCap: 'round',
+          lineJoin: 'round',
+          lineDash: [10, 6],
+        }),
+      }),
+    ],
+  });
+
+  // ── Camada de destaque do trecho com ocorrência ────────────────────────
+  const occSegmentHighlightSource = new ol.source.Vector({ features: [] });
+  const occSegmentHighlightLayer = new ol.layer.Vector({
+    source: occSegmentHighlightSource,
+    zIndex: 19,
+    style: (feature) => {
+      const est = estiloClassificacao(feature.get('classificacao'));
+      return new ol.style.Style({
+        stroke: new ol.style.Stroke({
+          color: corComAlfa(est.cor, 0.55),
+          width: 8,
+          lineCap: 'round',
+          lineJoin: 'round',
+        }),
+      });
+    },
+  });
+
   // ── Camada dos marcadores (A, B, C, D…) ────────────────────────────────
   const markerSource = new ol.source.Vector({ features: [] });
   const markerLayer = new ol.layer.Vector({
@@ -405,10 +513,85 @@ import { criarClienteRede } from './clienteRede.js';
     },
   });
 
+  // ── Camada de ocorrências com clusterização nativa (ol.source.Cluster) ─
+  const occSource = new ol.source.Vector({ features: [] });
+  const occClusterSource = new ol.source.Cluster({
+    distance: 38,
+    minDistance: 22,
+    source: occSource,
+  });
+  const occClusterLayer = new ol.layer.Vector({
+    source: occClusterSource,
+    zIndex: 23,
+    visible: state.mostrarOcorrenciasMapa,
+    style: (clusterFeature) => {
+      const members = clusterFeature.get('features') || [];
+      if (!members.length) return null;
+      if (members.length === 1) {
+        const occ = members[0].get('ocorrencia');
+        const est = estiloClassificacao(occ?.classificacao);
+        const glyph = simboloCategoria(occ?.categoria);
+        const styles = [];
+        if (occ?.classificacao === CLASSIFICACOES.EVITA) {
+          styles.push(
+            new ol.style.Style({
+              image: new ol.style.Circle({
+                radius: 14,
+                stroke: new ol.style.Stroke({ color: 'rgba(220,38,38,0.45)', width: 3 }),
+              }),
+            }),
+          );
+        }
+        styles.push(
+          new ol.style.Style({
+            image: new ol.style.Circle({
+              radius: 10.5,
+              fill: new ol.style.Fill({ color: est.cor }),
+              stroke: new ol.style.Stroke({ color: '#ffffff', width: 2.2 }),
+            }),
+            text: new ol.style.Text({
+              text: glyph,
+              font: 'bold 12px sans-serif',
+              fill: new ol.style.Fill({ color: '#ffffff' }),
+            }),
+          }),
+        );
+        return styles;
+      }
+
+      // Cluster com múltiplas ocorrências: cor reflete a maior severidade no grupo
+      let piorClassif = CLASSIFICACOES.INFORMATIVO;
+      for (const m of members) {
+        const cl = m.get('ocorrencia')?.classificacao;
+        if (cl === CLASSIFICACOES.EVITA) {
+          piorClassif = CLASSIFICACOES.EVITA;
+          break;
+        }
+        if (cl === CLASSIFICACOES.PENALIZA) piorClassif = CLASSIFICACOES.PENALIZA;
+      }
+      const est = estiloClassificacao(piorClassif);
+      return new ol.style.Style({
+        image: new ol.style.Circle({
+          radius: 13.5,
+          fill: new ol.style.Fill({ color: est.cor }),
+          stroke: new ol.style.Stroke({ color: '#ffffff', width: 2.5 }),
+        }),
+        text: new ol.style.Text({
+          text: String(members.length),
+          font: 'bold 12px sans-serif',
+          fill: new ol.style.Fill({ color: '#ffffff' }),
+        }),
+      });
+    },
+  });
+
   // a casca fica ABAIXO do núcleo da rede, e ambos abaixo da rota
   map.addLayer(axisCasingLayer);
   map.addLayer(axisLayer);
+  map.addLayer(altRouteLayer);
+  map.addLayer(occSegmentHighlightLayer);
   map.addLayer(routeLayer);
+  map.addLayer(occClusterLayer);
   map.addLayer(markerLayer);
 
   // ── Arrastar os pontos no mapa ──────────────────────────────────────────
@@ -782,6 +965,7 @@ import { criarClienteRede } from './clienteRede.js';
   /* ─────────────── Seleção no mapa ─────────────── */
 
   function startPicking(id) {
+    stopPickingOccurrence();
     state.picking = id;
     const ponto = state.lista.pontos.find((p) => p.id === id);
     els.pickLabel.textContent = ponto ? ponto.rotulo.toLowerCase() : 'ponto';
@@ -795,14 +979,46 @@ import { criarClienteRede } from './clienteRede.js';
 
   function stopPicking() {
     state.picking = null;
-    els.pickBanner.hidden = true;
-    els.map.classList.remove('map--picking');
+    if (!state.pickingOccurrence) {
+      els.pickBanner.hidden = true;
+      els.map.classList.remove('map--picking');
+    }
     document.querySelectorAll('.pick').forEach((b) => b.classList.remove('active'));
   }
 
-  els.pickCancel.addEventListener('click', stopPicking);
+  function startPickingOccurrence() {
+    stopPicking();
+    fecharDetalheOcorrencia();
+    state.pickingOccurrence = true;
+    els.pickLabel.textContent = 'local da ocorrência na via';
+    els.pickBanner.hidden = false;
+    els.map.classList.add('map--picking');
+    if (els.btnNovaOcorrencia) els.btnNovaOcorrencia.disabled = true;
+    setStatus('Clique no trecho da via no mapa para registrar uma ocorrência.', 'busy');
+  }
 
-  map.on('click', (evt) => {
+  function stopPickingOccurrence() {
+    state.pickingOccurrence = false;
+    if (!state.picking) {
+      els.pickBanner.hidden = true;
+      els.map.classList.remove('map--picking');
+    }
+    if (els.btnNovaOcorrencia) els.btnNovaOcorrencia.disabled = false;
+  }
+
+  els.pickCancel.addEventListener('click', () => {
+    stopPicking();
+    stopPickingOccurrence();
+  });
+
+  map.on('click', async (evt) => {
+    if (state.pickingOccurrence) {
+      const lonLat = ol.proj.toLonLat(evt.coordinate);
+      stopPickingOccurrence();
+      await iniciarRegistroOcorrenciaEm(lonLat[1], lonLat[0]);
+      return;
+    }
+
     if (!state.picking) return;
     const lonLat = ol.proj.toLonLat(evt.coordinate);
     const pt = { lon: lonLat[0], lat: lonLat[1] };
@@ -843,11 +1059,62 @@ import { criarClienteRede } from './clienteRede.js';
     if (framed) state.userMoved = true;
   });
 
-  // clique em um TRECHO da rota: oculta (ou torna visível de novo). É a
-  // solução para as sobreposições — quando dois trechos passam pelo mesmo
-  // caminho, basta ocultar um deles para ver o outro.
+  // Clique em marcador/cluster de ocorrência, rota alternativa ou trecho da rota
   map.on('click', (evt) => {
-    if (state.picking) return; // o clique está definindo um ponto
+    if (state.picking || state.pickingOccurrence) return;
+
+    // 1. Ocorrências no mapa (cluster expande ao clicar; item único abre detalhes)
+    if (state.mostrarOcorrenciasMapa) {
+      const clusterFeat = map.forEachFeatureAtPixel(
+        evt.pixel,
+        (f) => f,
+        { layerFilter: (l) => l === occClusterLayer, hitTolerance: 6 },
+      );
+      if (clusterFeat) {
+        const members = clusterFeat.get('features') || [];
+        if (members.length > 1) {
+          const coords = members.map((m) => m.getGeometry().getCoordinates());
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          for (const [cx, cy] of coords) {
+            if (cx < minX) minX = cx;
+            if (cy < minY) minY = cy;
+            if (cx > maxX) maxX = cx;
+            if (cy > maxY) maxY = cy;
+          }
+          map.getView().fit([minX, minY, maxX, maxY], {
+            padding: [80, 80, 80, 80],
+            duration: 400,
+            maxZoom: 18,
+          });
+          return;
+        }
+        if (members.length === 1) {
+          const occ = members[0].get('ocorrencia');
+          if (occ) {
+            abrirDetalheOcorrencia(occ);
+            return;
+          }
+        }
+      }
+    }
+
+    // 2. Rota alternativa esmaecida: clique direto no mapa alterna a rota ativa
+    if (state.rotasDisponiveis.length > 1) {
+      const altFeat = map.forEachFeatureAtPixel(
+        evt.pixel,
+        (f) => f,
+        { layerFilter: (l) => l === altRouteLayer, hitTolerance: 6 },
+      );
+      if (altFeat) {
+        const altId = altFeat.get('altRouteId');
+        if (altId) {
+          selecionarRotaAlternativa(altId);
+          return;
+        }
+      }
+    }
+
+    // 3. Clique em um TRECHO da rota principal: oculta/mostra para desambiguar sobreposições
     if (!state.trechos.length) return;
     const feature = map.forEachFeatureAtPixel(
       evt.pixel,
@@ -861,16 +1128,27 @@ import { criarClienteRede } from './clienteRede.js';
   });
 
   map.on('pointermove', (evt) => {
-    if (!state.picking) {
-      // cursor de "clique" quando o ponteiro está sobre um trecho
-      let sobreTrecho = false;
-      if (state.trechos.length) {
-        sobreTrecho = map.hasFeatureAtPixel(evt.pixel, {
+    if (!state.picking && !state.pickingOccurrence) {
+      let clicavel = false;
+      if (state.mostrarOcorrenciasMapa) {
+        clicavel = map.hasFeatureAtPixel(evt.pixel, {
+          layerFilter: (l) => l === occClusterLayer,
+          hitTolerance: 6,
+        });
+      }
+      if (!clicavel && state.rotasDisponiveis.length > 1) {
+        clicavel = map.hasFeatureAtPixel(evt.pixel, {
+          layerFilter: (l) => l === altRouteLayer,
+          hitTolerance: 6,
+        });
+      }
+      if (!clicavel && state.trechos.length) {
+        clicavel = map.hasFeatureAtPixel(evt.pixel, {
           layerFilter: (l) => l === routeLayer,
           hitTolerance: 5,
         });
       }
-      map.getTargetElement().style.cursor = sobreTrecho ? 'pointer' : '';
+      map.getTargetElement().style.cursor = clicavel ? 'pointer' : '';
       return;
     }
     const lonLat = ol.proj.toLonLat(evt.coordinate);
@@ -943,6 +1221,7 @@ import { criarClienteRede } from './clienteRede.js';
       const warnings = meta.warnings || [];
       const emFallback = Boolean(meta.fallbackActive || originMode !== 'wfs' || warnings.length);
       loadDiagnostics();
+      loadOcorrencias();
       setStatus(
         'Rede pronta (' +
           features.length.toLocaleString('pt-BR') +
@@ -978,7 +1257,594 @@ import { criarClienteRede } from './clienteRede.js';
     }
   }
 
-  /* ─────────────── Endereço Digital ─────────────── */
+  /* ─────────────── Ocorrências colaborativas & preferências ─────────────── */
+
+  function atualizarPreferenciasUI() {
+    const p = normalizarPreferencias(state.preferencias);
+    state.preferencias = p;
+    if (els.prefsSummaryText) {
+      els.prefsSummaryText.textContent = resumoPreferenciasTexto(p);
+    }
+    document.querySelectorAll('input[name="prefmodo"]').forEach((r) => {
+      r.checked = r.value === p.modo;
+    });
+    if (els.prefsEvitarList) {
+      els.prefsEvitarList.innerHTML = gerarHtmlOpcoesCategoriasEvitar(p);
+    }
+  }
+
+  function inicializarPreferenciasUI() {
+    atualizarPreferenciasUI();
+    document.querySelectorAll('input[name="prefmodo"]').forEach((radio) => {
+      radio.addEventListener('change', () => {
+        if (!radio.checked) return;
+        state.preferencias = salvarPreferenciasWeb(
+          { ...state.preferencias, modo: radio.value },
+          window.localStorage,
+        );
+        atualizarPreferenciasUI();
+        if (podeCalcular(state.lista).ok && state.rotaAtual) {
+          calculate(state.modo);
+        }
+      });
+    });
+    if (els.prefsEvitarList) {
+      els.prefsEvitarList.addEventListener('change', () => {
+        const selecionadas = [...els.prefsEvitarList.querySelectorAll('input[type="checkbox"]:checked')]
+          .map((c) => c.value);
+        state.preferencias = salvarPreferenciasWeb(
+          { ...state.preferencias, evitarCategorias: selecionadas },
+          window.localStorage,
+        );
+        if (els.prefsSummaryText) {
+          els.prefsSummaryText.textContent = resumoPreferenciasTexto(state.preferencias);
+        }
+        if (podeCalcular(state.lista).ok && state.rotaAtual) {
+          calculate(state.modo);
+        }
+      });
+    }
+  }
+
+  function renderizarOcorrenciasMapa() {
+    occSource.clear();
+    const lista = Array.isArray(state.ocorrencias) ? state.ocorrencias : [];
+    if (els.occCount) els.occCount.textContent = String(lista.length);
+    for (const occ of lista) {
+      const lat = Number(occ?.localizacao?.latitude);
+      const lon = Number(occ?.localizacao?.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const feat = new ol.Feature({
+        geometry: new ol.geom.Point(ol.proj.fromLonLat([lon, lat])),
+        ocorrencia: occ,
+      });
+      feat.setId(occ.id);
+      occSource.addFeature(feat);
+    }
+    occClusterLayer.setVisible(state.mostrarOcorrenciasMapa);
+  }
+
+  function destacarSegmentosOcorrencias(lista) {
+    occSegmentHighlightSource.clear();
+    const items = Array.isArray(lista) ? lista : [];
+    if (!items.length) return;
+    const eixos = axisSource.getFeatures();
+    if (!eixos.length) return;
+
+    const vistos = new Set();
+    for (const item of items) {
+      const occ = item.ocorrencia || item;
+      const fid = occ.localizacao?.featureId ?? item.featureId;
+      const lat = occ.localizacao?.latitude ?? item.latitude;
+      const lon = occ.localizacao?.longitude ?? item.longitude;
+      const classif = occ.classificacao || item.classificacao || CLASSIFICACOES.INFORMATIVO;
+      if (fid == null) continue;
+      const chave = `${fid}:${Math.round((lat || 0) * 1e5)}:${Math.round((lon || 0) * 1e5)}`;
+      if (vistos.has(chave)) continue;
+      vistos.add(chave);
+
+      const cand = eixos.filter((f) => Number(f.get('ID')) === Number(fid));
+      if (!cand.length) continue;
+      let melhor = cand[0];
+      if (cand.length > 1 && lat != null && lon != null) {
+        const alvo = ol.proj.fromLonLat([lon, lat]);
+        let bestD = Infinity;
+        for (const f of cand) {
+          const p = f.getGeometry().getClosestPoint(alvo);
+          const d = Math.hypot(p[0] - alvo[0], p[1] - alvo[1]);
+          if (d < bestD) {
+            bestD = d;
+            melhor = f;
+          }
+        }
+      }
+      const clone = new ol.Feature({
+        geometry: melhor.getGeometry().clone(),
+        classificacao: classif,
+      });
+      occSegmentHighlightSource.addFeature(clone);
+    }
+  }
+
+  async function loadOcorrencias() {
+    try {
+      const res = await fetch('/api/ocorrencias');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.ok && Array.isArray(data.ocorrencias)) {
+        state.ocorrencias = data.ocorrencias;
+        renderizarOcorrenciasMapa();
+      }
+    } catch {
+      /* ocorrências são resilientes caso servidor ainda esteja subindo */
+    }
+  }
+
+  function renderizarOpcoesModalOcorrencia(catSelecionada, classifSelecionada) {
+    if (els.occCats) {
+      els.occCats.innerHTML = CATEGORIAS_OCORRENCIA.map((c) => {
+        const ativa = c.id === catSelecionada ? ' is-active' : '';
+        return (
+          '<button type="button" class="occ-cat-btn' + ativa + '" data-cat="' + c.id + '">' +
+          escapeHtml(c.rotulo) + '</button>'
+        );
+      }).join('');
+    }
+    if (els.occClassifs) {
+      els.occClassifs.innerHTML = Object.entries(CLASSIFICACAO_META).map(([key, meta]) => {
+        const checked = key === classifSelecionada ? ' checked' : '';
+        return (
+          '<label class="occ-chip">' +
+          '<input type="radio" name="occ_classif" value="' + key + '"' + checked + ' />' +
+          '<span><b>' + escapeHtml(meta.rotulo) + '</b><small>' + escapeHtml(meta.resumo) + '</small></span>' +
+          '</label>'
+        );
+      }).join('');
+    }
+  }
+
+  function atualizarBoxSegmentoModal(principal, candidatos, temRuasProximas) {
+    if (!principal) return;
+    if (els.occSegVia) {
+      els.occSegVia.textContent = principal.logradouro || 'Via identificada';
+    }
+    if (els.occSegMeta) {
+      els.occSegMeta.textContent =
+        'Trecho associado a ' + principal.distanciaAoEixoM + ' m do ponto clicado' +
+        (temRuasProximas ? ' · há outra rua próxima, confira se é esta via.' : '.');
+    }
+    if (els.occSegSelectWrap && els.occSegSelect) {
+      if (Array.isArray(candidatos) && candidatos.length > 1) {
+        els.occSegSelectWrap.hidden = false;
+        els.occSegSelect.innerHTML = candidatos.map((c) => {
+          const sel = Number(c.featureId) === Number(principal.featureId) ? ' selected' : '';
+          return (
+            '<option value="' + c.featureId + '"' + sel + '>' +
+            escapeHtml(c.logradouro) + ' (' + c.distanciaAoEixoM + ' m)</option>'
+          );
+        }).join('');
+      } else {
+        els.occSegSelectWrap.hidden = true;
+        els.occSegSelect.innerHTML = '';
+      }
+    }
+  }
+
+  async function iniciarRegistroOcorrenciaEm(lat, lon) {
+    setStatus('Identificando o trecho da via…', 'busy');
+    try {
+      const res = await fetch('/api/ocorrencias/segmento', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ latitude: lat, longitude: lon }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok || !data.principal) {
+        setStatus(data?.message || 'Nenhum trecho viário próximo ao ponto clicado.', 'err');
+        return;
+      }
+
+      const catPadrao = CATEGORIAS_OCORRENCIA[0];
+      state.rascunhoOcorrencia = {
+        latitude: lat,
+        longitude: lon,
+        candidatos: data.candidatos || [data.principal],
+        principal: data.principal,
+        temRuasProximas: !!data.temRuasProximas,
+        categoria: catPadrao.id,
+        classificacao: catPadrao.classificacaoPadrao,
+      };
+      atualizarBoxSegmentoModal(data.principal, data.candidatos, data.temRuasProximas);
+      renderizarOpcoesModalOcorrencia(catPadrao.id, catPadrao.classificacaoPadrao);
+      document.querySelectorAll('input[name="occ_temp"]').forEach((r) => {
+        r.checked = r.value === catPadrao.temporalidadePadrao;
+      });
+      if (els.occDesc) els.occDesc.value = '';
+      if (els.occFormErro) {
+        els.occFormErro.hidden = true;
+        els.occFormErro.textContent = '';
+      }
+      if (els.occModal) els.occModal.hidden = false;
+      destacarSegmentosOcorrencias([
+        {
+          featureId: data.principal.featureId,
+          latitude: data.principal.latitude,
+          longitude: data.principal.longitude,
+          classificacao: catPadrao.classificacaoPadrao,
+        },
+      ]);
+      setStatus('Trecho identificado: ' + data.principal.logradouro + '.', 'idle');
+    } catch (err) {
+      setStatus('Falha ao identificar trecho da via: ' + err.message, 'err');
+    }
+  }
+
+  function fecharModalRegistroOcorrencia() {
+    if (els.occModal) els.occModal.hidden = true;
+    state.rascunhoOcorrencia = null;
+    if (!state.rotaAtual) occSegmentHighlightSource.clear();
+  }
+
+  function abrirDetalheOcorrencia(occ) {
+    if (!occ || !els.occDetailModal) return;
+    state.ocorrenciaSelecionada = occ;
+    const cat = obterDetalhesCategoria(occ.categoria);
+    const est = estiloClassificacao(occ.classificacao);
+    if (els.occDetailClassif) {
+      els.occDetailClassif.textContent = est.rotulo;
+      els.occDetailClassif.style.background = est.fundo;
+      els.occDetailClassif.style.color = est.borda;
+      els.occDetailClassif.style.borderColor = est.cor;
+    }
+    if (els.occDetailTitulo) els.occDetailTitulo.textContent = cat ? cat.rotulo : occ.categoria;
+    if (els.occDetailVia) {
+      els.occDetailVia.textContent =
+        (occ.localizacao?.logradouro || 'Trecho da rede') +
+        ' · ' + rotuloTemporalidade(occ.temporalidade) +
+        ' · ' + rotuloStatusOcorrencia(occ.status);
+    }
+    if (els.occDetailDesc) {
+      els.occDetailDesc.textContent = occ.descricao || 'Sem descrição adicional.';
+    }
+    if (els.occDetailStats) {
+      const c = occ.contadores || {};
+      els.occDetailStats.textContent =
+        'Confirmações: ' + (c.confirmacoes ?? 1) +
+        ' · Resolvida: ' + (c.resolvida ?? 0) +
+        ' · Contestações: ' + (c.contestacoes ?? 0) +
+        ' · Última confirmação: ' + formatarDataHoraPtBr(occ.ultimaConfirmacaoEm || occ.criadoEm);
+    }
+    if (els.occDetailMsg) {
+      els.occDetailMsg.hidden = true;
+      els.occDetailMsg.textContent = '';
+    }
+    els.occDetailModal.hidden = false;
+    destacarSegmentosOcorrencias([occ]);
+  }
+
+  function fecharDetalheOcorrencia() {
+    state.ocorrenciaSelecionada = null;
+    if (els.occDetailModal) els.occDetailModal.hidden = true;
+  }
+
+  async function enviarInteracaoOcorrencia(tipo) {
+    const occ = state.ocorrenciaSelecionada;
+    if (!occ) return;
+    try {
+      const res = await fetch('/api/ocorrencias/interagir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: occ.id,
+          tipo,
+          usuarioId: state.usuarioId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        if (els.occDetailMsg) {
+          els.occDetailMsg.hidden = false;
+          els.occDetailMsg.textContent = data?.message || 'Interação não aplicada.';
+        }
+        return;
+      }
+      await loadOcorrencias();
+      const atualizada = data.ocorrencia;
+      if (atualizada.status === 'resolvida') {
+        fecharDetalheOcorrencia();
+        setStatus('Ocorrência marcada como resolvida pela comunidade.', 'ok');
+      } else {
+        abrirDetalheOcorrencia(atualizada);
+        if (els.occDetailMsg) {
+          els.occDetailMsg.hidden = false;
+          els.occDetailMsg.textContent = 'Interação registrada.';
+        }
+      }
+      if (podeCalcular(state.lista).ok && state.rotaAtual) {
+        calculate(state.modo);
+      }
+    } catch (err) {
+      if (els.occDetailMsg) {
+        els.occDetailMsg.hidden = false;
+        els.occDetailMsg.textContent = 'Erro ao enviar interação: ' + err.message;
+      }
+    }
+  }
+
+  if (els.btnNovaOcorrencia) {
+    els.btnNovaOcorrencia.addEventListener('click', startPickingOccurrence);
+  }
+  if (els.occMapAdd) {
+    els.occMapAdd.addEventListener('click', startPickingOccurrence);
+  }
+  if (els.occMapToggle) {
+    els.occMapToggle.addEventListener('click', () => {
+      state.mostrarOcorrenciasMapa = !state.mostrarOcorrenciasMapa;
+      els.occMapToggle.setAttribute('aria-pressed', String(state.mostrarOcorrenciasMapa));
+      occClusterLayer.setVisible(state.mostrarOcorrenciasMapa);
+    });
+  }
+  if (els.occModalFechar) els.occModalFechar.addEventListener('click', fecharModalRegistroOcorrencia);
+  if (els.occModalCancelar) els.occModalCancelar.addEventListener('click', fecharModalRegistroOcorrencia);
+  if (els.occDetailFechar) els.occDetailFechar.addEventListener('click', fecharDetalheOcorrencia);
+
+  if (els.occActConfirmar) {
+    els.occActConfirmar.addEventListener('click', () => void enviarInteracaoOcorrencia('confirmar'));
+  }
+  if (els.occActResolver) {
+    els.occActResolver.addEventListener('click', () => void enviarInteracaoOcorrencia('resolver'));
+  }
+  if (els.occActContestar) {
+    els.occActContestar.addEventListener('click', () => void enviarInteracaoOcorrencia('contestar'));
+  }
+
+  if (els.occSegSelect) {
+    els.occSegSelect.addEventListener('change', () => {
+      if (!state.rascunhoOcorrencia) return;
+      const chosen = state.rascunhoOcorrencia.candidatos.find(
+        (c) => Number(c.featureId) === Number(els.occSegSelect.value),
+      );
+      if (!chosen) return;
+      state.rascunhoOcorrencia.principal = chosen;
+      atualizarBoxSegmentoModal(
+        chosen,
+        state.rascunhoOcorrencia.candidatos,
+        state.rascunhoOcorrencia.temRuasProximas,
+      );
+      destacarSegmentosOcorrencias([
+        {
+          featureId: chosen.featureId,
+          latitude: chosen.latitude,
+          longitude: chosen.longitude,
+          classificacao: state.rascunhoOcorrencia.classificacao,
+        },
+      ]);
+    });
+  }
+
+  if (els.occCats) {
+    els.occCats.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-cat]');
+      if (!btn || !state.rascunhoOcorrencia) return;
+      const cat = obterDetalhesCategoria(btn.dataset.cat);
+      if (!cat) return;
+      state.rascunhoOcorrencia.categoria = cat.id;
+      state.rascunhoOcorrencia.classificacao = cat.classificacaoPadrao;
+      renderizarOpcoesModalOcorrencia(cat.id, cat.classificacaoPadrao);
+      document.querySelectorAll('input[name="occ_temp"]').forEach((r) => {
+        r.checked = r.value === cat.temporalidadePadrao;
+      });
+    });
+  }
+
+  if (els.occClassifs) {
+    els.occClassifs.addEventListener('change', (ev) => {
+      if (ev.target.name === 'occ_classif' && state.rascunhoOcorrencia) {
+        state.rascunhoOcorrencia.classificacao = ev.target.value;
+      }
+    });
+  }
+
+  if (els.occForm) {
+    els.occForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      if (!state.rascunhoOcorrencia) return;
+      const rasc = state.rascunhoOcorrencia;
+      const classifEl = els.occForm.querySelector('input[name="occ_classif"]:checked');
+      const tempEl = els.occForm.querySelector('input[name="occ_temp"]:checked');
+      const payload = {
+        categoria: rasc.categoria,
+        classificacao: classifEl ? classifEl.value : rasc.classificacao,
+        temporalidade: tempEl ? tempEl.value : 'temporaria',
+        descricao: els.occDesc ? els.occDesc.value : '',
+        latitude: rasc.principal.latitude,
+        longitude: rasc.principal.longitude,
+        featureIdPreferido: rasc.principal.featureId,
+        usuarioId: state.usuarioId,
+      };
+      if (els.occModalSalvar) els.occModalSalvar.disabled = true;
+      try {
+        const res = await fetch('/api/ocorrencias', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          if (els.occFormErro) {
+            els.occFormErro.hidden = false;
+            els.occFormErro.textContent = data?.message || 'Não foi possível salvar a ocorrência.';
+          }
+          return;
+        }
+        fecharModalRegistroOcorrencia();
+        await loadOcorrencias();
+        if (data.ocorrencia) abrirDetalheOcorrencia(data.ocorrencia);
+        setStatus('Ocorrência registrada em ' + (data.ocorrencia?.localizacao?.logradouro || 'trecho da via') + '.', 'ok');
+        if (podeCalcular(state.lista).ok && state.rotaAtual) {
+          calculate(state.modo);
+        }
+      } catch (err) {
+        if (els.occFormErro) {
+          els.occFormErro.hidden = false;
+          els.occFormErro.textContent = 'Falha ao salvar: ' + err.message;
+        }
+      } finally {
+        if (els.occModalSalvar) els.occModalSalvar.disabled = false;
+      }
+    });
+  }
+
+  /* ─────────────── Alternativas de rota (estilo Google Maps) ─────────────── */
+
+  function desenharRotasAlternativasEsmaecidas() {
+    altRouteSource.clear();
+    const naoSelecionadas = state.rotasDisponiveis.filter(
+      (r) => r.id !== state.rotaSelecionadaId && r.rota?.geometry,
+    );
+    if (els.legendAlt) els.legendAlt.hidden = naoSelecionadas.length === 0;
+    for (const alt of naoSelecionadas) {
+      const feat = toOlFeature({
+        type: 'Feature',
+        properties: { altRouteId: alt.id, rotulo: alt.rotulo },
+        geometry: alt.rota.geometry,
+      });
+      altRouteSource.addFeature(feat);
+    }
+  }
+
+  function renderizarOcorrenciasDaRota(opcaoSelecionada, comparacao) {
+    if (!els.routeOccurrences) return;
+    const lista = Array.isArray(opcaoSelecionada?.ocorrenciasNoTrajeto)
+      ? opcaoSelecionada.ocorrenciasNoTrajeto
+      : [];
+    const evitadas = Array.isArray(opcaoSelecionada?.ocorrenciasEvitadas)
+      ? opcaoSelecionada.ocorrenciasEvitadas
+      : [];
+    const motivoSemAlt =
+      state.rotasDisponiveis.length === 1 && comparacao?.motivoSemAlternativa
+        ? comparacao.motivoSemAlternativa
+        : null;
+
+    if (!lista.length && !evitadas.length && !motivoSemAlt) {
+      els.routeOccurrences.hidden = true;
+      els.routeOccurrences.innerHTML = '';
+      return;
+    }
+
+    const blocos = [];
+    if (evitadas.length) {
+      blocos.push(
+        '<div class="route-occ__titulo">Desvios aplicados nesta rota (' + evitadas.length + ')</div>' +
+        evitadas.map((o) => {
+          const est = estiloClassificacao(o.classificacao);
+          return (
+            '<button type="button" class="route-occ__item" data-occ-id="' + escapeHtml(o.id) + '">' +
+            '<span><span class="route-occ__dot" style="display:inline-block;margin-right:6px;background:' + est.cor + '"></span>' +
+            'Evitou: <b>' + escapeHtml(o.categoriaLabel) + '</b>' +
+            (o.logradouro ? ' · ' + escapeHtml(o.logradouro) : '') + '</span>' +
+            '<span>Ver</span></button>'
+          );
+        }).join(''),
+      );
+    }
+    if (lista.length) {
+      blocos.push(
+        '<div class="route-occ__titulo">Ocorrências neste trajeto (' + lista.length + ')</div>' +
+        lista.map((o) => {
+          const est = estiloClassificacao(o.classificacao);
+          return (
+            '<button type="button" class="route-occ__item" data-occ-id="' + escapeHtml(o.id) + '">' +
+            '<span><span class="route-occ__dot" style="display:inline-block;margin-right:6px;background:' + est.cor + '"></span>' +
+            '<b>' + escapeHtml(o.categoriaLabel) + '</b>' +
+            (o.logradouro ? ' · ' + escapeHtml(o.logradouro) : '') + '</span>' +
+            '<span>Detalhes</span></button>'
+          );
+        }).join(''),
+      );
+    }
+    if (motivoSemAlt && !evitadas.length && !lista.length) {
+      blocos.push('<div class="route-occ__titulo">' + escapeHtml(motivoSemAlt) + '</div>');
+    }
+    els.routeOccurrences.hidden = false;
+    els.routeOccurrences.innerHTML = blocos.join('');
+  }
+
+  function renderizarAlternativasRota() {
+    if (!els.routeAlternatives) return;
+    const rotas = state.rotasDisponiveis;
+    if (!rotas.length || (rotas.length === 1 && !rotas[0].ocorrenciasEvitadas?.length && !rotas[0].ocorrenciasNoTrajeto?.length)) {
+      els.routeAlternatives.hidden = true;
+      els.routeAlternatives.innerHTML = '';
+      return;
+    }
+    els.routeAlternatives.hidden = false;
+    els.routeAlternatives.innerHTML = rotas.map((op) => {
+      const sel = op.id === state.rotaSelecionadaId ? ' is-selected' : '';
+      const deltaTxt =
+        op.diferencaMetros > 0
+          ? '+' + formatarDistanciaCurta(op.diferencaMetros) + ' em relação à mais curta'
+          : rotas.length > 1
+            ? 'Menor distância'
+            : '';
+      return (
+        '<button type="button" class="route-alt-card' + sel + '" data-route-id="' + escapeHtml(op.id) + '">' +
+        '<div class="route-alt-card__top">' +
+        '<span class="route-alt-card__title">' + escapeHtml(op.rotulo) + '</span>' +
+        '<span class="route-alt-card__dist">' + escapeHtml(formatarDistanciaCurta(op.distance)) + '</span>' +
+        '</div>' +
+        (op.motivo ? '<div class="route-alt-card__motivo">' + escapeHtml(op.motivo) + '</div>' : '') +
+        (deltaTxt ? '<div class="route-alt-card__delta">' + escapeHtml(deltaTxt) + '</div>' : '') +
+        '</button>'
+      );
+    }).join('');
+  }
+
+  function selecionarRotaAlternativa(id, opcoes = {}) {
+    const escolha =
+      state.rotasDisponiveis.find((r) => r.id === id) || state.rotasDisponiveis[0];
+    if (!escolha || !escolha.rota) return;
+    state.rotaSelecionadaId = escolha.id;
+    renderizarAlternativasRota();
+    showRoute(escolha.rota, opcoes);
+    desenharRotasAlternativasEsmaecidas();
+    renderizarOcorrenciasDaRota(escolha, state.comparacaoAlternativas);
+
+    const todasParaDestaque = [
+      ...(escolha.ocorrenciasNoTrajeto || []),
+      ...(escolha.ocorrenciasEvitadas || []),
+    ];
+    destacarSegmentosOcorrencias(
+      todasParaDestaque.map((r) => state.ocorrencias.find((o) => o.id === r.id) || r),
+    );
+    const d = formatDistance(escolha.distance);
+    setStatus(escolha.rotulo + ': ' + d.v + ' ' + d.u + '.', 'ok');
+  }
+
+  if (els.routeAlternatives) {
+    els.routeAlternatives.addEventListener('click', (ev) => {
+      const card = ev.target.closest('[data-route-id]');
+      if (!card) return;
+      selecionarRotaAlternativa(card.dataset.routeId);
+    });
+  }
+
+  if (els.routeOccurrences) {
+    els.routeOccurrences.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-occ-id]');
+      if (!btn) return;
+      const occ = state.ocorrencias.find((o) => o.id === btn.dataset.occId);
+      if (!occ) return;
+      abrirDetalheOcorrencia(occ);
+      if (occ.localizacao?.longitude != null && occ.localizacao?.latitude != null) {
+        map.getView().animate({
+          center: ol.proj.fromLonLat([occ.localizacao.longitude, occ.localizacao.latitude]),
+          zoom: Math.max(map.getView().getZoom(), 17),
+          duration: 450,
+        });
+      }
+    });
+  }
 
   /**
    * Valida e converte o Endereço Digital de um ponto chamando o serviço do
@@ -1048,6 +1914,46 @@ import { criarClienteRede } from './clienteRede.js';
 
   /* ─────────────── Cálculo da rota ─────────────── */
 
+  function limparAntesDoCalculo() {
+    altRouteSource.clear();
+    occSegmentHighlightSource.clear();
+    state.rotasDisponiveis = [];
+    state.rotaSelecionadaId = null;
+    state.comparacaoAlternativas = null;
+    if (els.legendAlt) els.legendAlt.hidden = true;
+    if (els.routeAlternatives) {
+      els.routeAlternatives.hidden = true;
+      els.routeAlternatives.innerHTML = '';
+    }
+    if (els.routeOccurrences) {
+      els.routeOccurrences.hidden = true;
+      els.routeOccurrences.innerHTML = '';
+    }
+  }
+
+  function aplicarResultadoRota(data) {
+    const rotas = Array.isArray(data.rotas) && data.rotas.length
+      ? data.rotas
+      : [{
+          id: 'unica',
+          rotulo: 'Rota principal',
+          recomendada: true,
+          distance: data.distance,
+          distanceMeters: data.distanceMeters,
+          distanceKm: data.distanceKm,
+          diferencaMetros: 0,
+          motivo: '',
+          ocorrenciasNoTrajeto: [],
+          ocorrenciasEvitadas: [],
+          violacoesObrigatorias: 0,
+          rota: data,
+        }];
+    state.rotasDisponiveis = rotas;
+    state.rotaSelecionadaId = data.rotaSelecionadaId || rotas[0].id;
+    state.comparacaoAlternativas = data.comparacaoAlternativas || null;
+    selecionarRotaAlternativa(state.rotaSelecionadaId);
+  }
+
   let revisaoCalculo = 0;
   let assinaturaRota = null;
   async function calculate(modo = 'usuario') {
@@ -1068,6 +1974,7 @@ import { criarClienteRede } from './clienteRede.js';
     els.calcOptimized.disabled = true;
     setStatus(state.circuito ? 'Calculando o circuito…' : 'Calculando a rota…', 'busy');
     routeSource.clear();
+    if (typeof limparAntesDoCalculo === 'function') limparAntesDoCalculo();
 
     const pontos = state.lista.pontos.map((p) => ({
       rotulo: p.rotulo,
@@ -1076,20 +1983,27 @@ import { criarClienteRede } from './clienteRede.js';
       enderecoDigital: p.enderecoDigital || null,
     }));
 
+    const payload = {
+      pontos,
+      ...opcoesCalculoCircuito(modo),
+    };
+    if (state.preferencias) payload.preferencias = state.preferencias;
+
     try {
       const res = await fetch('/api/rota-paradas', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pontos,
-          ...opcoesCalculoCircuito(modo),
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (revisao !== revisaoCalculo || assinaturaPlanejador(state) !== assinatura) return;
 
       if (!data.ok) {
-        showError(reasonTitle(data.reason), data.message || 'Não foi possível calcular a rota.');
+        showError(
+          reasonTitle(data.reason),
+          data.message || 'Não foi possível calcular a rota.',
+          data,
+        );
         // trecho parcial: desenha o que foi calculado, sem inventar o resto
         if (data.legs && data.legs.length) {
           desenharRota(data);
@@ -1101,9 +2015,13 @@ import { criarClienteRede } from './clienteRede.js';
         return;
       }
 
-      showRoute(data);
-      const d = formatDistance(data.distance);
-      setStatus('Rota calculada: ' + d.v + ' ' + d.u + '.', 'ok');
+      if (typeof aplicarResultadoRota === 'function') {
+        aplicarResultadoRota(data);
+      } else {
+        showRoute(data);
+        const d = formatDistance(data.distance);
+        setStatus('Rota calculada: ' + d.v + ' ' + d.u + '.', 'ok');
+      }
     } catch (err) {
       if (revisao !== revisaoCalculo || assinaturaPlanejador(state) !== assinatura) return;
       showError('Falha de comunicação', err.message);
@@ -1119,6 +2037,7 @@ import { criarClienteRede } from './clienteRede.js';
       case 'FORA_DA_REDE': return 'Ponto distante da rede viária';
       case 'SEM_CAMINHO': return 'Não existe caminho viário';
       case 'TRECHO_SEM_CAMINHO': return 'Trecho sem caminho viário';
+      case 'BLOQUEADO_POR_OCORRENCIA': return 'Trajeto bloqueado por ocorrência';
       case 'PONTOS_INSUFICIENTES': return 'Pontos insuficientes';
       case 'PONTO_SEM_COORDENADA': return 'Endereço sem resolver';
       case 'REDE_VAZIA': return 'Rede viária indisponível';
@@ -1172,8 +2091,20 @@ import { criarClienteRede } from './clienteRede.js';
     }
   }
 
-  function showError(title, message) {
+  function showError(title, message, payload = null) {
     state.rotaAtual = null;
+    state.rotasDisponiveis = [];
+    state.rotaSelecionadaId = null;
+    altRouteSource.clear();
+    if (els.legendAlt) els.legendAlt.hidden = true;
+    if (els.routeAlternatives) {
+      els.routeAlternatives.hidden = true;
+      els.routeAlternatives.innerHTML = '';
+    }
+    if (els.routeOccurrences) {
+      els.routeOccurrences.hidden = true;
+      els.routeOccurrences.innerHTML = '';
+    }
     limparFeedbackGpx();
     if (els.exportGpx) els.exportGpx.hidden = true;
     if (els.startNav) els.startNav.hidden = true;
@@ -1197,6 +2128,28 @@ import { criarClienteRede } from './clienteRede.js';
         d.className = 'alert alert--error';
         d.id = 'route-alert';
         d.innerHTML = '<strong>' + escapeHtml(title) + '</strong>' + escapeHtml(message);
+        if (payload?.reason === 'BLOQUEADO_POR_OCORRENCIA') {
+          if (Array.isArray(payload.ocorrenciasBloqueantes) && payload.ocorrenciasBloqueantes.length) {
+            destacarSegmentosOcorrencias(
+              payload.ocorrenciasBloqueantes.map((r) => state.ocorrencias.find((o) => o.id === r.id) || r),
+            );
+          }
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'mini';
+          btn.style.marginTop = '8px';
+          btn.textContent = 'Ignorar alertas e recalcular';
+          btn.addEventListener('click', () => {
+            state.preferencias = salvarPreferenciasWeb(
+              { ...state.preferencias, modo: 'ignorar' },
+              window.localStorage,
+            );
+            atualizarPreferenciasUI();
+            calculate(state.modo);
+          });
+          d.appendChild(document.createElement('br'));
+          d.appendChild(btn);
+        }
         return d;
       })(),
       els.resultBlock.children[1]
@@ -1507,6 +2460,7 @@ import { criarClienteRede } from './clienteRede.js';
     limparFeedbackGpx();
     if (els.exportGpx) els.exportGpx.hidden = true;
     routeSource.clear();
+    if (typeof limparAntesDoCalculo === 'function') limparAntesDoCalculo();
     atualizarLegenda([]);
     els.resultBlock.hidden = true;
     setStatus('O trajeto mudou: complete os pontos para recalcular a rota.', 'idle');
@@ -1721,13 +2675,27 @@ import { criarClienteRede } from './clienteRede.js';
     inicializarPontos();
     atualizarLegenda();
     state.rotaAtual = null;
+    state.rotasDisponiveis = [];
+    state.rotaSelecionadaId = null;
+    state.comparacaoAlternativas = null;
     limparFeedbackGpx();
     if (els.exportGpx) els.exportGpx.hidden = true;
     if (els.startNav) els.startNav.hidden = true;
+    if (els.legendAlt) els.legendAlt.hidden = true;
+    if (els.routeAlternatives) {
+      els.routeAlternatives.hidden = true;
+      els.routeAlternatives.innerHTML = '';
+    }
+    if (els.routeOccurrences) {
+      els.routeOccurrences.hidden = true;
+      els.routeOccurrences.innerHTML = '';
+    }
     els.resultBlock.hidden = true;
     const alert = document.getElementById('route-alert');
     if (alert) alert.remove();
     routeSource.clear();
+    altRouteSource.clear();
+    occSegmentHighlightSource.clear();
     setStatus('Pronto', 'idle');
   });
 
@@ -1735,7 +2703,7 @@ import { criarClienteRede } from './clienteRede.js';
 
   // exposto para automação e depuração no console do navegador
   // versão do front-end (ajuda a identificar cache antigo no navegador)
-  window.__appVersion = '20261117-4';
+  window.__appVersion = '20261117-5';
   window.__app = {
     map,
     state,
@@ -1744,6 +2712,10 @@ import { criarClienteRede } from './clienteRede.js';
     axisSource,
     axisCasingSource,
     routeSource,
+    altRouteSource,
+    occSource,
+    occClusterSource,
+    occSegmentHighlightSource,
     markerSource,
     // ganchos usados pela interface de navegação ativa
     showRoute,
@@ -1754,6 +2726,8 @@ import { criarClienteRede } from './clienteRede.js';
     renderizarPontos,
     ajustarEnquadramento,
     definirCamadaBase,
+    selecionarRotaAlternativa,
+    loadOcorrencias,
     fetchApi: fetch,
     clienteRede,
     exportarGpx,
@@ -1788,6 +2762,7 @@ import { criarClienteRede } from './clienteRede.js';
   }
 
   inicializarPontos();
+  inicializarPreferenciasUI();
   atualizarLegenda();
   setStatus('Carregando a rede viária…', 'busy');
   loadNetwork();

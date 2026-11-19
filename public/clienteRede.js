@@ -21,6 +21,19 @@ import { routeOnGraph } from '../core/router.js';
 import { criarServicoEnderecoDigital, MODOS } from '../core/enderecoDigitalService.js';
 import { fetchNetwork } from '../core/wfs.js';
 import { LAYER_NAME } from '../core/config.js';
+import {
+  CATEGORIAS_OCORRENCIA,
+  CLASSIFICACAO_META,
+  STATUS_OCORRENCIA,
+} from '../ocorrencias/catalogo.js';
+import { normalizarPreferencias } from '../ocorrencias/preferencias.js';
+import {
+  aplicarInteracao,
+  associarSegmentoDaRede,
+  atualizarExpiracoes,
+  criarOcorrencia,
+} from '../ocorrencias/regras.js';
+import { calcularRotaComAlternativas } from '../ocorrencias/roteamentoAlternativo.js';
 
 function limparTexto(valor) {
   return typeof valor === 'string' ? valor.trim() : '';
@@ -230,6 +243,7 @@ export function criarClienteRede(opcoes = {}) {
   let promessaModo = null;
   let promessaRede = null;
   let estadoRede = null;
+  let ocorrenciasLocais = [];
 
   function construirEstadoSnapshot(snap, avisosIniciais = []) {
     const t0 = Date.now();
@@ -586,7 +600,21 @@ export function criarClienteRede(opcoes = {}) {
       const modo = String(corpo?.modo ?? searchParams.get('modo') ?? 'usuario');
       const circularRaw = corpo?.circular ?? searchParams.get('circular') ?? false;
       const circular = circularRaw === true || circularRaw === 'true';
-      const resultado = calcularRotaComParadas(rede.graph, pontos, {
+
+      let preferenciasRaw = corpo?.preferencias ?? null;
+      if (!preferenciasRaw && searchParams.get('preferencias')) {
+        try {
+          preferenciasRaw = JSON.parse(searchParams.get('preferencias'));
+        } catch {
+          preferenciasRaw = null;
+        }
+      }
+      const { ocorrencias, mudou } = atualizarExpiracoes(ocorrenciasLocais);
+      if (mudou) ocorrenciasLocais = ocorrencias;
+      const ativas = ocorrencias.filter(
+        (o) => o.status !== STATUS_OCORRENCIA.RESOLVIDA && o.status !== STATUS_OCORRENCIA.EXPIRADA,
+      );
+      const opcoesBase = {
         maxSnapDistance: opcoes.maxSnapDistance ?? 100,
         modo:
           modo === 'otimizada'
@@ -595,8 +623,114 @@ export function criarClienteRede(opcoes = {}) {
               ? 'saida_curta'
               : 'usuario',
         circular,
-      });
+      };
+      const usarAlternativas = preferenciasRaw != null || ativas.length > 0;
+      const resultado = usarAlternativas
+        ? calcularRotaComAlternativas(rede.graph, pontos, {
+            ...opcoesBase,
+            preferencias: normalizarPreferencias(preferenciasRaw),
+            ocorrencias: ativas,
+          })
+        : calcularRotaComParadas(rede.graph, pontos, opcoesBase);
       return respostaJson(resultado.ok ? 200 : 422, resultado);
+    }
+
+    if (pathname === '/api/ocorrencias/segmento') {
+      const lat = Number(corpo?.latitude ?? searchParams.get('latitude'));
+      const lon = Number(corpo?.longitude ?? searchParams.get('longitude'));
+      const featureRaw = corpo?.featureIdPreferido ?? searchParams.get('featureIdPreferido');
+      const featureIdPreferido =
+        featureRaw !== null && featureRaw !== undefined && featureRaw !== ''
+          ? Number(featureRaw)
+          : null;
+      const rede = await garantirRede(resolucao?.fallbackReason || null);
+      const seg = associarSegmentoDaRede(rede.graph, {
+        latitude: lat,
+        longitude: lon,
+        featureIdPreferido: Number.isFinite(featureIdPreferido) ? featureIdPreferido : null,
+      });
+      return respostaJson(seg.ok ? 200 : 422, seg);
+    }
+
+    if (pathname === '/api/ocorrencias' && (!init?.method || init.method.toUpperCase() === 'GET')) {
+      const incluirInativas = searchParams.get('incluirInativas') === 'true';
+      const categoria = searchParams.get('categoria') || null;
+      const { ocorrencias, mudou } = atualizarExpiracoes(ocorrenciasLocais);
+      if (mudou) ocorrenciasLocais = ocorrencias;
+      let lista = ocorrencias;
+      if (!incluirInativas) {
+        lista = lista.filter(
+          (o) =>
+            o.status !== STATUS_OCORRENCIA.RESOLVIDA &&
+            o.status !== STATUS_OCORRENCIA.EXPIRADA,
+        );
+      }
+      if (categoria) lista = lista.filter((o) => o.categoria === categoria);
+      return respostaJson(200, {
+        ok: true,
+        ocorrencias: lista,
+        catalogo: { categorias: CATEGORIAS_OCORRENCIA, classificacoes: CLASSIFICACAO_META },
+        atualizadoEm: new Date().toISOString(),
+      });
+    }
+
+    if (pathname === '/api/ocorrencias' && init?.method?.toUpperCase() === 'POST') {
+      if (!corpo || typeof corpo !== 'object') {
+        return respostaJson(400, {
+          ok: false,
+          reason: 'PARAMETROS_INVALIDOS',
+          message: 'Informe os dados da ocorrência em JSON.',
+        });
+      }
+      const rede = await garantirRede(resolucao?.fallbackReason || null);
+      const resReg = criarOcorrencia(corpo, {
+        graph: rede.graph,
+        usuarioId: corpo.usuarioId || 'local',
+      });
+      if (!resReg.ok) {
+        const status =
+          resReg.reason === 'SEGMENTO_NAO_ENCONTRADO' || resReg.reason === 'REDE_VAZIA'
+            ? 422
+            : 400;
+        return respostaJson(status, resReg);
+      }
+      ocorrenciasLocais = [resReg.ocorrencia, ...ocorrenciasLocais];
+      return respostaJson(201, resReg);
+    }
+
+    if (
+      init?.method?.toUpperCase() === 'POST' &&
+      (pathname === '/api/ocorrencias/interagir' ||
+        /^\/api\/ocorrencias\/[^/]+\/interagir$/.test(pathname))
+    ) {
+      if (!corpo || typeof corpo !== 'object') {
+        return respostaJson(400, {
+          ok: false,
+          reason: 'PARAMETROS_INVALIDOS',
+          message: 'Informe id, tipo e usuarioId em JSON.',
+        });
+      }
+      const match = pathname.match(/^\/api\/ocorrencias\/([^/]+)\/interagir$/);
+      const id = match ? decodeURIComponent(match[1]) : corpo.id;
+      const idx = ocorrenciasLocais.findIndex((o) => o.id === id);
+      if (idx < 0) {
+        return respostaJson(404, {
+          ok: false,
+          reason: 'OCORRENCIA_NAO_ENCONTRADA',
+          message: 'Ocorrência não encontrada.',
+        });
+      }
+      const resInt = aplicarInteracao(ocorrenciasLocais[idx], {
+        tipo: corpo.tipo,
+        usuarioId: corpo.usuarioId || 'local',
+      });
+      if (!resInt.ok) {
+        return respostaJson(resInt.duplicada ? 409 : 400, resInt);
+      }
+      const copia = ocorrenciasLocais.slice();
+      copia[idx] = resInt.ocorrencia;
+      ocorrenciasLocais = copia;
+      return respostaJson(200, resInt);
     }
 
     return respostaJson(404, { ok: false, error: 'Endpoint desconhecido.' });

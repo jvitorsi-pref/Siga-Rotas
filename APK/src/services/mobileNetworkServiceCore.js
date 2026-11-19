@@ -23,6 +23,8 @@ import { buildGraph } from '../core/graph.js';
 import { fetchNetwork, describeLayer, checkForUpdates } from '../core/wfs.js';
 import { routeOnGraph } from '../core/router.js';
 import { calcularRotaComParadas } from '../core/rotaParadas.js';
+import { normalizarPreferencias } from '../ocorrencias/preferencias.js';
+import { calcularRotaComAlternativas } from '../ocorrencias/roteamentoAlternativo.js';
 import { criarServicoEnderecoDigital, MODOS } from '../core/enderecoDigitalService.js';
 import { WFS_DEFAULTS, UPDATE_DEFAULTS, LAYER_NAME } from '../core/config.js';
 import {
@@ -812,19 +814,24 @@ export class MobileNetworkServiceCore {
   /**
    * Calcula rota com múltiplas paradas (A → B → C → D…).
    * Online: delega para `POST /api/rota-paradas` do Node.js.
-   * Offline: calcula localmente sobre o grafo em cache usando `core/rotaParadas.js`.
+   * Offline: calcula localmente sobre o grafo em cache usando `core/rotaParadas.js`
+   * ou `ocorrencias/roteamentoAlternativo.js` quando houver preferências/ocorrências.
    */
   async calcularRotaParadas(pontos, options = {}) {
     if (this._hasRemoteApi() && options.forceLocal !== true) {
       try {
+        const body = {
+          pontos,
+          modo: options.modo || 'usuario',
+          circular: options.circular === true,
+        };
+        if (options.preferencias != null) {
+          body.preferencias = options.preferencias;
+        }
         const resp = await this._fetchApiJson('/api/rota-paradas', {
           method: 'POST',
           timeoutMs: this.options.routeApiTimeoutMs,
-          body: {
-            pontos,
-            modo: options.modo || 'usuario',
-            circular: options.circular === true,
-          },
+          body,
         });
         this._onRemoteHealthy();
         return resp.body;
@@ -843,6 +850,17 @@ export class MobileNetworkServiceCore {
     }
 
     const state = await this.ensureReady();
+    const ocorrenciasAtivas = Array.isArray(options.ocorrencias) ? options.ocorrencias : [];
+    const usarAlternativas = options.preferencias != null || ocorrenciasAtivas.length > 0;
+    if (usarAlternativas) {
+      return calcularRotaComAlternativas(state.graph, pontos, {
+        maxSnapDistance: options.maxSnapDistance ?? 100,
+        modo: options.modo || 'usuario',
+        circular: options.circular === true,
+        preferencias: normalizarPreferencias(options.preferencias),
+        ocorrencias: ocorrenciasAtivas,
+      });
+    }
     return calcularRotaComParadas(state.graph, pontos, {
       maxSnapDistance: options.maxSnapDistance ?? 100,
       ...options,

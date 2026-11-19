@@ -25,6 +25,12 @@ export function RouteResultPanel({
   onExportGpx,
   exportingGpx = false,
   gpxFeedback = null,
+  routeAlternatives = null,
+  selectedRouteId = null,
+  comparacaoAlternativas = null,
+  onSelectAlternative,
+  onInspectOccurrence,
+  onBypassAlerts,
 }) {
   const [streetsOpen, setStreetsOpen] = useState(true);
 
@@ -38,6 +44,17 @@ export function RouteResultPanel({
         <View style={styles.alertError}>
           <Text style={styles.alertErrorTitle}>{routeError.title}</Text>
           <Text style={styles.alertErrorBody}>{routeError.message}</Text>
+          {routeError.bloqueadaPorRestricao && typeof onBypassAlerts === 'function' && (
+            <TouchableOpacity
+              style={styles.bypassBtn}
+              accessibilityRole="button"
+              onPress={onBypassAlerts}
+            >
+              <Text style={styles.bypassBtnText}>
+                Ignorar alertas e calcular rota mais curta
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     );
@@ -51,6 +68,14 @@ export function RouteResultPanel({
   const paradasCount =
     routeResult.paradas != null ? routeResult.paradas : Math.max(0, legs.length - 1);
 
+  const alternativas = Array.isArray(routeAlternatives) ? routeAlternatives : [];
+  const rotaAtivaObj =
+    alternativas.find((r) => r.id === selectedRouteId) ||
+    alternativas[0] ||
+    null;
+  const ocorrenciasNoTrajeto =
+    rotaAtivaObj?.ocorrenciasNoTrajeto || routeResult.ocorrenciasNoTrajeto || [];
+
   return (
     <View style={styles.block}>
       <Text style={styles.blockTitle}>Resultado</Text>
@@ -62,6 +87,75 @@ export function RouteResultPanel({
       </View>
 
       <Text style={styles.routeNote}>{resumoRota(routeResult)}</Text>
+
+      {alternativas.length > 1 && (
+        <View style={styles.altSection}>
+          <Text style={styles.altSectionTitle}>
+            Rotas alternativas ({alternativas.length})
+          </Text>
+          {!!comparacaoAlternativas?.resumo && (
+            <Text style={styles.altSummary}>{comparacaoAlternativas.resumo}</Text>
+          )}
+          <View style={styles.altList}>
+            {alternativas.map((alt) => {
+              const selecionada = (selectedRouteId || alternativas[0].id) === alt.id;
+              const ad = formatDistanceParts(alt.distance);
+              const delta = Number(alt.diferencaMetros || 0);
+              const deltaTxt =
+                delta === 0
+                  ? 'Referência'
+                  : `${delta > 0 ? '+' : ''}${Math.round(delta)} m`;
+              return (
+                <TouchableOpacity
+                  key={alt.id}
+                  style={[styles.altCard, selecionada && styles.altCardActive]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: selecionada }}
+                  onPress={() => onSelectAlternative?.(alt.id)}
+                >
+                  <View style={styles.altTopRow}>
+                    <Text style={[styles.altTitle, selecionada && styles.altTitleActive]}>
+                      {alt.rotulo || alt.id}
+                    </Text>
+                    <Text style={styles.altDist}>
+                      {ad.v} {ad.u} ({deltaTxt})
+                    </Text>
+                  </View>
+                  {!!alt.motivo && <Text style={styles.altReason}>{alt.motivo}</Text>}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      )}
+
+      {ocorrenciasNoTrajeto.length > 0 && (
+        <View style={styles.occRouteBox}>
+          <Text style={styles.occRouteTitle}>
+            Ocorrências no trajeto ({ocorrenciasNoTrajeto.length})
+          </Text>
+          {ocorrenciasNoTrajeto.map((oc) => (
+            <TouchableOpacity
+              key={oc.id}
+              style={styles.occRouteItem}
+              accessibilityRole="button"
+              onPress={() => onInspectOccurrence?.(oc)}
+            >
+              <Text style={styles.occRouteItemTitle}>
+                {oc.categoriaLabel || oc.rotuloCategoria || oc.categoria} —{' '}
+                {oc.classificacao === 'evita'
+                  ? 'Evita o trecho'
+                  : oc.classificacao === 'penaliza'
+                    ? 'Aumenta o custo'
+                    : 'Informativo'}
+              </Text>
+              <Text style={styles.occRouteItemSub}>
+                {oc.logradouro || 'Via da rede'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
       {/* Métricas gerais do trajeto */}
       <View style={styles.statsGrid}>
@@ -446,6 +540,107 @@ const styles = StyleSheet.create({
   tagUnofficial: {
     borderColor: COLORS.warnBorder,
     backgroundColor: COLORS.warnBg,
+  },
+  bypassBtn: {
+    marginTop: 9,
+    borderWidth: 1,
+    borderColor: COLORS.err,
+    borderRadius: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    backgroundColor: COLORS.panel,
+    alignItems: 'center',
+  },
+  bypassBtnText: {
+    color: COLORS.err,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  altSection: {
+    marginTop: 8,
+    marginBottom: 8,
+    gap: 6,
+  },
+  altSectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.text,
+  },
+  altSummary: {
+    fontSize: 11,
+    color: COLORS.muted,
+  },
+  altList: {
+    gap: 6,
+  },
+  altCard: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 7,
+    padding: 9,
+    backgroundColor: COLORS.panel2,
+  },
+  altCardActive: {
+    borderColor: COLORS.accent,
+    borderWidth: 1.5,
+    backgroundColor: '#f2f8f4',
+  },
+  altTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 6,
+  },
+  altTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: COLORS.text,
+    flex: 1,
+  },
+  altTitleActive: {
+    color: COLORS.accent,
+  },
+  altDist: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  altReason: {
+    fontSize: 11,
+    color: COLORS.muted,
+    marginTop: 2,
+  },
+  occRouteBox: {
+    marginTop: 4,
+    marginBottom: 8,
+    padding: 9,
+    borderWidth: 1,
+    borderColor: COLORS.warnBorder,
+    backgroundColor: COLORS.warnBg,
+    borderRadius: 7,
+    gap: 5,
+  },
+  occRouteTitle: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: COLORS.warn,
+  },
+  occRouteItem: {
+    backgroundColor: COLORS.panel,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+  },
+  occRouteItemTitle: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: COLORS.text,
+  },
+  occRouteItemSub: {
+    fontSize: 10.5,
+    color: COLORS.muted,
   },
   tagText: {
     fontSize: 9,

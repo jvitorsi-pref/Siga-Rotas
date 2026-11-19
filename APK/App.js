@@ -28,6 +28,7 @@ import {
   AppState,
 } from 'react-native';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   adicionarPonto,
   removerPonto,
@@ -43,6 +44,8 @@ import { NavigationPanel } from './src/components/NavigationPanel.js';
 import { criarFonteGPSReal } from './src/services/nativeLocation.js';
 import { criarNavegacaoMobile } from './src/services/mobileNavigationService.js';
 import { mobileNetworkService } from './src/services/mobileNetworkService.js';
+import { OcorrenciasMobileService } from './src/services/ocorrenciasMobileService.js';
+import { MODOS_PREFERENCIA, preferenciasPadrao } from './src/ocorrencias/preferencias.js';
 import {
   parseCoords,
   formatDistanceParts,
@@ -50,6 +53,8 @@ import {
   TEXTO_ESTADO,
 } from './src/utils/formatters.js';
 import { PointCard } from './src/components/PointCard.js';
+import { RoutePreferencesSection } from './src/components/RoutePreferencesSection.js';
+import { OccurrenceModal } from './src/components/OccurrenceModal.js';
 import { RouteResultPanel } from './src/components/RouteResultPanel.js';
 import { RoadNetworkMap } from './src/components/RoadNetworkMap.js';
 import { trechosParaMapa } from './src/map/routePresentation.js';
@@ -69,6 +74,39 @@ export default function App() {
   // Estado da lista de pontos (A, B, C, D…)
   const [lista, setLista] = useState(criarListaCircuito);
   const [pickingId, setPickingId] = useState(null);
+  const [pickingOccurrence, setPickingOccurrence] = useState(false);
+
+  // Estado colaborativo de ocorrências e preferências de trajeto
+  const ocorrenciasServiceRef = useRef(null);
+  if (!ocorrenciasServiceRef.current) {
+    ocorrenciasServiceRef.current = new OcorrenciasMobileService({
+      storage: AsyncStorage,
+      networkService: mobileNetworkService,
+    });
+  }
+  const [usuarioId, setUsuarioId] = useState(null);
+  const [preferencias, setPreferencias] = useState(preferenciasPadrao);
+  const preferenciasRef = useRef(preferencias);
+  preferenciasRef.current = preferencias;
+  const [ocorrencias, setOcorrencias] = useState([]);
+  const ocorrenciasRef = useRef(ocorrencias);
+  ocorrenciasRef.current = ocorrencias;
+  const [showOccurrences, setShowOccurrences] = useState(true);
+  const [occModal, setOccModal] = useState({
+    visible: false,
+    mode: 'create',
+    segmentoPreview: null,
+    coordinate: null,
+    ocorrencia: null,
+    submitting: false,
+    errorText: null,
+  });
+
+  // Estado das alternativas de rota
+  const [routeAlternatives, setRouteAlternatives] = useState(null);
+  const [selectedRouteId, setSelectedRouteId] = useState(null);
+  const [comparacaoAlternativas, setComparacaoAlternativas] = useState(null);
+  const lastCalcModeRef = useRef('usuario');
 
   // Estado da rede viária
   const [networkFeatures, setNetworkFeatures] = useState([]);
@@ -84,7 +122,11 @@ export default function App() {
   const navigationRef = useRef(null);
   const calculoRef = useRef(0);
   if (!navigationRef.current) navigationRef.current = criarNavegacaoMobile({
-    calcularRotaParadas: (pontos, options) => mobileNetworkService.calcularRotaParadas(pontos, options),
+    calcularRotaParadas: (pontos, options) => mobileNetworkService.calcularRotaParadas(pontos, {
+      ...options,
+      preferencias: preferenciasRef.current,
+      ocorrencias: ocorrenciasRef.current,
+    }),
     criarFonteGPS: criarFonteGPSReal,
     aoMudar: setNavigation,
     aoRecalcular: setRouteResult,
@@ -164,12 +206,18 @@ export default function App() {
     calculoRef.current++;
     navigationRef.current.encerrar();
     setRouteResult(null); setRouteError(null); setPartialGeometry(null); setCalculating(false); setNavigationCenter(null);
+    setRouteAlternatives(null); setSelectedRouteId(null); setComparacaoAlternativas(null);
   }, [lista]);
   useEffect(() => () => { revisoesEndereco.current.limpar(); calculoRef.current++; navigationRef.current.descartar(); }, []);
 
   // O painel é dono da assinatura/comandos; não atualiza a UI após descarte.
   useEffect(() => {
     let ultimoFeedback = null;
+    const svcOcc = ocorrenciasServiceRef.current;
+    void svcOcc.obterOuCriarUsuarioId().then((uid) => setUsuarioId(uid));
+    void svcOcc.carregarPreferencias().then((pref) => setPreferencias(pref));
+    void svcOcc.listarAtivas().then((ativas) => setOcorrencias(ativas)).catch(() => {});
+
     const painel = criarPainelRede({ service: mobileNetworkService, aoMudar: (estado) => {
       setNetworkPanel(estado);
       setNetworkFeatures(estado.features);
@@ -183,7 +231,7 @@ export default function App() {
     void painel.abrir();
     const appStateSub = AppState?.addEventListener?.('change', (nextState) => {
       if (nextState === 'active') {
-        void mobileNetworkService.syncWithServer().catch(() => {});
+        void mobileNetworkService.syncWithServer().then(() => svcOcc.listarAtivas().then((ativas) => setOcorrencias(ativas))).catch(() => {});
       }
     });
     return () => {
@@ -432,8 +480,12 @@ export default function App() {
     revisoesEndereco.current.limpar();
     Keyboard.dismiss();
     setPickingId(null);
+    setPickingOccurrence(false);
     setLista(criarListaCircuito());
     setRouteResult(null);
+    setRouteAlternatives(null);
+    setSelectedRouteId(null);
+    setComparacaoAlternativas(null);
     setRouteError(null);
     setPartialGeometry(null);
     setGpxFeedback(null);
@@ -479,14 +531,195 @@ export default function App() {
     setStatus(`Mapa de fundo alterado para ${info.rotulo} (${info.provedor}).`, 'idle');
   };
 
+  // ─────────────── Ocorrências colaborativas e alternativas ───────────────
+
+  const limparAlternativas = () => {
+    setRouteAlternatives(null);
+    setSelectedRouteId(null);
+    setComparacaoAlternativas(null);
+  };
+
+  const selecionarAlternativa = (altId, listaAlts = routeAlternatives) => {
+    const alts = Array.isArray(listaAlts) ? listaAlts : [];
+    const escolhida = alts.find((r) => r.id === altId) || alts[0];
+    if (!escolhida) return;
+    setSelectedRouteId(escolhida.id);
+    setRouteResult(escolhida.rota || routeResult);
+    const d = formatDistanceParts(escolhida.distance ?? escolhida.rota?.distance);
+    setStatus(`Rota selecionada (${escolhida.rotulo || escolhida.id}): ${d.v} ${d.u}.`, 'ok');
+  };
+
+  const aplicarResultadoAlternativas = (data) => {
+    if (Array.isArray(data.rotas) && data.rotas.length) {
+      const idAtivo = data.rotaSelecionadaId || data.rotas[0].id;
+      const escolhida = data.rotas.find((r) => r.id === idAtivo) || data.rotas[0];
+      setRouteAlternatives(data.rotas);
+      setComparacaoAlternativas(data.comparacaoAlternativas || null);
+      setSelectedRouteId(escolhida.id);
+      setRouteResult(escolhida.rota || data);
+      const d = formatDistanceParts(escolhida.distance ?? data.distance);
+      const qtdAlts = data.rotas.length;
+      setStatus(
+        qtdAlts > 1
+          ? `Rota calculada (${qtdAlts} opções): ${d.v} ${d.u}.`
+          : `Rota calculada: ${d.v} ${d.u}.`,
+        'ok',
+      );
+      return;
+    }
+    setRouteAlternatives(null);
+    setSelectedRouteId(null);
+    setComparacaoAlternativas(null);
+    setRouteResult(data);
+    const d = formatDistanceParts(data.distance);
+    setStatus(`Rota calculada: ${d.v} ${d.u}.`, 'ok');
+  };
+
+  const handleChangePreferencias = async (novasPrefs) => {
+    const salvas = await ocorrenciasServiceRef.current.salvarPreferencias(novasPrefs);
+    setPreferencias(salvas);
+    preferenciasRef.current = salvas;
+    if ((routeResult?.ok || routeError?.bloqueadaPorRestricao) && podeCalcular(lista).ok) {
+      void handleCalculate(lastCalcModeRef.current || 'usuario', salvas);
+    }
+  };
+
+  const handleStartPickOccurrence = () => {
+    Keyboard.dismiss();
+    setPickingId(null);
+    setPickingOccurrence(true);
+    if (layoutMode === 'panel') setLayoutMode('split');
+    setStatus('Toque sobre uma rua no mapa para registrar uma ocorrência.', 'busy');
+  };
+
+  const handleMapPickOccurrence = async ({ lon, lat }) => {
+    setPickingOccurrence(false);
+    setStatus('Identificando o segmento viário…', 'busy');
+    try {
+      const seg = await ocorrenciasServiceRef.current.associarSegmento({
+        latitude: lat,
+        longitude: lon,
+      });
+      if (!seg?.ok) {
+        setStatus(seg?.message || 'Toque mais próximo de uma via mapeada (até 45 m).', 'err');
+        return;
+      }
+      setOccModal({
+        visible: true,
+        mode: 'create',
+        segmentoPreview: seg,
+        coordinate: { lon, lat },
+        ocorrencia: null,
+        submitting: false,
+        errorText: null,
+      });
+      setStatus(`Via identificada: ${seg.principal?.logradouro || 'Trecho viário'}.`, 'idle');
+    } catch (err) {
+      setStatus(err?.message || 'Não foi possível identificar a via.', 'err');
+    }
+  };
+
+  const handleOpenOccurrenceDetail = (occOuId) => {
+    const occ =
+      typeof occOuId === 'string'
+        ? ocorrencias.find((o) => o.id === occOuId)
+        : ocorrencias.find((o) => o.id === occOuId?.id) || occOuId;
+    if (!occ) return;
+    setOccModal({
+      visible: true,
+      mode: 'detail',
+      segmentoPreview: null,
+      coordinate: null,
+      ocorrencia: occ,
+      submitting: false,
+      errorText: null,
+    });
+  };
+
+  const handleSubmitCreateOccurrence = async (payload) => {
+    setOccModal((prev) => ({ ...prev, submitting: true, errorText: null }));
+    try {
+      const res = await ocorrenciasServiceRef.current.registrar(payload, { usuarioId });
+      if (!res?.ok) {
+        setOccModal((prev) => ({
+          ...prev,
+          submitting: false,
+          errorText: res?.message || 'Não foi possível registrar a ocorrência.',
+        }));
+        return;
+      }
+      const ativas = await ocorrenciasServiceRef.current.listarAtivas();
+      setOcorrencias(ativas);
+      ocorrenciasRef.current = ativas;
+      setOccModal((prev) => ({ ...prev, visible: false, submitting: false }));
+      setStatus(
+        res.pendenteSincronizacao
+          ? 'Ocorrência salva offline e será sincronizada ao reconectar.'
+          : 'Ocorrência registrada e aplicada à rede.',
+        'ok',
+      );
+      if ((routeResult?.ok || routeError) && podeCalcular(lista).ok) {
+        void handleCalculate(lastCalcModeRef.current || 'usuario');
+      }
+    } catch (err) {
+      setOccModal((prev) => ({
+        ...prev,
+        submitting: false,
+        errorText: err?.message || 'Falha ao registrar ocorrência.',
+      }));
+    }
+  };
+
+  const handleInteractOccurrence = async (id, tipo) => {
+    setOccModal((prev) => ({ ...prev, submitting: true, errorText: null }));
+    try {
+      const res = await ocorrenciasServiceRef.current.interagir({ id, tipo, usuarioId });
+      if (!res?.ok) {
+        setOccModal((prev) => ({
+          ...prev,
+          submitting: false,
+          errorText: res?.message || 'Não foi possível registrar sua resposta.',
+        }));
+        return;
+      }
+      const ativas = await ocorrenciasServiceRef.current.listarAtivas();
+      setOcorrencias(ativas);
+      ocorrenciasRef.current = ativas;
+      const aindaAtiva = ativas.find((o) => o.id === id);
+      setOccModal((prev) => ({
+        ...prev,
+        visible: !!aindaAtiva,
+        ocorrencia: aindaAtiva || res.ocorrencia,
+        submitting: false,
+      }));
+      setStatus(
+        res.pendenteSincronizacao
+          ? 'Interação salva offline para sincronização posterior.'
+          : 'Interação registrada.',
+        'ok',
+      );
+      if ((routeResult?.ok || routeError) && podeCalcular(lista).ok) {
+        void handleCalculate(lastCalcModeRef.current || 'usuario');
+      }
+    } catch (err) {
+      setOccModal((prev) => ({
+        ...prev,
+        submitting: false,
+        errorText: err?.message || 'Falha ao interagir com a ocorrência.',
+      }));
+    }
+  };
+
   // ─────────────── Cálculo da rota ───────────────
 
-  const handleCalculate = async (modo = 'usuario') => {
+  const handleCalculate = async (modo = 'usuario', prefOverride = null) => {
     Keyboard.dismiss();
+    if (typeof lastCalcModeRef !== 'undefined') lastCalcModeRef.current = modo;
     const verificacao = podeCalcular(lista);
     if (!verificacao.ok) {
       setRouteResult(null);
       setPartialGeometry(null);
+      if (typeof limparAlternativas === 'function') limparAlternativas();
       setRouteError({
         title: 'Pontos incompletos',
         message: verificacao.mensagem,
@@ -500,6 +733,7 @@ export default function App() {
     setCalculating(true);
     setStatus('Calculando a rota…', 'busy');
     setRouteResult(null);
+    if (typeof limparAlternativas === 'function') limparAlternativas();
     setRouteError(null);
     setPartialGeometry(null);
 
@@ -510,15 +744,25 @@ export default function App() {
       enderecoDigital: p.enderecoDigital || null,
     }));
 
+    const opcoesCalc = { ...opcoesCalculoCircuito(modo) };
+    if (prefOverride != null) opcoesCalc.preferencias = prefOverride;
+    else if (typeof preferenciasRef !== 'undefined' && preferenciasRef.current != null) {
+      opcoesCalc.preferencias = preferenciasRef.current;
+    }
+    if (typeof ocorrenciasRef !== 'undefined' && Array.isArray(ocorrenciasRef.current) && ocorrenciasRef.current.length > 0) {
+      opcoesCalc.ocorrencias = ocorrenciasRef.current;
+    }
+
     try {
-      const data = await mobileNetworkService.calcularRotaParadas(pontosPayload, {
-        ...opcoesCalculoCircuito(modo),
-      });
+      const data = await mobileNetworkService.calcularRotaParadas(pontosPayload, opcoesCalc);
       if (requestId !== calculoRef.current) return;
       if (!data.ok) {
         setRouteError({
           title: reasonTitle(data.reason),
           message: data.message || 'Não foi possível calcular a rota.',
+          bloqueadaPorRestricao:
+            data.reason === 'BLOQUEADO_POR_OCORRENCIA' ||
+            data.bloqueadaPorRestricao === true,
         });
         if (data.legs && data.legs.length && data.geometry) {
           setPartialGeometry(data.geometry);
@@ -527,9 +771,13 @@ export default function App() {
         return;
       }
 
-      setRouteResult(data);
-      const d = formatDistanceParts(data.distance);
-      setStatus(`Rota calculada: ${d.v} ${d.u}.`, 'ok');
+      if (typeof aplicarResultadoAlternativas === 'function') {
+        aplicarResultadoAlternativas(data);
+      } else {
+        setRouteResult(data);
+        const d = formatDistanceParts(data.distance);
+        setStatus(`Rota calculada: ${d.v} ${d.u}.`, 'ok');
+      }
     } catch (err) {
       if (requestId !== calculoRef.current) return;
       setRouteError({
@@ -547,6 +795,36 @@ export default function App() {
     : null;
 
   const activeRouteGeometry = routeResult?.geometry || partialGeometry || null;
+
+  const altRoutesMap = useMemo(() => {
+    if (!Array.isArray(routeAlternatives) || routeAlternatives.length <= 1) return [];
+    return routeAlternatives
+      .filter((r) => r.id !== selectedRouteId && r.rota?.geometry)
+      .map((r) => ({ id: r.id, geometry: r.rota.geometry }));
+  }, [routeAlternatives, selectedRouteId]);
+
+  const highlightSegmentsMap = useMemo(() => {
+    const ativa =
+      (Array.isArray(routeAlternatives) &&
+        routeAlternatives.find((r) => r.id === selectedRouteId)) ||
+      null;
+    const listaOcc = ativa?.ocorrenciasNoTrajeto || routeResult?.ocorrenciasNoTrajeto || [];
+    const out = [];
+    for (const oc of listaOcc) {
+      const match = ocorrencias.find((item) => item.id === oc.id);
+      const fid = match?.localizacao?.featureId ?? oc.featureId ?? null;
+      if (fid == null) continue;
+      const feat = networkFeatures.find((f) => Number(f.properties?.ID) === Number(fid));
+      if (feat?.geometry) {
+        out.push({
+          id: oc.id,
+          classificacao: oc.classificacao || match?.classificacao,
+          geometry: feat.geometry,
+        });
+      }
+    }
+    return out;
+  }, [routeAlternatives, selectedRouteId, routeResult, ocorrencias, networkFeatures]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -659,6 +937,20 @@ export default function App() {
               }}
               onMapPickCoordinate={handleMapPickCoordinate}
               onMapClick={handleMapClick}
+              occurrences={ocorrencias}
+              showOccurrences={showOccurrences}
+              altRoutes={altRoutesMap}
+              highlightSegments={highlightSegmentsMap}
+              pickingOccurrence={pickingOccurrence}
+              onStartPickOccurrence={handleStartPickOccurrence}
+              onCancelPickOccurrence={() => {
+                setPickingOccurrence(false);
+                setStatus('Pronto', 'idle');
+              }}
+              onMapPickOccurrence={handleMapPickOccurrence}
+              onOccurrenceClick={handleOpenOccurrenceDetail}
+              onAltRouteClick={(altId) => selecionarAlternativa(altId)}
+              onToggleOccurrences={() => setShowOccurrences((v) => !v)}
             />
           </View>
 
@@ -700,6 +992,11 @@ export default function App() {
               >
                 <Text style={styles.btnGhostText}>+ Adicionar parada</Text>
               </TouchableOpacity>
+
+              <RoutePreferencesSection
+                preferencias={preferencias}
+                onChangePreferencias={handleChangePreferencias}
+              />
 
               <TouchableOpacity
                 style={[styles.btnPrimary, calculating && styles.btnDisabled]}
@@ -749,6 +1046,46 @@ export default function App() {
               exportingGpx={exportingGpx}
               gpxFeedback={gpxFeedback}
               routeError={routeError}
+              routeAlternatives={routeAlternatives}
+              selectedRouteId={selectedRouteId}
+              comparacaoAlternativas={comparacaoAlternativas}
+              onSelectAlternative={(altId) => selecionarAlternativa(altId)}
+              onInspectOccurrence={(oc) => {
+                const match = ocorrencias.find((o) => o.id === oc.id);
+                if (match) {
+                  const loc = match.localizacao || match;
+                  if (layoutMode === 'panel') setLayoutMode('split');
+                  if (loc.longitude != null && loc.latitude != null) {
+                    mapRef.current?.centerPoint(loc.longitude, loc.latitude);
+                  }
+                  handleOpenOccurrenceDetail(match);
+                }
+              }}
+              onBypassAlerts={() => {
+                void handleChangePreferencias({
+                  ...preferencias,
+                  modo: MODOS_PREFERENCIA.IGNORAR,
+                });
+              }}
+            />
+
+            <OccurrenceModal
+              visible={occModal.visible}
+              mode={occModal.mode}
+              segmentoPreview={occModal.segmentoPreview}
+              coordinate={occModal.coordinate}
+              ocorrencia={occModal.ocorrencia}
+              usuarioId={usuarioId}
+              submitting={occModal.submitting}
+              errorText={occModal.errorText}
+              onClose={() => setOccModal((prev) => ({ ...prev, visible: false }))}
+              onSubmitCreate={handleSubmitCreateOccurrence}
+              onInteract={handleInteractOccurrence}
+              onFocusCoordinate={(coord) => {
+                setOccModal((prev) => ({ ...prev, visible: false }));
+                if (layoutMode === 'panel') setLayoutMode('split');
+                mapRef.current?.centerPoint(coord.longitude, coord.latitude);
+              }}
             />
 
             <NetworkDiagnosticsPanel

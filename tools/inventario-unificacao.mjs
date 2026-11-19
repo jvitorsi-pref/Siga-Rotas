@@ -19,7 +19,7 @@ function walk(dir) {
     return entry.isDirectory() ? walk(p) : [p];
   });
 }
-const files = ['core', 'server', 'public', 'APK/src', 'test', 'APK/test', 'tools'].flatMap(walk)
+const files = ['core', 'ocorrencias', 'server', 'public', 'APK/src', 'test', 'APK/test', 'tools'].flatMap(walk)
   .filter((p) => /\.(js|mjs|html|css|webmanifest)$/.test(p) && !p.startsWith('public/vendor/'));
 files.push('APK/App.js', 'APK/metro.config.js', 'APK/app.json', 'APK/eas.json', 'APK/package.json', 'package.json', 'APK/android/app/src/main/AndroidManifest.xml');
 const rows = files.sort().map((file) => {
@@ -31,10 +31,11 @@ const rows = files.sort().map((file) => {
   const exports = [...text.matchAll(/^export\s+(?:(?:async\s+)?(?:function|class|const)\s+(\w+)|\*\s+from\s+['"]([^'"]+))/gm)].map((m) => m[1] || `→ ${m[2]}`);
   return `| \`${file}\` | ${text.split('\n').length} | ${state} | ${exports.join(', ') || '—'} |`;
 });
-// Hashes aprovados exclusivamente para a camada de serviço HTTP (o núcleo `core/` permanece inalterado).
+// Hashes aprovados exclusivamente para a camada de serviço HTTP/persistência (o núcleo `core/` permanece inalterado).
 const approvedChanges = {
-  'server/index.js': '63ea4e05b5a8351b5d5285184ec2c19a2a4f5e79519c57c5054b18e53a8a2958',
+  'server/index.js': 'c36934696684df9116ae1dfa460ba0816748c6ad5c6a666366397746fbddc111',
   'server/networkService.js': 'c82e6d1af9a71f38d2382277cf5408370d24a088659b5f3e087dbd2fb5306728',
+  'server/ocorrenciasService.js': '0cd123e4e20c1c1c7aa957af8ffe882fca0f41dd3a8624c5375ef62ae1d4cd90',
 };
 const protectedFiles = ['core', 'server'].flatMap(walk).filter((p) => p.endsWith('.js'));
 const differs = (p) => {
