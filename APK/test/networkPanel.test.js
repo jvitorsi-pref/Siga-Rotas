@@ -44,6 +44,14 @@ test('rótulos distinguem snapshot, cache e WFS carregado sem declarar conectivi
 test('apresentação inclui quota, limite remoto e últimos cinco erros sem apagar avisos WFS',()=>{
  const p=apresentarRede({warnings:['originais'],cache:{status:'memory-only',error:'quota'},remoteApi:{configured:true,supported:false},update:{recentErrors:Array.from({length:8},(_,i)=>({message:String(i)}))}});
  assert.deepEqual(p.avisos,['originais','quota','Delegação remota não implementada; o cálculo permanece local.']);assert.deepEqual(p.erros,['3','4','5','6','7']);
+
+ const pNode=apresentarRede({source:'api-node',backendSource:'wfs',remoteApi:{configured:true,supported:true,execution:'remote',backendSource:'wfs'}});
+ assert.equal(pNode.fonte,'Servidor Node.js (WFS)');
+ assert.equal(pNode.calculo,'Via servidor Node.js (WFS)');
+
+ const pFallback=apresentarRede({source:'wfs-cache',remoteApi:{configured:true,supported:true,execution:'local-fallback',lastError:'timeout'}});
+ assert.equal(pFallback.calculo,'Local no aparelho (contingência offline)');
+ assert.ok(pFallback.avisos.some(a=>/timeout/.test(a)));
 });
 
 test('integração: painel mostra grafo/cache reais, quota e recuperação offline após nova gravação',async()=>{

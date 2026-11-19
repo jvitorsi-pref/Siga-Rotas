@@ -68,6 +68,82 @@ test('sem snapshot local válido, fallback WFS é persistido; offline explícito
  const c=setup({embeddedSnapshot:null});assert.equal((await c.service.ensureReady()).source,'wfs');assert.equal(c.writes.length,1);
  const off=setup({embeddedSnapshot:null,allowWfs:false});await assert.rejects(()=>off.service.ensureReady(),/desativada/);assert.equal(off.calls.length,0);
 });
-test('fingerprint não depende da ordem das feições e opção remota não promete delegação',async()=>{
- const a=[feature(1),feature(2,200)];assert.equal(fingerprintOf(a),fingerprintOf([...a].reverse()));const c=setup({remoteApiUrl:'https://example.invalid'});await c.service.ensureReady();assert.deepEqual(c.service.getNetworkMeta().remoteApi,{configured:true,supported:false,execution:'local'});
+test('fingerprint não depende da ordem das feições e integração com servidor Node.js delega rotas, cai para offline e sincroniza na reconexão',async()=>{
+ const a=[feature(1),feature(2,200)];assert.equal(fingerprintOf(a),fingerprintOf([...a].reverse()));
+
+ const valores=new Map();
+ const storage={
+  async getItem(k){return valores.get(k)||null;},
+  async setItem(k,v){valores.set(k,v);},
+ };
+
+ let servidorOnline=true;
+ let chamadasApi=[];
+ let featuresServidor=[feature(10,300),feature(11,150)];
+ let origemServidor='wfs';
+
+ const fetchMock=async(url,init)=>{
+  chamadasApi.push({url:String(url),method:init?.method||'GET'});
+  if(!servidorOnline) throw new Error('Network request failed');
+  const u=new URL(url);
+  if(u.pathname==='/api/health'){
+   return new Response(JSON.stringify({ready:true,source:origemServidor,originMode:origemServidor,features:featuresServidor.length,builtAt:'2026-11-16T01:00:00.000Z'}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  if(u.pathname==='/api/network'){
+   return new Response(JSON.stringify({type:'FeatureCollection',features:featuresServidor,meta:{source:origemServidor,originMode:origemServidor,strategy:origemServidor==='wfs'?'single':'snapshot',builtAt:'2026-11-16T01:00:00.000Z',serverTotal:featuresServidor.length,attributes:['ID'],warnings:[]}}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  if(u.pathname==='/api/rota-paradas'){
+   return new Response(JSON.stringify({ok:true,distance:321.5,circular:true,sequencia:['A','B'],sequenciaCompleta:['A','B','A'],legs:[{de:'A',para:'B',distance:160.75,cor:'#1b7f3a',geometry:{type:'LineString',coordinates:[coord(0),coord(150)]}},{de:'B',para:'A',distance:160.75,retorno:true,cor:'#6a1b9a',geometry:{type:'LineString',coordinates:[coord(150),coord(0)]}}],geometry:{type:'LineString',coordinates:[coord(0),coord(150),coord(0)]},streets:['Rua teste']}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  if(u.pathname==='/api/endereco-digital'){
+   return new Response(JSON.stringify({ok:true,status:'CONVERTIDO',latitude:-23.66,longitude:-46.54,codigoNormalizado:'8FP9+J6',codigoCompleto:'587P8FP9+J6'}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  return new Response('{}',{status:404});
+ };
+
+ const srv=new MobileNetworkServiceCore({
+  storage,
+  embeddedSnapshot:{...result(1,100),savedAt:1000},
+  remoteApiUrl:'https://node.siga.local/',
+  fetchImpl:fetchMock,
+  allowWfs:false,
+  autoUpdate:{enabled:false},
+ });
+
+ // 1) Online: carrega do servidor Node.js e delega cálculo + Endereço Digital
+ const st=await srv.ensureReady();
+ assert.equal(st.source,'api-node');
+ assert.equal(st.features[0].properties.ID,10);
+ assert.equal(srv.getNetworkMeta().remoteApi.supported,true);
+ assert.equal(srv.getNetworkMeta().remoteApi.execution,'remote');
+ assert.equal(srv.getNetworkMeta().remoteApi.backendSource,'wfs');
+
+ const rotaOnline=await srv.calcularRotaParadas([{rotulo:'A',longitude:coord(0)[0],latitude:coord(0)[1]},{rotulo:'B',longitude:coord(150)[0],latitude:coord(150)[1]}],{modo:'usuario',circular:true});
+ assert.equal(rotaOnline.distance,321.5);
+ const endOnline=await srv.resolverEnderecoDigital('8FP9+J6');
+ assert.equal(endOnline.status,'CONVERTIDO');
+
+ // 2) Perda de conexão com Node.js: calcula offline com cache local e enfileira pendência de sincronização
+ servidorOnline=false;
+ const ptsOffline=[{rotulo:'A',longitude:coord(0)[0],latitude:coord(0)[1]},{rotulo:'B',longitude:coord(300)[0],latitude:coord(300)[1]}];
+ const rotaOffline=await srv.calcularRotaParadas(ptsOffline,{modo:'usuario',circular:true});
+ assert.equal(rotaOffline.ok,true);
+ assert.ok(rotaOffline.distance>590&&rotaOffline.distance<610);
+ assert.equal(srv.getNetworkMeta().remoteApi.execution,'local-fallback');
+ assert.equal(srv.getNetworkMeta().remoteApi.online,false);
+ assert.equal(srv.getNetworkMeta().remoteApi.pendingSyncCount,1);
+
+ // 3) Retorno de conexão (agora servidor em modo snapshot): sincroniza pendências e atualiza rede
+ servidorOnline=true;
+ origemServidor='snapshot';
+ featuresServidor=[feature(20,400)];
+ const sync=await srv.syncWithServer();
+ assert.equal(sync.synced,true);
+ assert.equal(sync.changed,true);
+ assert.equal(sync.pendingFlushed,1);
+ assert.equal(srv.state.features[0].properties.ID,20);
+ assert.equal(srv.getNetworkMeta().remoteApi.execution,'remote');
+ assert.equal(srv.getNetworkMeta().remoteApi.online,true);
+ assert.equal(srv.getNetworkMeta().remoteApi.backendSource,'snapshot');
+ assert.equal(srv.getNetworkMeta().remoteApi.pendingSyncCount,0);
 });

@@ -163,3 +163,88 @@ test('a aplicação não referencia a API de roteamento externa', async (t) => {
   assert.ok(!/graphhopper|mapbox|osrm|openrouteservice/i.test(js),
     'a aplicação não pode depender de API de roteamento externa');
 });
+
+test('diagnósticos e meta expõem originMode, fallbackActive e cabeçalhos de segurança', async (t) => {
+  const s = await startServer();
+  t.after(s.close);
+
+  const healthInicial = await fetch(`${s.base}/api/health`);
+  assert.equal(healthInicial.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(healthInicial.headers.get('access-control-allow-origin'), null, 'sem Origin não emite wildcard');
+  const healthInicialJson = await healthInicial.json();
+  assert.equal(healthInicialJson.ready, false);
+
+  const htmlRes = await fetch(`${s.base}/`);
+  assert.equal(htmlRes.headers.get('x-frame-options'), 'SAMEORIGIN');
+
+  const diag = await (await fetch(`${s.base}/api/diagnostics`)).json();
+  assert.equal(diag.originMode, 'snapshot');
+  assert.equal(diag.fallbackActive, true);
+
+  const healthPronto = await (await fetch(`${s.base}/api/health`)).json();
+  assert.equal(healthPronto.ready, true);
+  assert.equal(healthPronto.originMode, 'snapshot');
+  assert.equal(healthPronto.fallbackActive, true);
+});
+
+test('CORS controlado e token opcional protegem a API sem quebrar clientes nativos', async (t) => {
+  const server = createServer({
+    corsOrigins: 'https://portal.sa.gov.br',
+    apiToken: 'segredo-teste-123',
+    networkOptions: {
+      snapshotPath: path.join(ROOT, 'data', 'network.snapshot.json'),
+      allowWfs: false,
+    },
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise((r) => server.close(r)));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+
+  // Sem token -> 401
+  const semToken = await fetch(`${base}/api/health`);
+  assert.equal(semToken.status, 401);
+
+  // Origem não autorizada no preflight -> 403
+  const optBloqueado = await fetch(`${base}/api/health`, {
+    method: 'OPTIONS',
+    headers: { Origin: 'https://malicioso.example' },
+  });
+  assert.equal(optBloqueado.status, 403);
+
+  // Origem autorizada + token correto -> 200 com Access-Control-Allow-Origin específico
+  const permitido = await fetch(`${base}/api/health`, {
+    headers: {
+      Origin: 'https://portal.sa.gov.br',
+      'X-Siga-Token': 'segredo-teste-123',
+    },
+  });
+  assert.equal(permitido.status, 200);
+  assert.equal(permitido.headers.get('access-control-allow-origin'), 'https://portal.sa.gov.br');
+
+  // Cliente nativo (sem Origin) com Bearer token -> 200 sem cabeçalho CORS wildcard
+  const nativo = await fetch(`${base}/api/health`, {
+    headers: { Authorization: 'Bearer segredo-teste-123' },
+  });
+  assert.equal(nativo.status, 200);
+  assert.equal(nativo.headers.get('access-control-allow-origin'), null);
+});
+
+test('POST /api/rota-paradas valida limite de pontos e JSON inválido', async (t) => {
+  const s = await startServer();
+  t.after(s.close);
+
+  const muitosPontos = Array.from({ length: 105 }, (_, i) => ({
+    rotulo: `P${i}`,
+    latitude: -23.66,
+    longitude: -46.53,
+  }));
+  const res = await fetch(`${s.base}/api/rota-paradas`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pontos: muitosPontos, circular: true }),
+  });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.reason, 'LIMITE_PONTOS_EXCEDIDO');
+});

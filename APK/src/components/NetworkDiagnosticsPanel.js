@@ -59,7 +59,7 @@ export function NetworkDiagnosticsPanel({
       <View style={styles.statsGrid}>
         <Row label="Fonte" value={apresentacao.fonte} />
         <Row label="Persistência" value={apresentacao.cache} />
-        <Row label="Cálculo" value="Local no aparelho" />
+        <Row label="Cálculo" value={apresentacao.calculo} />
         <Row label="Estratégia de carga" value={meta.strategy || '—'} />
         <Row label="Feições" value={Number(meta.features || 0).toLocaleString('pt-BR')} />
         <Row

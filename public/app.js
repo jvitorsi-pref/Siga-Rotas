@@ -885,10 +885,9 @@ import { criarClienteRede } from './clienteRede.js';
     setStatus('Carregando a rede viária…', 'busy');
     try {
       const res = await fetch('/api/network');
-      if (!res.ok) throw new Error('HTTP ' + res.status);
       const ct = res.headers?.get?.('content-type') || '';
       let data;
-      if (typeof res.text === 'function' && ct && !/json/i.test(ct)) {
+      if (typeof res.text === 'function' && (!res.ok || (ct && !/json/i.test(ct)))) {
         const bruto = await res.text();
         try {
           data = JSON.parse(bruto);
@@ -897,14 +896,18 @@ import { criarClienteRede } from './clienteRede.js';
           throw new Error(
             'A URL ' +
               (res.url || '/api/network') +
-              ' respondeu ' +
-              ct +
+              ' respondeu HTTP ' +
+              res.status +
+              (ct ? ' (' + ct + ')' : '') +
               (titulo ? ' ("' + titulo + '")' : '') +
               ' em vez de JSON.',
           );
         }
       } else {
         data = await res.json();
+      }
+      if (!res.ok) {
+        throw new Error(data?.message || data?.error || ('HTTP ' + res.status));
       }
       const features = (data.features || []).map((f) => ({
         type: 'Feature',
@@ -932,15 +935,13 @@ import { criarClienteRede } from './clienteRede.js';
 
       const meta = data.meta || {};
       const upd = meta.update || {};
-      const origem = meta.source === 'wfs' ? 'GeoServer (WFS)' : 'snapshot local';
+      const originMode = meta.originMode || meta.source;
+      const origem = originMode === 'wfs' ? 'GeoServer (WFS)' : 'snapshot de contingência';
       const quando = upd.lastCheckedAt
         ? new Date(upd.lastCheckedAt).toLocaleTimeString('pt-BR')
         : 'pendente';
       const warnings = meta.warnings || [];
-      // o painel não mostra mais as estatísticas da rede (o bloco foi
-      // removido a pedido do usuário); o que importa continua visível no
-      // rodapé de status: a origem dos dados, a última verificação e
-      // qualquer aviso (rede desatualizada, WFS fora do ar…)
+      const emFallback = Boolean(meta.fallbackActive || originMode !== 'wfs' || warnings.length);
       loadDiagnostics();
       setStatus(
         'Rede pronta (' +
@@ -951,7 +952,7 @@ import { criarClienteRede } from './clienteRede.js';
           quando +
           ').' +
           (warnings.length ? ' Atenção: ' + warnings[0] : ''),
-        warnings.length ? 'err' : 'ok',
+        emFallback ? 'err' : 'ok',
       );
     } catch (err) {
       setStatus('Falha ao carregar a rede: ' + err.message, 'err');
@@ -1121,6 +1122,7 @@ import { criarClienteRede } from './clienteRede.js';
       case 'PONTOS_INSUFICIENTES': return 'Pontos insuficientes';
       case 'PONTO_SEM_COORDENADA': return 'Endereço sem resolver';
       case 'REDE_VAZIA': return 'Rede viária indisponível';
+      case 'API_INDISPONIVEL': return 'API Node.js indisponível';
       default: return 'Não foi possível calcular a rota';
     }
   }

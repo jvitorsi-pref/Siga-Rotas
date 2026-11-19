@@ -25,6 +25,7 @@ import {
   StatusBar,
   SafeAreaView,
   Keyboard,
+  AppState,
 } from 'react-native';
 
 import {
@@ -180,7 +181,16 @@ export default function App() {
     } });
     networkPanelRef.current = painel;
     void painel.abrir();
-    return () => { painel.descartar(); networkPanelRef.current = null; };
+    const appStateSub = AppState?.addEventListener?.('change', (nextState) => {
+      if (nextState === 'active') {
+        void mobileNetworkService.syncWithServer().catch(() => {});
+      }
+    });
+    return () => {
+      appStateSub?.remove?.();
+      painel.descartar();
+      networkPanelRef.current = null;
+    };
   }, [setStatus]);
 
   // ─────────────── Manipulação dos pontos do trajeto ───────────────

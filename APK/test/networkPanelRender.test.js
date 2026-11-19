@@ -35,6 +35,18 @@ test('botões de rede ficam desativados durante operação e mantêm seus callba
 test('diagnóstico pode expandir e mostra os contadores do grafo fornecido',()=>{
  const c=setup({meta,diagnostics:{nodes:123,edges:456,crossings:7,buildMs:89}});assert.doesNotMatch(c.text(c.render()),/Nós/);c.nodes(c.render()).find(n=>n.type==='TouchableOpacity'&&c.text(n).includes('Diagnóstico do grafo')).props.onPress();const text=c.text(c.render());assert.match(text,/Nós/);assert.match(text,/123/);assert.match(text,/456/);assert.match(text,/Cruzamentos/);assert.match(text,/89 ms/);
 });
+test('painel exibe modo servidor Node.js (WFS / snapshot) e contingência offline no aparelho',()=>{
+ const onlineWfs=setup({meta:{...meta,source:'api-node',backendSource:'wfs',remoteApi:{configured:true,supported:true,execution:'remote',backendSource:'wfs'}}});
+ assert.match(onlineWfs.text(onlineWfs.render()),/Servidor Node\.js \(WFS\)/);
+ assert.match(onlineWfs.text(onlineWfs.render()),/Via servidor Node\.js \(WFS\)/);
+
+ const onlineSnap=setup({meta:{...meta,source:'api-node',backendSource:'snapshot',remoteApi:{configured:true,supported:true,execution:'remote',backendSource:'snapshot'}}});
+ assert.match(onlineSnap.text(onlineSnap.render()),/Servidor Node\.js \(snapshot\)/);
+ assert.match(onlineSnap.text(onlineSnap.render()),/Via servidor Node\.js \(snapshot\)/);
+
+ const offlineFallback=setup({meta:{...meta,source:'wfs-cache',remoteApi:{configured:true,supported:true,execution:'local-fallback',lastError:'offline'}}});
+ assert.match(offlineFallback.text(offlineFallback.render()),/Local no aparelho \(contingência offline\)/);
+});
 test('App monta o painel no ScrollView e conecta os três comandos e descarte',()=>{
  const app=readFileSync(new URL('../App.js',import.meta.url),'utf8');assert.match(app,/<NetworkDiagnosticsPanel[\s\S]*?<\/ScrollView>/);for(const name of ['carregar','verificar','baixar'])assert.ok(app.includes(`networkPanelRef.current?.executar('${name}')`));assert.match(app,/painel\.descartar\(\)/);
 });

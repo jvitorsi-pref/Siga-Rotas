@@ -12,13 +12,14 @@
    esqueleto salvo é usado.
    ========================================================================== */
 
-const CACHE = 'siga-rotas-v12';
+const CACHE = 'siga-rotas-v13';
 
 /** Arquivos do esqueleto do aplicativo. */
 const ESQUELETO = [
   '/',
   '/index.html',
   '/styles.css',
+  '/config.js',
   '/logo-siga-app.png',
   '/app.js',
   '/clienteRede.js',
@@ -87,6 +88,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return; // recursos externos
   if (url.pathname.startsWith('/api/')) return; // a API nunca é cacheada
+  if (url.pathname.endsWith('.ashx')) return; // proxy WebForms nunca é cacheado
   if (url.pathname === '/sw.js') return;
 
   event.respondWith(

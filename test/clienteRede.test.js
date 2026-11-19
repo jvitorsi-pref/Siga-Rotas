@@ -6,7 +6,8 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { criarClienteRede, detectarConfiguracaoAmbiente } from '../public/clienteRede.js';
 import { gerarGpxRota } from '../public/gpx.js';
-import { loadRealFeatures, feature } from './helpers.js';
+import { createServer } from '../server/index.js';
+import { feature } from './helpers.js';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -42,92 +43,191 @@ test('detectarConfiguracaoAmbiente respeita precedência: opções > querystring
     { snapshotUrl: '../custom.json' },
     {
       pathname: '/SigaApp/SigaRotas/public/index.html',
-      href: 'https://portal.sa.gov.br/SigaApp/SigaRotas/public/index.html?apiBase=https://api.sa.gov.br/&wfsProxy=../WfsProxy.ashx',
-      search: '?apiBase=https://api.sa.gov.br/&wfsProxy=../WfsProxy.ashx',
+      href: 'https://portal.sa.gov.br/SigaApp/SigaRotas/public/index.html?apiBase=https://api.sa.gov.br/&wfsProxy=../WfsProxy.ashx&apiProxy=../CustomProxy.ashx',
+      search: '?apiBase=https://api.sa.gov.br/&wfsProxy=../WfsProxy.ashx&apiProxy=../CustomProxy.ashx',
     },
-    { apiBase: 'https://ignorado.local', snapshotUrl: '../ignorado.json' },
+    { apiBase: 'https://ignorado.local', snapshotUrl: '../ignorado.json', allowLocalFallback: false },
   );
 
   assert.equal(cfg.apiBase, 'https://api.sa.gov.br');
+  assert.equal(cfg.proxyPath, '../CustomProxy.ashx');
   assert.equal(cfg.wfsProxy, '../WfsProxy.ashx');
   assert.equal(cfg.snapshotUrl, '../custom.json');
+  assert.equal(cfg.allowLocalFallback, false);
   assert.equal(cfg.modo, 'servidor');
 });
 
-test('iframe WebForms estático (../../SigaApp/SigaRotas/public/index.html) entra em modo cliente sem sondar /api/health e calcula rota local', async () => {
-  const urlsChamadas = [];
-  const snapshotReal = {
-    source: 'snapshot',
-    strategy: 'single',
-    features: loadRealFeatures(),
+test('iframe WebForms (../../SigaApp/SigaRotas/public/index.html) consome Node.js real via ApiProxy.ashx sem rodar grafo no navegador', async (t) => {
+  const nodeServer = createServer({
+    networkOptions: {
+      snapshotPath: path.join(ROOT_DIR, 'data', 'network.snapshot.json'),
+      allowWfs: false,
+    },
+  });
+  await new Promise((resolve) => nodeServer.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => nodeServer.close(resolve)));
+  const nodeBase = `http://127.0.0.1:${nodeServer.address().port}`;
+
+  const MIME = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.webmanifest': 'application/manifest+json; charset=utf-8',
+    '.png': 'image/png',
   };
 
+  const chamadasProxy = [];
+  const snapshotLocalPedido = [];
+
+  const iisServer = http.createServer(async (req, res) => {
+    const reqUrl = new URL(req.url, 'http://127.0.0.1');
+    const { pathname, searchParams } = reqUrl;
+
+    if (pathname === '/Portal/Paginas/Mapa.aspx') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(
+        '<div id="iframeContainer"><iframe src="../../SigaApp/SigaRotas/public/index.html" style="border:none;width:100%; min-height:700px; display: block;"></iframe></div>',
+      );
+      return;
+    }
+
+    // Simula exatamente webforms/ApiProxy.ashx encaminhando para 127.0.0.1:<porta_node>
+    if (pathname === '/SigaApp/SigaRotas/ApiProxy.ashx') {
+      const endpoint = searchParams.get('endpoint') || '';
+      chamadasProxy.push(endpoint);
+      const forwardQs = new URLSearchParams(searchParams);
+      forwardQs.delete('endpoint');
+      const destino = `${nodeBase}${endpoint}${forwardQs.toString() ? `?${forwardQs.toString()}` : ''}`;
+
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const body = Buffer.concat(chunks);
+
+      const upstream = await fetch(destino, {
+        method: req.method,
+        headers: req.headers['content-type'] ? { 'Content-Type': req.headers['content-type'] } : undefined,
+        body: req.method === 'POST' ? body : undefined,
+      });
+      const respBuf = Buffer.from(await upstream.arrayBuffer());
+      res.writeHead(upstream.status, {
+        'Content-Type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
+      });
+      res.end(respBuf);
+      return;
+    }
+
+    const prefix = '/SigaApp/SigaRotas/';
+    if (pathname.startsWith(prefix)) {
+      const rel = pathname.slice(prefix.length);
+      if (rel.startsWith('data/') || rel === 'public/network.snapshot.js') {
+        snapshotLocalPedido.push(rel);
+      }
+      const abs = path.resolve(ROOT_DIR, rel);
+      if (abs.startsWith(ROOT_DIR + path.sep) && existsSync(abs) && statSync(abs).isFile()) {
+        const ext = path.extname(abs).toLowerCase();
+        res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+        res.end(readFileSync(abs));
+        return;
+      }
+    }
+
+    res.writeHead(404);
+    res.end('Not Found');
+  });
+
+  await new Promise((resolve) => iisServer.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => iisServer.close(resolve)));
+  const iisBase = `http://127.0.0.1:${iisServer.address().port}`;
+
+  const aspxHtml = await (await fetch(`${iisBase}/Portal/Paginas/Mapa.aspx`)).text();
+  const iframeSrc = aspxHtml.match(/<iframe\s+src="([^"]+)"/i)?.[1];
+  assert.equal(iframeSrc, '../../SigaApp/SigaRotas/public/index.html');
+  const iframeUrl = new URL(iframeSrc, `${iisBase}/Portal/Paginas/Mapa.aspx`);
+
+  // Verifica que todos os assets relativos do HTML (inclusive config.js) carregam sem '/' inicial
+  const indexHtml = await (await fetch(iframeUrl.href)).text();
+  const htmlRefs = [...indexHtml.matchAll(/(?:src|href)=["']([^"'#]+)["']/g)]
+    .map((m) => m[1])
+    .filter((r) => !/^https?:/i.test(r));
+  for (const rel of htmlRefs) {
+    assert.equal(rel.startsWith('/'), false, `referência absoluta quebraria subpasta WebForms: ${rel}`);
+    const assetRes = await fetch(new URL(rel, iframeUrl).href);
+    assert.equal(assetRes.status, 200, `falha HTTP em asset do iframe: ${rel}`);
+  }
+
+  const cliente = criarClienteRede({
+    location: {
+      pathname: iframeUrl.pathname,
+      href: iframeUrl.href,
+      search: iframeUrl.search,
+    },
+    fetchImpl: fetch,
+  });
+
+  const modo = await cliente.resolverModo();
+  assert.equal(modo.modo, 'servidor');
+  assert.equal(modo.transport, 'ashx');
+
+  const net = await (await cliente.fetchApi('/api/network')).json();
+  assert.equal(net.type, 'FeatureCollection');
+  assert.ok(net.features.length > 4000);
+  assert.equal(net.meta.originMode, 'snapshot');
+
+  const end = await (await cliente.fetchApi('/api/endereco-digital?modo=local&codigo=8FP9%2BJ6')).json();
+  assert.equal(end.ok, true);
+  assert.equal(end.status, 'CONVERTIDO');
+
+  const rota = await (
+    await cliente.fetchApi('/api/rota-paradas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        modo: 'otimizada',
+        circular: true,
+        pontos: [
+          { rotulo: 'A', latitude: -23.6635, longitude: -46.5320 },
+          { rotulo: 'B', latitude: -23.6650, longitude: -46.5300 },
+          { rotulo: 'C', latitude: -23.6615, longitude: -46.5340 },
+        ],
+      }),
+    })
+  ).json();
+
+  assert.equal(rota.ok, true);
+  assert.equal(rota.circular, true);
+  assert.equal(rota.legs.length, 3);
+  const gpxXml = gerarGpxRota(rota);
+  assert.match(gpxXml, /<gpx[^>]*version="1\.1"/);
+
+  assert.deepEqual(snapshotLocalPedido, [], 'navegador NÃO pode baixar snapshot local como caminho principal');
+  assert.deepEqual(chamadasProxy, ['/api/health', '/api/network', '/api/endereco-digital', '/api/rota-paradas']);
+});
+
+test('iframe WebForms com API Node.js indisponível NÃO mascara falha com roteamento local por padrão', async () => {
   const cliente = criarClienteRede({
     location: {
       pathname: '/SigaApp/SigaRotas/public/index.html',
       href: 'https://portal.sa.gov.br/SigaApp/SigaRotas/public/index.html',
       search: '',
     },
-    fetchImpl: async (url) => {
-      urlsChamadas.push(String(url));
-      assert.equal(
-        String(url),
-        'https://portal.sa.gov.br/SigaApp/SigaRotas/data/network.snapshot.json',
-      );
-      return {
-        ok: true,
-        status: 200,
-        headers: { get: () => 'application/json' },
-        json: async () => snapshotReal,
-      };
-    },
+    fetchImpl: async () => ({
+      ok: false,
+      status: 503,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ ok: false, reason: 'API_INDISPONIVEL' }),
+    }),
   });
 
   const modoRes = await cliente.resolverModo();
-  assert.equal(modoRes.modo, 'cliente');
-  assert.equal(urlsChamadas.length, 0, 'não deve causar 404 em /api/health dentro de /public/');
+  assert.equal(modoRes.modo, 'indisponivel');
 
   const resNet = await cliente.fetchApi('/api/network');
-  assert.equal(resNet.status, 200);
-  const net = await resNet.json();
-  assert.equal(net.type, 'FeatureCollection');
-  assert.ok(net.features.length > 4000);
-  assert.equal(net.meta.source, 'snapshot');
-  assert.equal(urlsChamadas.length, 1);
-
-  const resDiag = await cliente.fetchApi('/api/diagnostics');
-  assert.equal(resDiag.status, 200);
-  const diag = await resDiag.json();
-  assert.ok(diag.nodes > 1000);
-  assert.equal(urlsChamadas.length, 1, 'diagnóstico reaproveita o grafo já construído');
-
-  const resEnd = await cliente.fetchApi('/api/endereco-digital?modo=local&codigo=8FP9%2BJ6');
-  assert.equal(resEnd.status, 200);
-  const end = await resEnd.json();
-  assert.equal(end.ok, true);
-  assert.equal(end.status, 'CONVERTIDO');
-  assert.ok(Math.abs(end.latitude - -23.663) < 0.05);
-
-  const resRota = await cliente.fetchApi('/api/rota-paradas', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      modo: 'otimizada',
-      circular: true,
-      pontos: [
-        { rotulo: 'A', latitude: -23.6635, longitude: -46.5320 },
-        { rotulo: 'B', latitude: -23.6650, longitude: -46.5300 },
-        { rotulo: 'C', latitude: -23.6615, longitude: -46.5340 },
-      ],
-    }),
-  });
-  assert.equal(resRota.status, 200);
-  const rota = await resRota.json();
-  assert.equal(rota.ok, true);
-  assert.equal(rota.circular, true);
-  assert.ok(rota.distance > 0);
-  assert.equal(rota.legs.length, 3);
-  assert.ok(rota.geometry.coordinates.length > 4);
+  assert.equal(resNet.status, 503);
+  const body = await resNet.json();
+  assert.equal(body.ok, false);
+  assert.equal(body.reason, 'API_INDISPONIVEL');
+  assert.match(body.message, /Node\.js/i);
 });
 
 test('proxy reverso em subcaminho (/SigaApp/SigaRotas/) usa servidor quando /api/health responde JSON válido', async () => {
@@ -170,44 +270,6 @@ test('proxy reverso em subcaminho (/SigaApp/SigaRotas/) usa servidor quando /api
   assert.equal(chamadas[1].url, '/SigaApp/SigaRotas/api/rota-paradas');
 });
 
-test('subcaminho sem Node (/api/health retorna HTML 404 do IIS) cai automaticamente para modo cliente', async () => {
-  const snap = snapshotSintetico();
-  const cliente = criarClienteRede({
-    location: {
-      pathname: '/SigaApp/SigaRotas/',
-      href: 'https://portal.sa.gov.br/SigaApp/SigaRotas/',
-      search: '',
-    },
-    fetchImpl: async (url) => {
-      if (String(url).includes('/api/health')) {
-        return {
-          ok: false,
-          status: 404,
-          headers: { get: () => 'text/html' },
-          json: async () => {
-            throw new Error('not json');
-          },
-        };
-      }
-      if (String(url).endsWith('/SigaApp/SigaRotas/data/network.snapshot.json')) {
-        return {
-          ok: true,
-          status: 200,
-          headers: { get: () => 'application/json' },
-          json: async () => snap,
-        };
-      }
-      return { ok: false, status: 404, headers: { get: () => 'text/plain' } };
-    },
-  });
-
-  const modoRes = await cliente.resolverModo();
-  assert.equal(modoRes.modo, 'cliente');
-
-  const net = await (await cliente.fetchApi('/api/network')).json();
-  assert.equal(net.features.length, 2);
-});
-
 test('?apiBase=... força modo servidor mesmo quando aberto em /public/index.html', async () => {
   const urls = [];
   const cliente = criarClienteRede({
@@ -232,14 +294,14 @@ test('?apiBase=... força modo servidor mesmo quando aberto em /public/index.htm
   assert.deepEqual(urls, ['https://node.sa.gov.br:8094/api/health']);
 });
 
-test('?wfsProxy relativo resolve contra location.href e cai no snapshot com aviso se WFS falhar', async () => {
+test('contingência local explícita (?modo=cliente / allowLocalFallback) preserva snapshot, wfsProxy e fallback ESM', async () => {
   const snap = snapshotSintetico();
   const requisicoes = [];
   const cliente = criarClienteRede({
     location: {
       pathname: '/SigaApp/SigaRotas/public/index.html',
-      href: 'https://portal.sa.gov.br/SigaApp/SigaRotas/public/index.html?wfsProxy=../WfsProxy.ashx',
-      search: '?wfsProxy=../WfsProxy.ashx',
+      href: 'https://portal.sa.gov.br/SigaApp/SigaRotas/public/index.html?modo=cliente&wfsProxy=../WfsProxy.ashx',
+      search: '?modo=cliente&wfsProxy=../WfsProxy.ashx',
     },
     fetchImpl: async (url) => {
       requisicoes.push(String(url));
@@ -267,151 +329,16 @@ test('?wfsProxy relativo resolve contra location.href e cai no snapshot com avis
   );
   assert.equal(net.features.length, 2);
   assert.equal(net.meta.source, 'snapshot');
+  assert.equal(net.meta.fallbackActive, true);
   assert.ok(net.meta.warnings.some((w) => /Proxy WFS indisponível/i.test(w)));
 });
 
-test('integração estática WebForms: SW protegido para iframe/subpasta, navegacaoUI usa app.fetchApi e web.config mapeia MIME types', () => {
-  const appSrc = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  const navSrc = readFileSync(new URL('../public/navegacaoUI.js', import.meta.url), 'utf8');
-  const webConfig = readFileSync(new URL('../web.config', import.meta.url), 'utf8');
-  const ashx = readFileSync(new URL('../webforms/WfsProxy.ashx', import.meta.url), 'utf8');
-
-  assert.match(appSrc, /const clienteRede = criarClienteRede\(\)/);
-  assert.match(appSrc, /if \('serviceWorker' in navigator && window\.isSecureContext !== false && !emIframe && naRaiz\)/);
-  assert.match(navSrc, /const fetchFn = typeof app\?\.fetchApi === 'function' \? app\.fetchApi : fetch;/);
-
-  for (const ext of ['.json', '.geojson', '.webmanifest', '.js']) {
-    assert.ok(webConfig.includes(`<remove fileExtension="${ext}" />`), ext);
-    assert.ok(webConfig.includes(`<mimeMap fileExtension="${ext}"`), ext);
-  }
-  assert.match(ashx, /https:\/\/sigamapa\.santoandre\.sp\.gov\.br\/geoserver\/siga\/wfs/);
-});
-
-test('simulação HTTP estática estilo IIS/WebForms (<iframe src="../../SigaApp/SigaRotas/public/index.html">) carrega módulos, rede, rota e GPX sem Node API', async (t) => {
-  const solicitadas = [];
-  const naoEncontradas = [];
-  const MIME = {
-    '.html': 'text/html; charset=utf-8',
-    '.js': 'application/javascript; charset=utf-8',
-    '.css': 'text/css; charset=utf-8',
-    '.json': 'application/json; charset=utf-8',
-    '.webmanifest': 'application/manifest+json; charset=utf-8',
-    '.png': 'image/png',
-  };
-
-  const server = http.createServer((req, res) => {
-    const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
-    solicitadas.push(pathname);
-
-    if (pathname === '/Portal/Paginas/Mapa.aspx') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(
-        '<div id="iframeContainer"><iframe src="../../SigaApp/SigaRotas/public/index.html" style="border:none;width:100%; min-height:700px; display: block;"></iframe></div>',
-      );
-      return;
-    }
-
-    const prefix = '/SigaApp/SigaRotas/';
-    if (pathname.startsWith(prefix)) {
-      const rel = pathname.slice(prefix.length);
-      const abs = path.resolve(ROOT_DIR, rel);
-      if (abs.startsWith(ROOT_DIR + path.sep) && existsSync(abs) && statSync(abs).isFile()) {
-        const ext = path.extname(abs).toLowerCase();
-        res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
-        res.end(readFileSync(abs));
-        return;
-      }
-    }
-
-    naoEncontradas.push(pathname);
-    res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end('<h1>404 Not Found (IIS Static)</h1>');
-  });
-
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise((resolve) => server.close(resolve)));
-
-  const { port } = server.address();
-  const base = `http://127.0.0.1:${port}`;
-  const aspxRes = await fetch(`${base}/Portal/Paginas/Mapa.aspx`);
-  assert.equal(aspxRes.status, 200);
-  const aspxHtml = await aspxRes.text();
-  const iframeSrc = aspxHtml.match(/<iframe\s+src="([^"]+)"/i)?.[1];
-  assert.equal(iframeSrc, '../../SigaApp/SigaRotas/public/index.html');
-
-  const iframeUrl = new URL(iframeSrc, `${base}/Portal/Paginas/Mapa.aspx`);
-  assert.equal(iframeUrl.pathname, '/SigaApp/SigaRotas/public/index.html');
-
-  // Todos os assets referenciados no HTML e o grafo ESM estático existem no servidor IIS simulado
-  const indexRes = await fetch(iframeUrl.href);
-  assert.equal(indexRes.status, 200);
-  const indexHtml = await indexRes.text();
-  const htmlRefs = [...indexHtml.matchAll(/(?:src|href)=["']([^"'#]+)["']/g)]
-    .map((m) => m[1])
-    .filter((r) => !/^https?:/i.test(r));
-  for (const rel of htmlRefs) {
-    assert.equal(rel.startsWith('/'), false, `referência absoluta quebraria subpasta WebForms: ${rel}`);
-    const assetRes = await fetch(new URL(rel, iframeUrl).href);
-    assert.equal(assetRes.status, 200, `falha HTTP em asset do iframe: ${rel}`);
-  }
-  for (const mod of [
-    './app.js',
-    './clienteRede.js',
-    '../core/pontoTrajeto.js',
-    '../core/coresTrechos.js',
-    '../core/graph.js',
-    '../core/rotaParadas.js',
-    '../core/enderecoDigitalService.js',
-  ]) {
-    const modRes = await fetch(new URL(mod, iframeUrl).href);
-    assert.equal(modRes.status, 200, `módulo ESM ausente: ${mod}`);
-    assert.match(modRes.headers.get('content-type') || '', /javascript/i);
-  }
-
-  // O clienteRede roda integralmente contra o servidor estático sem gerar qualquer 404
-  const cliente = criarClienteRede({
-    location: {
-      pathname: iframeUrl.pathname,
-      href: iframeUrl.href,
-      search: iframeUrl.search,
-    },
-    fetchImpl: fetch,
-  });
-
-  const net = await (await cliente.fetchApi('/api/network')).json();
-  assert.ok(net.features.length > 4000);
-  const rota = await (
-    await cliente.fetchApi('/api/rota-paradas', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        modo: 'otimizada',
-        circular: true,
-        pontos: [
-          { rotulo: 'A', latitude: -23.6635, longitude: -46.5320 },
-          { rotulo: 'B', latitude: -23.6650, longitude: -46.5300 },
-          { rotulo: 'C', latitude: -23.6615, longitude: -46.5340 },
-        ],
-      }),
-    })
-  ).json();
-
-  assert.equal(rota.ok, true);
-  assert.equal(rota.circular, true);
-  assert.ok(rota.geometry.coordinates.length > 4);
-  const gpxXml = gerarGpxRota(rota);
-  assert.match(gpxXml, /<gpx[^>]*version="1\.1"/);
-  assert.deepEqual(naoEncontradas, [], 'não deve ocorrer nenhum 404 em /api/health ou /sw.js');
-  assert.equal(solicitadas.includes('/api/health'), false);
-  assert.equal(solicitadas.includes('/sw.js'), false);
-});
-
-test('quando IIS/ASP.NET devolve HTML (<!DOCTYPE ...) para .json, clienteRede cai automaticamente para public/network.snapshot.js', async () => {
+test('quando IIS/ASP.NET devolve HTML para .json em contingência explícita (?fallback=local), clienteRede cai para public/network.snapshot.js', async () => {
   const cliente = criarClienteRede({
     location: {
       pathname: '/SigaApp/SigaRotas/public/index.html',
-      href: 'https://portal.sa.gov.br/SigaApp/SigaRotas/public/index.html',
-      search: '',
+      href: 'https://portal.sa.gov.br/SigaApp/SigaRotas/public/index.html?fallback=local',
+      search: '?fallback=local',
     },
     fetchImpl: async () => ({
       ok: true,
@@ -426,7 +353,6 @@ test('quando IIS/ASP.NET devolve HTML (<!DOCTYPE ...) para .json, clienteRede ca
   assert.equal(resNet.status, 200);
   const net = await resNet.json();
   assert.ok(net.features.length > 4000, 'deve carregar a rede real via fallback ESM');
-  assert.deepEqual(net.meta.warnings, [], 'fallback bem-sucedido não deve gerar alerta vermelho');
 
   const resRota = await cliente.fetchApi('/api/rota-paradas', {
     method: 'POST',
@@ -449,8 +375,8 @@ test('snapshotUrl explícito que devolve HTML produz erro diagnóstico claro em 
   const cliente = criarClienteRede({
     location: {
       pathname: '/SigaApp/SigaRotas/public/index.html',
-      href: 'https://portal.sa.gov.br/SigaApp/SigaRotas/public/index.html?snapshotUrl=../custom.json',
-      search: '?snapshotUrl=../custom.json',
+      href: 'https://portal.sa.gov.br/SigaApp/SigaRotas/public/index.html?modo=cliente&snapshotUrl=../custom.json',
+      search: '?modo=cliente&snapshotUrl=../custom.json',
     },
     fetchImpl: async () => ({
       ok: true,
@@ -467,57 +393,27 @@ test('snapshotUrl explícito que devolve HTML produz erro diagnóstico claro em 
   );
 });
 
-test('simulação HTTP estática no IIS sem pasta data/ e com customErrors HTML funciona via import(./network.snapshot.js)', async (t) => {
-  const MIME = {
-    '.html': 'text/html; charset=utf-8',
-    '.js': 'application/javascript; charset=utf-8',
-    '.css': 'text/css; charset=utf-8',
-    '.png': 'image/png',
-  };
+test('integração WebForms: ApiProxy.ashx encaminha endpoints permitidos e config.js declara fallback desativado por padrão', () => {
+  const appSrc = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const navSrc = readFileSync(new URL('../public/navegacaoUI.js', import.meta.url), 'utf8');
+  const configSrc = readFileSync(new URL('../public/config.js', import.meta.url), 'utf8');
+  const webConfig = readFileSync(new URL('../web.config', import.meta.url), 'utf8');
+  const apiProxyAshx = readFileSync(new URL('../webforms/ApiProxy.ashx', import.meta.url), 'utf8');
+  const wfsProxyAshx = readFileSync(new URL('../webforms/WfsProxy.ashx', import.meta.url), 'utf8');
 
-  const server = http.createServer((req, res) => {
-    const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
-    const prefix = '/SigaApp/SigaRotas/';
-    if (pathname.startsWith(prefix)) {
-      const rel = pathname.slice(prefix.length);
-      // Simula ambiente onde data/network.snapshot.json foi interceptado por .aspx HTML
-      if (rel.startsWith('data/')) {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(' <!DOCTYPE html><html><head><title>Erro customizado</title></head></html>');
-        return;
-      }
-      const abs = path.resolve(ROOT_DIR, rel);
-      if (abs.startsWith(ROOT_DIR + path.sep) && existsSync(abs) && statSync(abs).isFile()) {
-        const ext = path.extname(abs).toLowerCase();
-        res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
-        res.end(readFileSync(abs));
-        return;
-      }
-    }
-    res.writeHead(404);
-    res.end('Not found');
-  });
+  assert.match(appSrc, /const clienteRede = criarClienteRede\(\)/);
+  assert.match(appSrc, /if \('serviceWorker' in navigator && window\.isSecureContext !== false && !emIframe && naRaiz\)/);
+  assert.match(navSrc, /const fetchFn = typeof app\?\.fetchApi === 'function' \? app\.fetchApi : fetch;/);
+  assert.match(configSrc, /proxyPath:\s*'\.\.\/ApiProxy\.ashx'/);
+  assert.match(configSrc, /allowLocalFallback:\s*false/);
 
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise((resolve) => server.close(resolve)));
-  const { port } = server.address();
-  const base = `http://127.0.0.1:${port}`;
-  const iframeUrl = `${base}/SigaApp/SigaRotas/public/index.html`;
-
-  const modHttpRes = await fetch(new URL('./network.snapshot.js', iframeUrl).href);
-  assert.equal(modHttpRes.status, 200);
-  assert.match(modHttpRes.headers.get('content-type') || '', /javascript/i);
-
-  const cliente = criarClienteRede({
-    location: {
-      pathname: '/SigaApp/SigaRotas/public/index.html',
-      href: iframeUrl,
-      search: '',
-    },
-    fetchImpl: fetch,
-  });
-
-  const net = await (await cliente.fetchApi('/api/network')).json();
-  assert.ok(net.features.length > 4000);
+  for (const ext of ['.json', '.geojson', '.webmanifest', '.js']) {
+    assert.ok(webConfig.includes(`<remove fileExtension="${ext}" />`), ext);
+    assert.ok(webConfig.includes(`<mimeMap fileExtension="${ext}"`), ext);
+  }
+  for (const ep of ['/api/health', '/api/network', '/api/route', '/api/rota-paradas', '/api/endereco-digital', '/api/diagnostics']) {
+    assert.ok(apiProxyAshx.includes(`"${ep}"`), ep);
+  }
+  assert.match(apiProxyAshx, /SigaRotas\.NodeApiBase/);
+  assert.match(wfsProxyAshx, /https:\/\/sigamapa\.santoandre\.sp\.gov\.br\/geoserver\/siga\/wfs/);
 });
-

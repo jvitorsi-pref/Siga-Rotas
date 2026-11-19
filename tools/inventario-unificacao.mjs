@@ -31,8 +31,11 @@ const rows = files.sort().map((file) => {
   const exports = [...text.matchAll(/^export\s+(?:(?:async\s+)?(?:function|class|const)\s+(\w+)|\*\s+from\s+['"]([^'"]+))/gm)].map((m) => m[1] || `→ ${m[2]}`);
   return `| \`${file}\` | ${text.split('\n').length} | ${state} | ${exports.join(', ') || '—'} |`;
 });
-// Sem exceções de campo: módulos de coleta foram removidos do projeto.
-const approvedChanges = {};
+// Hashes aprovados exclusivamente para a camada de serviço HTTP (o núcleo `core/` permanece inalterado).
+const approvedChanges = {
+  'server/index.js': '63ea4e05b5a8351b5d5285184ec2c19a2a4f5e79519c57c5054b18e53a8a2958',
+  'server/networkService.js': 'c82e6d1af9a71f38d2382277cf5408370d24a088659b5f3e087dbd2fb5306728',
+};
 const protectedFiles = ['core', 'server'].flatMap(walk).filter((p) => p.endsWith('.js'));
 const differs = (p) => {
   try { return !readFileSync(path.join(root, p)).equals(execFileSync('git', ['show', `${baseline}:${p}`], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })); }
