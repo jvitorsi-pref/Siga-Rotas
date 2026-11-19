@@ -14,6 +14,7 @@
     {
       apiBase: '',
       proxyPath: '../ApiProxy.ashx',
+      campoProxyPath: '../SigaRotasCampo.ashx',
       allowLocalFallback: false,
     },
     atual,

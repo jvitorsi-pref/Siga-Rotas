@@ -89,6 +89,31 @@ Escolha **uma** das duas formas (ou combine as duas):
 
 ---
 
+## Persistência de Rotas, Trajetos GPS e Observações em Oracle 11g (`SigaRotasCampo.ashx`)
+
+Tanto o frontend Web/PWA (`public/campoWebService.js`) quanto o aplicativo Mobile (`APK/src/services/campoMobileService.js`) utilizam o mesmo contrato HTTP offline-first contra `webforms/SigaRotasCampo.ashx` (copiado para `~/SigaApp/SigaRotas/SigaRotasCampo.ashx`):
+
+| Ação (`?acao=`) | Método | Finalidade |
+| --- | --- | --- |
+| `health` | `GET` | Confirma disponibilidade do handler e modo de persistência (`oracle-dal` ou `memoria-temporaria`). |
+| `sincronizar` | `POST` | Recebe um lote ordenado (`CALCULADA` → `GPS` → `OBSERVACAO` → `EVENTO`), aplica idempotência por `idCliente`, valida status/geometrias WKT (`LINESTRING` / `MULTILINESTRING` / `POINT`) e retorna `resultados[]` + conflitos. |
+| `rotas` | `GET` | Lista rotas calculadas e trajetos GPS do usuário autenticado (com geometria WKT e pontos). |
+| `observacoes` | `GET` | Lista observações vinculadas às rotas (`idRotaCliente`) e o histórico de eventos (`SIGA_ROTA_EVENTO`). |
+
+### Como plugar a DAL Oracle 11g em produção
+
+1. **Execute os scripts Oracle 11g na ordem numérica (`sql/oracle/`):**
+   - `sql/oracle/01_tabelas_sequences_siga_rota.sql` — cria `SIGA_ROTA`, `SIGA_ROTA_OBSERVACAO`, `SIGA_ROTA_EVENTO` e `sequences` compatíveis com Oracle 11g (sem `GENERATED ALWAYS AS IDENTITY` e sem `IS JSON`, usando `CLOB`).
+   - `sql/oracle/02_indices_e_sdo_metadata_oracle11g.sql` — registra metadados em `USER_SDO_GEOM_METADATA` com **`SDO_SRID = NULL`** (para compatibilidade com a base legada/Oracle 11g) e cria os índices espaciais `MDSYS.SPATIAL_INDEX` e índices operacionais.
+   - `sql/oracle/03_pkg_siga_rotas_oracle11g.sql` — cria a package `PKG_SIGA_ROTAS` com upsert idempotente por `ID_CLIENTE`, conversão WKT→`SDO_GEOMETRY` com SRID `NULL` (`SDO_UTIL.FROM_WKTGEOMETRY`) e auditoria automática de criação, edição e mudança de status em `SIGA_ROTA_EVENTO`.
+2. **Conecte o `SigaRotasCampo.ashx` à sua DAL C# real (`sql/oracle/04_exemplo_dal_csharp.cs`):**
+   - Compile `SigaRotasCampoDal` na camada de acesso a dados do portal (usando `Oracle.ManagedDataAccess.Client` / DAL existente da Prefeitura e a `connectionString` no `Web.config`).
+   - No `SigaRotasCampo.ashx`, faça `CriarDal()` retornar a instância real de `ISigaRotasCampoDal` em vez de `MemoriaSigaRotasCampoDal` (mantida apenas para homologação sem banco).
+   - Em `ResolverUsuarioAutenticado(HttpContext context)`, retorne o usuário real autenticado da sessão/FormsAuth/token do portal — o handler nunca confia em `idUsuario` enviado pelo cliente sem validação.
+3. **Configuração de pastas no IIS:** inclua também a pasta `campo/` (ao lado de `core/`, `ocorrencias/` e `public/`) no pacote publicado em `~/SigaApp/SigaRotas/`, pois Web e APK consomem as mesmas regras em `campo/*.js`.
+
+---
+
 ## Opções adicionais e contingência
 
 - **API Node.js direta ou atrás de proxy reverso na Web:** informe `?apiBase=https://...` no `src` do `<iframe>` ou ajuste `apiBase` em `public/config.js`.

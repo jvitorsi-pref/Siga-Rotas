@@ -12,7 +12,7 @@
    esqueleto salvo é usado.
    ========================================================================== */
 
-const CACHE = 'siga-rotas-v14';
+const CACHE = 'siga-rotas-v15';
 
 /** Arquivos do esqueleto do aplicativo. */
 const ESQUELETO = [
@@ -23,6 +23,8 @@ const ESQUELETO = [
   '/logo-siga-app.png',
   '/app.js',
   '/clienteRede.js',
+  '/armazenamentoIndexedDB.js',
+  '/campoWebService.js',
   '/camadaBase.js',
   '/gpx.js',
   '/exportarGpxWeb.js',
@@ -58,6 +60,11 @@ const ESQUELETO = [
   '/ocorrencias/preferencias.js',
   '/ocorrencias/regras.js',
   '/ocorrencias/roteamentoAlternativo.js',
+  '/campo/modeloCampo.js',
+  '/campo/filtroGps.js',
+  '/campo/repositorioCampo.js',
+  '/campo/contratosBackend.js',
+  '/campo/syncEngine.js',
 ];
 
 self.addEventListener('install', (event) => {

@@ -130,6 +130,8 @@ export const MAP_HTML = `<!DOCTYPE html>
     segments: [],
     altRoutes: [],
     highlightSegments: [],
+    gpsTrailGeometry: null,
+    routeObservations: [],
     occurrences: [],
     showOccurrences: true,
     position: null,
@@ -448,9 +450,48 @@ export const MAP_HTML = `<!DOCTYPE html>
         });
       }
     });
+    var gpsTrailSource = new ol.source.Vector({ features: [] });
+    var gpsTrailLayer = new ol.layer.Vector({
+      source: gpsTrailSource,
+      zIndex: 21,
+      style: function () {
+        return [
+          new ol.style.Style({
+            stroke: new ol.style.Stroke({ color: 'rgba(255,255,255,0.9)', width: 6, lineCap: 'round', lineJoin: 'round' })
+          }),
+          new ol.style.Style({
+            stroke: new ol.style.Stroke({ color: '#047857', width: 3.4, lineCap: 'round', lineJoin: 'round', lineDash: [8, 6] })
+          })
+        ];
+      }
+    });
+    var routeObsSource = new ol.source.Vector({ features: [] });
+    var routeObsLayer = new ol.layer.Vector({
+      source: routeObsSource,
+      zIndex: 27,
+      style: function (feature) {
+        var st = feature.get('status');
+        var fill = st === 'CONCLUIDA' ? '#15803d' : st === 'REABERTA' ? '#b45309' : '#1d4ed8';
+        return new ol.style.Style({
+          image: new ol.style.Circle({
+            radius: 8.5,
+            fill: new ol.style.Fill({ color: fill }),
+            stroke: new ol.style.Stroke({ color: '#ffffff', width: 2.2 })
+          }),
+          text: new ol.style.Text({
+            text: 'O',
+            font: 'bold 10px sans-serif',
+            fill: new ol.style.Fill({ color: '#ffffff' })
+          })
+        });
+      }
+    });
+
     map.addLayer(altRouteLayer);
     map.addLayer(occSegmentLayer);
+    map.addLayer(gpsTrailLayer);
     map.addLayer(occLayer);
+    map.addLayer(routeObsLayer);
 
     var geojson = new ol.format.GeoJSON({
       dataProjection: 'EPSG:4326',
@@ -463,6 +504,14 @@ export const MAP_HTML = `<!DOCTYPE html>
 
     map.on('singleclick', function (evt) {
       if (!state.picking && typeof map.forEachFeatureAtPixel === 'function') {
+        var clicadaRouteObs = map.forEachFeatureAtPixel(evt.pixel, function (feat) { return feat; }, {
+          layerFilter: function (layer) { return layer === routeObsLayer; },
+          hitTolerance: 8
+        });
+        if (clicadaRouteObs && clicadaRouteObs.get && clicadaRouteObs.get('idCliente')) {
+          postToRN({ type: 'ROUTE_OBS_CLICK', idCliente: clicadaRouteObs.get('idCliente') });
+          return;
+        }
         var clicadaOcc = map.forEachFeatureAtPixel(evt.pixel, function (feat) { return feat; }, {
           layerFilter: function (layer) { return layer === occLayer; },
           hitTolerance: 8
@@ -634,6 +683,27 @@ export const MAP_HTML = `<!DOCTYPE html>
         state.showOccurrences = msg.show !== false;
         if (typeof occLayer.setVisible === 'function') occLayer.setVisible(state.showOccurrences);
         else occLayer.visible = state.showOccurrences;
+      } else if (msg.type === 'SET_GPS_TRAIL') {
+        gpsTrailSource.clear();
+        if (msg.geometry && msg.geometry.coordinates && msg.geometry.coordinates.length >= 2) {
+          gpsTrailSource.addFeature(geojson.readFeature({
+            type: 'Feature',
+            properties: { tipo: 'GPS' },
+            geometry: msg.geometry
+          }));
+        }
+      } else if (msg.type === 'SET_ROUTE_OBS') {
+        routeObsSource.clear();
+        var rObs = msg.observations || [];
+        for (var roi = 0; roi < rObs.length; roi++) {
+          var ro = rObs[roi];
+          if (!ro || ro.latitude == null || ro.longitude == null) continue;
+          routeObsSource.addFeature(new ol.Feature({
+            geometry: new ol.geom.Point(ol.proj.fromLonLat([ro.longitude, ro.latitude])),
+            idCliente: ro.idCliente,
+            status: ro.status
+          }));
+        }
       }
     };
 
@@ -817,6 +887,19 @@ export const MAP_HTML = `<!DOCTYPE html>
       }
     }
 
+    // Trilha GPS real percorrida (nunca substitui a rota calculada)
+    if (state.gpsTrailGeometry && state.gpsTrailGeometry.coordinates) {
+      var gpsLines = geometryLines(state.gpsTrailGeometry);
+      ctx.setLineDash([8 * dpr, 6 * dpr]);
+      for (var gl = 0; gl < gpsLines.length; gl++) {
+        ctx.beginPath(); drawRing(gpsLines[gl]);
+        ctx.strokeStyle = '#047857';
+        ctx.lineWidth = 3.5 * dpr;
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+
     // Um desenho por perna: ocultar nunca modifica a geometria da rota.
     var segments = state.segments.length ? state.segments : [{ geometry: state.routeGeometry }];
     for (var si = 0; si < segments.length; si++) {
@@ -861,6 +944,20 @@ export const MAP_HTML = `<!DOCTYPE html>
       ctx.beginPath(); ctx.arc(np[0], np[1], 7 * dpr, 0, Math.PI * 2);
       ctx.fillStyle = state.position.simulado === true ? '#7c3aed' : '#045127'; ctx.fill();
       ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.5 * dpr; ctx.stroke();
+    }
+    if (state.routeObservations && state.routeObservations.length) {
+      for (var cro = 0; cro < state.routeObservations.length; cro++) {
+        var rObsItem = state.routeObservations[cro];
+        if (!rObsItem || rObsItem.latitude == null || rObsItem.longitude == null) continue;
+        var roPt = lonLatToXY(rObsItem.longitude, rObsItem.latitude);
+        ctx.beginPath();
+        ctx.arc(roPt[0], roPt[1], 8 * dpr, 0, Math.PI * 2);
+        ctx.fillStyle = rObsItem.status === 'CONCLUIDA' ? '#15803d' : rObsItem.status === 'REABERTA' ? '#b45309' : '#1d4ed8';
+        ctx.fill();
+        ctx.lineWidth = 2 * dpr;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+      }
     }
     if (state.showOccurrences && state.occurrences.length) {
       for (var oci = 0; oci < state.occurrences.length; oci++) {
@@ -1128,6 +1225,12 @@ export const MAP_HTML = `<!DOCTYPE html>
       draw();
     } else if (msg.type === 'SET_SHOW_OCCURRENCES') {
       state.showOccurrences = msg.show !== false;
+      draw();
+    } else if (msg.type === 'SET_GPS_TRAIL') {
+      state.gpsTrailGeometry = msg.geometry || null;
+      draw();
+    } else if (msg.type === 'SET_ROUTE_OBS') {
+      state.routeObservations = msg.observations || [];
       draw();
     }
   };

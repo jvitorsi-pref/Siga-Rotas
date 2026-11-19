@@ -18,15 +18,16 @@ nenhum momento.
 
 ---
 
-**Estado atual:** o APK define a referência visual e o Web acompanha as mesmas funcionalidades. O fluxo atual usa circuitos (`A → paradas → A`), dois botões de cálculo, preenchimento automático de Endereço Digital (Plus Code) ao selecionar pontos no mapa, alternância instantânea e persistente entre **Mapa padrão** (OpenStreetMap) e **Satélite** (Esri World Imagery), zoom mais profundo com atribuição visível, ocorrências colaborativas nas vias com preferências de trajeto/rotas alternativas e exportação da rota em GPX 1.1 (download direto na Web e salvamento SAF no APK). Consulte [UNIFICACAO.md](docs/UNIFICACAO.md) para o histórico da unificação; as seções históricas abaixo permanecem como registro das rodadas anteriores.
+**Estado atual:** o APK define a referência visual e o Web acompanha as mesmas funcionalidades. O fluxo atual usa circuitos (`A → paradas → A`), dois botões de cálculo, preenchimento automático de Endereço Digital (Plus Code) ao selecionar pontos no mapa, alternância instantânea e persistente entre **Mapa padrão** (OpenStreetMap) e **Satélite** (Esri World Imagery), zoom mais profundo com atribuição visível, ocorrências colaborativas nas vias com preferências de trajeto/rotas alternativas, exportação da rota em GPX 1.1 (download direto na Web e salvamento SAF no APK) **e operação offline-first completa** (persistência local em IndexedDB na Web e SQLite no APK, gravação e filtragem de trilha GPS real separada da rota calculada, observações vinculadas à rota com histórico de eventos, e sincronização em lote via `SigaRotasCampo.ashx` para Oracle 11g com `SDO_SRID = NULL`). Consulte [UNIFICACAO.md](docs/UNIFICACAO.md) para o histórico da unificação; as seções históricas abaixo permanecem como registro das rodadas anteriores.
 
-### Publicação em produção (Node.js + WebForms + APK + Ocorrências)
+### Publicação em produção (Node.js + WebForms + Oracle 11g + APK)
 
-Para publicar o sistema completo em produção integrando o portal ASP.NET WebForms e o aplicativo Android ao mesmo motor Node.js (e compartilhando `data/ocorrencias.json`), consulte o passo a passo detalhado em [webforms/README-WEBFORMS.md](webforms/README-WEBFORMS.md) e [APK/README.md](APK/README.md). Resumo dos pontos obrigatórios:
+Consulte a seção dedicada **[33. Implementação em Produção (Arquitetura Completa)](#33-implementação-em-produção-web--apk--webforms--oracle-11g)** neste README e o guia complementar [webforms/README-WEBFORMS.md](webforms/README-WEBFORMS.md). Resumo dos quatro blocos obrigatórios em produção:
 
-1. **Backend Node.js centralizado (`127.0.0.1:8094`):** copie `server/`, `core/`, `ocorrencias/`, `public/`, `data/`, `scripts/`, `web.config` e `webforms/ApiProxy.ashx` (na raiz do subsite em `~/SigaApp/SigaRotas/ApiProxy.ashx`). Não precisa de `npm install` nem `node_modules` em produção. Garanta a execução contínua via Agendador de Tarefas com `scripts\siga-node.cmd ensure` e permissão de escrita em `data/` (onde ficam `network.snapshot.json` e `ocorrencias.json`).
-2. **WebForms (`<iframe>`):** o `public/index.html` usa automaticamente `../ApiProxy.ashx` na mesma origem do portal (sem abrir porta pública nem exigir ARR/URL Rewrite).
-3. **APK Android:** aponte para a URL pública do proxy WebForms (`https://<portal>/SigaApp/SigaRotas/ApiProxy.ashx`) ou para um proxy reverso `/api/*` via `EXPO_PUBLIC_SIGA_API_URL` no build **ou** direto no aparelho em **Rede viária → Configurar servidor backend** (sem recompilar). Se o portal exigir login, libere acesso anônimo para `ApiProxy.ashx` no IIS. A alternância online ↔ offline no APK é automática assim que a URL está configurada.
+1. **Backend Node.js centralizado (`127.0.0.1:8094`):** copie `server/`, `core/`, `ocorrencias/`, `campo/`, `public/`, `data/`, `scripts/`, `web.config` e os handlers `.ashx` (`ApiProxy.ashx`, `WfsProxy.ashx` e `SigaRotasCampo.ashx`). Não precisa de `npm install` nem `node_modules` em produção. Garanta a execução contínua via Agendador de Tarefas com `scripts\siga-node.cmd ensure` e permissão de escrita em `data/`.
+2. **Banco Oracle 11g (`sql/oracle/`):** execute na ordem `01_tabelas_sequences_siga_rota.sql`, `02_indices_e_sdo_metadata_oracle11g.sql` (`SDO_SRID = NULL`) e `03_pkg_siga_rotas_oracle11g.sql` (`PKG_SIGA_ROTAS`).
+3. **Handlers ASP.NET WebForms (`webforms/`):** conecte a sua DAL C# real (`ISigaRotasCampoDal` / `CriarDal()` + `ResolverUsuarioAutenticado()`, seguindo `sql/oracle/04_exemplo_dal_csharp.cs`) no `SigaRotasCampo.ashx` e configure `Web.config` (`SigaRotas.NodeApiBase` / `ConnectionStrings`).
+4. **APK Android (`APK/`):** compile com `expo-sqlite` nativo embutido e defina `EXPO_PUBLIC_SIGA_API_URL` (para `.../ApiProxy.ashx`, derivando automaticamente `.../SigaRotasCampo.ashx`) ou informe a URL direto no app em **Rede viária → Configurar servidor backend**.
 
 ## 1. Sumário
 
@@ -61,6 +62,8 @@ Para publicar o sistema completo em produção integrando o portal ASP.NET WebFo
 29. [O visual das duas versões igualado à imagem de referência (rodada 20)](#30-o-visual-das-duas-versões-igualado-à-imagem-de-referência-rodada-20)
 30. [Cópia paralela da rodada 10 (simulador de iniciar rota)](#31-cópia-paralela-da-rodada-10-simulador-de-iniciar-rota)
 31. [Cópia de trabalho fora do projeto (com o simulador de trajeto)](#32-cópia-de-trabalho-fora-do-projeto-com-o-simulador-de-trajeto)
+32. [Implementação em Produção (Web + APK + WebForms + Oracle 11g)](#33-implementação-em-produção-web--apk--webforms--oracle-11g)
+33. [Operação Offline-First e Sincronização de Campo](#34-operação-offline-first-e-sincronização-de-campo)
 
 ---
 
@@ -2709,6 +2712,145 @@ como as rotas com cores diferentes, numa pasta separada, fora de
 | Este projeto | **inalterado** |
 
 Detalhes em `/home/user/siga-simulador/README.md`.
+
+---
+
+## 33. Implementação em Produção (Web + APK + WebForms + Oracle 11g)
+
+Esta seção reúne o roteiro completo para colocar o **Siga-Rotas** em produção integrando o portal **ASP.NET WebForms / IIS**, o servidor **Node.js**, o banco **Oracle 11g** e o aplicativo **Android (APK)**.
+
+### Visão geral da arquitetura em produção
+
+```text
+  ┌────────────────────────┐      ../ApiProxy.ashx?endpoint=...       ┌─────────────────────────────┐
+  │ Web / PWA (IndexedDB)  │ ───────────────────────────────────────► │ Node.js (127.0.0.1:8094)    │
+  │ public/index.html      │                                          │  • Rede WFS + snapshot      │
+  └───────────┬────────────┘                                          │  • Cálculo A* / TSP         │
+              │                                                       │  • Ocorrências viárias      │
+              │ ../SigaRotasCampo.ashx?acao=...                       └──────────────▲──────────────┘
+              ▼                                                                      │
+  ┌──────────────────────────────────────────────────────────┐                       │
+  │ IIS / ASP.NET WebForms                                   │                       │
+  │  • ApiProxy.ashx          ───────────────────────────────┼───────────────────────┘
+  │  • SigaRotasCampo.ashx ──► ISigaRotasCampoDal (C# DAL)   │
+  └───────────▲──────────────────────────────┬───────────────┘
+              │                              ▼
+  ┌───────────┴────────────┐      ┌────────────────────────────────────────────┐
+  │ APK Android (SQLite)   │      │ Oracle 11g (PKG_SIGA_ROTAS, SDO_SRID=NULL) │
+  │ expo-sqlite + núcleo   │      │  • SIGA_ROTA (CALCULADA e GPS)             │
+  │ campo/                 │      │  • SIGA_ROTA_OBSERVACAO                    │
+  └────────────────────────┘      │  • SIGA_ROTA_EVENTO                        │
+                                  └────────────────────────────────────────────┘
+```
+
+### Passo 1 — Banco de dados Oracle 11g (`sql/oracle/`)
+
+Execute os scripts na ordem abaixo com o usuário proprietário do esquema no Oracle 11g (ou ajuste o schema em `USER_SDO_GEOM_METADATA` conforme o usuário de aplicação):
+
+1. `sql/oracle/01_tabelas_sequences_siga_rota.sql`
+   - Cria `SEQ_SIGA_ROTA`, `SEQ_SIGA_ROTA_OBSERVACAO`, `SEQ_SIGA_ROTA_EVENTO` e as tabelas `SIGA_ROTA`, `SIGA_ROTA_OBSERVACAO` e `SIGA_ROTA_EVENTO`.
+   - Totalmente compatível com **Oracle 11g**: utiliza `SEQUENCE` + `CLOB` (sem `GENERATED ALWAYS AS IDENTITY` e sem `IS JSON` do 12c+).
+2. `sql/oracle/02_indices_e_sdo_metadata_oracle11g.sql`
+   - Registra `USER_SDO_GEOM_METADATA` com **`SDO_SRID = NULL`** (padrão da base geográfica legada) e cria os índices espaciais `MDSYS.SPATIAL_INDEX` e índices operacionais por usuário/rota/cliente.
+3. `sql/oracle/03_pkg_siga_rotas_oracle11g.sql`
+   - Cria a package `PKG_SIGA_ROTAS` com persistência idempotente por `ID_CLIENTE` (UUID), conversão WKT via `SDO_UTIL.FROM_WKTGEOMETRY` garantindo `SDO_SRID = NULL`, controle de versão otimista (detecção de `CONFLITO`) e gravação automática em `SIGA_ROTA_EVENTO`.
+
+> **Importante sobre SRID:** todas as inserções e consultas espaciais mantêm `SDO_SRID = NULL` e coordenadas geográficas `(longitude, latitude)` dentro dos limites registrados em `USER_SDO_GEOM_METADATA`.
+
+### Passo 2 — Publicação dos arquivos no IIS (`~/SigaApp/SigaRotas/`)
+
+Copie os diretórios e arquivos abaixo para a pasta do subsite no IIS (ex.: `C:\inetpub\wwwroot\SigaApp\SigaRotas\`):
+
+- **Motor e API Node.js:** `server/`, `core/`, `ocorrencias/`, `campo/`, `data/`, `scripts/`, `package.json`.
+  - **Não** é necessário rodar `npm install` nem copiar `node_modules/` no servidor IIS (o servidor Node.js usa apenas módulos nativos do Node.js ≥ 20).
+  - Garanta que `campo/` seja publicado junto com `core/` e `ocorrencias/`, pois o front-end Web importa os módulos compartilhados em `/campo/*.js`.
+- **Front-end Web/PWA:** `public/` e `web.config`.
+- **Handlers WebForms (na raiz de `~/SigaApp/SigaRotas/`):**
+  - `webforms/ApiProxy.ashx` → `~/SigaApp/SigaRotas/ApiProxy.ashx`
+  - `webforms/WfsProxy.ashx` → `~/SigaApp/SigaRotas/WfsProxy.ashx`
+  - `webforms/SigaRotasCampo.ashx` → `~/SigaApp/SigaRotas/SigaRotasCampo.ashx`
+
+### Passo 3 — Plugando a sua DAL Oracle C# no `SigaRotasCampo.ashx`
+
+O arquivo `webforms/SigaRotasCampo.ashx` já implementa toda a validação de contrato (UUIDs, coordenadas, geometrias `LINESTRING`/`MULTILINESTRING`/`POINT`, limites de texto, ordem do lote) e expõe dois pontos de integração para a equipe do portal:
+
+1. Use `sql/oracle/04_exemplo_dal_csharp.cs` como base (ou adapte para sua classe DAL corporativa existente, como `Oracle.ManagedDataAccess.Client` / componente interno de conexão do SIGA) implementando a interface **`ISigaRotasCampoDal`**.
+2. Em `webforms/SigaRotasCampo.ashx`, altere:
+   - `CriarDal()` → instanciar e devolver a sua classe `SigaRotasCampoDal` apontando para a `ConnectionString` do Oracle 11g no `Web.config` (substituindo aStub de desenvolvimento).
+   - `ResolverUsuarioAutenticado(HttpContext context)` → extrair o usuário autenticado da sessão ASP.NET, *Forms Authentication*, *Claims* ou token corporativo usado pelo portal/APK (o servidor **nunca** confia em `idUsuario` enviado pelo cliente sem autenticação).
+
+### Passo 4 — Configuração de `Web.config`, Node.js em loopback e permissões IIS
+
+1. **Manter o processo Node.js sempre ativo em `127.0.0.1:8094`:**
+   - Agende no **Agendador de Tarefas do Windows** (na inicialização e a cada 5 minutos):
+     ```cmd
+     scripts\siga-node.cmd ensure
+     ```
+   - O script é idempotente: testa `/api/health` e só inicia o processo se estiver fora. Evite iniciar `node.exe` como processo filho dentro de um `.ashx`, pois reciclagens do Application Pool do IIS encerram processos filhos.
+2. **Configurações no `Web.config`:**
+   ```xml
+   <appSettings>
+     <add key="SigaRotas.NodeApiBase" value="http://127.0.0.1:8094" />
+     <!-- Opcional: token interno entre ApiProxy.ashx e Node.js -->
+     <add key="SigaRotas.NodeApiToken" value="" />
+   </appSettings>
+   ```
+3. **Permissões de pasta no servidor:**
+   - Conceda permissão de **leitura e escrita** em `data/` para a conta que executa o Node.js (`data/network.snapshot.json` e `data/ocorrencias.json`).
+4. **Iframe no WebForms e acesso do APK:**
+   - Na página `.aspx` hospedeira, incorpore com geolocalização habilitada:
+     ```html
+     <iframe src="../../SigaApp/SigaRotas/public/index.html"
+             allow="geolocation"
+             style="border:none;width:100%;min-height:720px;display:block;">
+     </iframe>
+     ```
+   - Garanta que `X-Frame-Options` no IIS permita `SAMEORIGIN` (não `DENY`) para não bloquear o `<iframe>`.
+   - Se o portal usar autenticação com cookie e o **APK** acessar `ApiProxy.ashx` / `SigaRotasCampo.ashx` de fora do navegador, configure autenticação por token Bearer/header em `ResolverUsuarioAutenticado` e libere `<location>` apropriado no `Web.config` para evitar redirecionamento HTML 302 para a tela de login.
+
+### Passo 5 — Compilação e distribuição do APK Android (`APK/`)
+
+Como o aplicativo agora utiliza o módulo nativo **`expo-sqlite`**, a geração do APK em produção exige um **build nativo** (Android Gradle / EAS Build) — não use apenas Expo Go antigo caso a versão do Expo Go difira do SDK 52:
+
+```bash
+cd APK
+npm ci
+
+# Se o projeto nativo android/ precisar ser regenerado com o plugin expo-sqlite:
+npx expo prebuild --platform android
+
+# Build de produção apontando para o portal WebForms em produção:
+EXPO_PUBLIC_SIGA_API_URL=https://seu-portal.santoandre.sp.gov.br/SigaApp/SigaRotas/ApiProxy.ashx npm run apk:release
+```
+
+- **Detecção automática de endpoints no APK:** ao informar `.../ApiProxy.ashx`, o APK envia automaticamente os cálculos/rede/ocorrências para `ApiProxy.ashx` e toda sincronização offline de rotas, GPS e observações para `.../SigaRotasCampo.ashx` (também configurável diretamente no aplicativo em **Rede viária → Configurar servidor backend**).
+- **Assinatura de loja/distribuição interna:** configure `android/keystore.properties` (fora do Git) conforme detalhado em [APK/README.md](APK/README.md).
+
+### Passo 6 — Backup e checklist de validação pós-implantação
+
+- **Backup:** inclua as tabelas Oracle (`SIGA_ROTA`, `SIGA_ROTA_OBSERVACAO`, `SIGA_ROTA_EVENTO`) na rotina do DBA e os arquivos `data/ocorrencias.json` e `data/network.snapshot.json` no backup de arquivos do IIS.
+- **Checklist rápido pós-deploy:**
+  1. `http://127.0.0.1:8094/api/health` no servidor retorna `"ready": true`.
+  2. `https://<portal>/SigaApp/SigaRotas/ApiProxy.ashx?endpoint=%2Fapi%2Fhealth` retorna JSON `200 OK`.
+  3. `https://<portal>/SigaApp/SigaRotas/SigaRotasCampo.ashx?acao=health` retorna `"ok": true` e `"dalConfigurada": true`.
+  4. Abrir `public/index.html` no portal, calcular uma rota, ativar modo avião/offline, reabrir a rota em **Rotas salvas**, registrar uma observação, reconectar e conferir a gravação em `SIGA_ROTA`, `SIGA_ROTA_OBSERVACAO` e `SIGA_ROTA_EVENTO` no Oracle.
+  5. Repetir o mesmo fluxo no **APK Android** em campo (incluindo pausa/retomada de GPS real) e confirmar que apenas rotas/GPS reais (nunca simulações) aparecem nas tabelas Oracle.
+
+---
+
+## 34. Operação Offline-First e Sincronização de Campo
+
+A nova arquitetura compartilha exatamente as mesmas regras de negócio entre Web (`public/campoWebService.js` + `public/armazenamentoIndexedDB.js`) e Mobile (`APK/src/services/campoMobileService.js` + `APK/src/services/armazenamentoSqlite.js`) usando os módulos em `campo/`:
+
+- **Separação estrita entre rota planejada (`CALCULADA`), trilha percorrida (`GPS`) e simulação:** uma execução em campo cria seu próprio registro `GPS` com `ID_ROTA_ORIGEM` apontando para a rota calculada, sem nunca sobrescrever a geometria planejada; execuções simuladas ficam marcadas com `simulado = true` e nunca entram na fila de sincronização.
+- **Filtragem GPS e segmentação `MultiLineString`:** leituras com baixa precisão (`> 120 m`), micro-ruído estacionário (`< 2,5 m` em `< 5 s`) ou saltos impossíveis (`> 28 m/s` em `<= 15 s`) são descartadas; pausas, lacunas longas (`> 120 s` e `> 35 m`, ou salto `> 150 m`) e retomadas após queda do app abrem novo segmento em `MultiLineString` sem ligar saltos por linha reta.
+- **Observações de campo com histórico auditável:** toda observação é vinculada obrigatoriamente a uma rota (à execução GPS real quando ativa, ou à rota calculada selecionada fora da navegação/durante simulação) e cada criação, edição ou mudança de status (`ABERTA`, `CONCLUIDA`, `REABERTA`) gera um registro em `SIGA_ROTA_EVENTO`.
+- **Sincronização segura e idempotente:** a fila local ordena dependências (`CALCULADA → GPS → OBSERVACAO → EVENTO`), recupera itens que ficaram em `SYNCING` após fechamento inesperado, aplica *backoff* progressivo em falhas transitórias e preserva integralmente os dados locais quando há `CONFLITO` no servidor.
+- **Testes automatizados adicionados:**
+  - `test/campoOffline.test.js` (cobertura de WKT, filtro GPS, recuperação após queda, ciclo de observações/eventos, fila idempotente, backoff/conflitos, IndexedDB, servidor estático e contratos Oracle 11g / WebForms);
+  - `APK/test/campoMobileSqlite.test.js` (cobertura com SQLite real via `node:sqlite`, `FOREIGN KEY`, transações exclusivas, integração com `mobileNavigationService` e `mapSync`).
+
+---
 
 ## Referências
 

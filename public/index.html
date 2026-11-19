@@ -23,6 +23,11 @@
 <div class="app" data-layout="split">
   <header class="app-header">
     <img src="logo-siga-app.png" width="163" height="40" alt="SIGA APP" />
+    <div class="sync-pill" id="campo-sync-pill" data-sync-state="IDLE" aria-live="polite">
+      <span class="sync-pill__dot" aria-hidden="true"></span>
+      <span id="campo-sync-texto">Salvo no dispositivo</span>
+      <button type="button" id="campo-sync-retry" class="sync-pill__retry" hidden>Tentar novamente</button>
+    </div>
     <nav class="mode-switch" aria-label="Visualização">
       <button type="button" data-layout-mode="split" aria-pressed="true">Dividido</button>
       <button type="button" data-layout-mode="map" aria-pressed="false">Mapa</button>
@@ -81,6 +86,24 @@
       <button id="calc-optimized" class="btn btn--primary btn--block" type="button">Calcular rota otimizada</button>
       <button id="clear" class="btn btn--ghost btn--block" type="button">Limpar</button>
       <button id="btn-nova-ocorrencia" class="btn btn--ghost btn--occ btn--block" type="button">+ Registrar ocorrência no mapa</button>
+
+      <div id="campo-gps-recovery" class="campo-recovery" hidden>
+        <div class="campo-recovery__txt" id="campo-gps-recovery-txt">Execução GPS anterior interrompida.</div>
+        <div class="campo-recovery__acoes">
+          <button type="button" class="mini" id="campo-gps-finalizar">Salvar trilha capturada</button>
+          <button type="button" class="mini" id="campo-gps-descartar">Descartar</button>
+        </div>
+      </div>
+
+      <details class="saved-routes-box" id="campo-rotas-box">
+        <summary class="prefs-box__summary">
+          <span>Rotas salvas offline</span>
+          <span class="prefs-box__badge" id="campo-rotas-count">0</span>
+        </summary>
+        <div class="saved-routes-box__body" id="campo-rotas-lista">
+          <p class="campo-vazio">Nenhuma rota salva no dispositivo.</p>
+        </div>
+      </details>
     </section>
 
     <section class="block block--result" id="result-block" hidden>
@@ -136,9 +159,18 @@
       </button>
       <p id="export-gpx-feedback" class="gpx-feedback" role="status" hidden></p>
 
+      <button id="save-route-offline" class="btn btn--ghost btn--block" type="button" hidden>
+        Salvar rota offline
+      </button>
+      <button id="add-route-obs" class="btn btn--ghost btn--block" type="button" hidden>
+        + Observação nesta rota
+      </button>
+
       <button id="start-nav" class="btn btn--nav btn--block" type="button" hidden>
         &#9654; Começar trajeto
       </button>
+
+      <div id="route-campo-obs" class="route-campo-obs" hidden></div>
 
       <details id="streets-details" open>
         <summary>Logradouros percorridos <span class="count" id="streets-count"></span></summary>
@@ -244,6 +276,7 @@
       <div class="nav-panel__botoes">
         <button type="button" class="mini" id="nav-pausar">Pausar</button>
         <button type="button" class="mini" id="nav-centralizar">Centralizar</button>
+        <button type="button" class="mini" id="nav-add-obs">+ Observação</button>
         <button type="button" class="mini" id="nav-encerrar">Encerrar</button>
       </div>
     </div>
@@ -361,6 +394,35 @@
         <button type="button" class="mini occ-btn-act occ-btn-act--ok" id="occ-act-confirmar">Confirmar</button>
         <button type="button" class="mini occ-btn-act" id="occ-act-resolver">Sinalizar resolvida</button>
         <button type="button" class="mini occ-btn-act occ-btn-act--warn" id="occ-act-contestar">Contestar</button>
+      </div>
+    </div>
+
+    <!-- Modal de criação/edição de observação georreferenciada vinculada à rota -->
+    <div class="occ-modal" id="campo-obs-modal" role="dialog" aria-modal="true" aria-labelledby="campo-obs-modal-titulo" hidden>
+      <div class="occ-modal__card">
+        <div class="occ-modal__head">
+          <strong id="campo-obs-modal-titulo">Nova observação da rota</strong>
+          <button type="button" class="occ-modal__close" id="campo-obs-fechar" aria-label="Fechar">&#10005;</button>
+        </div>
+        <form id="campo-obs-form" class="occ-form">
+          <div class="occ-seg-box">
+            <div class="occ-seg-box__via" id="campo-obs-rota-label">Rota vinculada</div>
+            <div class="occ-seg-box__meta" id="campo-obs-coord-label">Coordenadas</div>
+          </div>
+          <div class="occ-field">
+            <label class="occ-field__label" for="campo-obs-tipo">Tipo de observação</label>
+            <select id="campo-obs-tipo" class="campo-select"></select>
+          </div>
+          <div class="occ-field">
+            <label class="occ-field__label" for="campo-obs-desc">Descrição da observação</label>
+            <textarea id="campo-obs-desc" rows="3" maxlength="1000" required placeholder="Descreva a situação observada neste ponto da rota"></textarea>
+          </div>
+          <p class="occ-form__erro" id="campo-obs-erro" hidden></p>
+          <div class="occ-modal__actions">
+            <button type="button" class="btn btn--ghost" id="campo-obs-cancelar">Cancelar</button>
+            <button type="submit" class="btn btn--primary" id="campo-obs-salvar">Salvar no dispositivo</button>
+          </div>
+        </form>
       </div>
     </div>
   </main>

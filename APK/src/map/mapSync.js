@@ -38,6 +38,12 @@ export function criarSincronizacaoMapa(enviar) {
     if (p.highlightSegments !== undefined && ultimo.highlightSegments !== p.highlightSegments) {
       enviar({ type: 'SET_HIGHLIGHT_SEGMENTS', segments: p.highlightSegments || VAZIO });
     }
+    if (p.gpsTrailGeometry !== undefined && ultimo.gpsTrailGeometry !== p.gpsTrailGeometry) {
+      enviar({ type: 'SET_GPS_TRAIL', geometry: p.gpsTrailGeometry || null });
+    }
+    if (p.routeObservations !== undefined && ultimo.routeObservations !== p.routeObservations) {
+      enviar({ type: 'SET_ROUTE_OBS', observations: p.routeObservations || VAZIO });
+    }
     if (p.picking !== undefined && ultimo.picking !== !!p.picking) {
       enviar({ type: 'SET_PICKING', picking: !!p.picking });
     }

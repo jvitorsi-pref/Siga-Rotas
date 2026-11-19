@@ -62,6 +62,12 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
     onAltRouteClick,
     onToggleOccurrences,
     onStartPickOccurrence,
+    gpsTrailGeometry,
+    routeObservations,
+    pickingRouteObs = false,
+    onCancelPickRouteObs,
+    onMapPickRouteObs,
+    onRouteObservationClick,
   },
   ref
 ) {
@@ -96,8 +102,10 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
       ...(showOccurrences !== undefined ? { showOccurrences } : {}),
       ...(altRoutes !== undefined ? { altRoutes } : {}),
       ...(highlightSegments !== undefined ? { highlightSegments } : {}),
-      ...(pickingPoint || pickingOccurrence ? { picking: true } : occurrences !== undefined ? { picking: false } : {}) });
-  }, [mapReady, mapSession, visible, modoBaseAtivo, features, markers, routeGeometry, routeSegments, navigationPosition, centerRequest, suppressRouteFit, occurrences, showOccurrences, altRoutes, highlightSegments, pickingPoint, pickingOccurrence]);
+      ...(gpsTrailGeometry !== undefined ? { gpsTrailGeometry } : {}),
+      ...(routeObservations !== undefined ? { routeObservations } : {}),
+      ...(pickingPoint || pickingOccurrence || pickingRouteObs ? { picking: true } : occurrences !== undefined ? { picking: false } : {}) });
+  }, [mapReady, mapSession, visible, modoBaseAtivo, features, markers, routeGeometry, routeSegments, navigationPosition, centerRequest, suppressRouteFit, occurrences, showOccurrences, altRoutes, highlightSegments, gpsTrailGeometry, routeObservations, pickingPoint, pickingOccurrence, pickingRouteObs]);
 
   useEffect(() => {
     if (modoBaseAtivo === CAMADA_PADRAO) {
@@ -119,12 +127,16 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
         }
       } else if (data.type === 'OCC_CLICK') {
         if (onOccurrenceClick) onOccurrenceClick(data.id);
+      } else if (data.type === 'ROUTE_OBS_CLICK') {
+        if (onRouteObservationClick) onRouteObservationClick(data.idCliente);
       } else if (data.type === 'ALT_ROUTE_CLICK') {
         if (onAltRouteClick) onAltRouteClick(data.id);
       } else if (data.type === 'MAP_CLICK') {
-        // Com a seleção de ponto ou registro de ocorrência ativo, o toque define o alvo.
+        // Com a seleção de ponto, observação ou ocorrência ativa, o toque define o alvo.
         if (pickingPoint && onMapPickCoordinate) {
           onMapPickCoordinate({ lon: data.lon, lat: data.lat });
+        } else if (pickingRouteObs && onMapPickRouteObs) {
+          onMapPickRouteObs({ lon: data.lon, lat: data.lat });
         } else if (pickingOccurrence && onMapPickOccurrence) {
           onMapPickOccurrence({ lon: data.lon, lat: data.lat });
         } else if (onMapClick) {
@@ -222,7 +234,18 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
           </TouchableOpacity>
         </View>
       )}
-      {!pickingPoint && pickingOccurrence && (
+      {!pickingPoint && pickingRouteObs && (
+        <View style={styles.pickBanner}>
+          <Text style={styles.pickBannerText}>
+            Toque no mapa para marcar a{' '}
+            <Text style={styles.pickBannerBold}>observação da rota</Text>
+          </Text>
+          <TouchableOpacity style={styles.pickCancelBtn} onPress={onCancelPickRouteObs}>
+            <Text style={styles.pickCancelText}>Cancelar</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      {!pickingPoint && !pickingRouteObs && pickingOccurrence && (
         <View style={styles.pickBanner}>
           <Text style={styles.pickBannerText}>
             Toque sobre uma via no mapa para sinalizar uma{' '}

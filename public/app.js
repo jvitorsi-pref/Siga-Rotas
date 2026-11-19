@@ -46,6 +46,8 @@ import {
   criarMonitorSatelite,
 } from './camadaBase.js';
 import { criarClienteRede } from './clienteRede.js';
+import { criarServicoCampoWeb } from './campoWebService.js';
+import { TIPO_OBSERVACAO_CATALOGO } from '../campo/modeloCampo.js';
 import {
   CATEGORIAS_OCORRENCIA,
   CLASSIFICACAO_META,
@@ -128,8 +130,10 @@ import {
     rotaSelecionadaId: null,
     comparacaoAlternativas: null,
     pickingOccurrence: false,
+    pickingRouteObs: false,
     ocorrenciaSelecionada: null,
     rascunhoOcorrencia: null,
+    rascunhoCampoObs: null,
   };
 
   const revisoesEndereco = criarRevisoesEndereco();
@@ -202,6 +206,31 @@ import {
     occActConfirmar: $('#occ-act-confirmar'),
     occActResolver: $('#occ-act-resolver'),
     occActContestar: $('#occ-act-contestar'),
+    campoSyncPill: $('#campo-sync-pill'),
+    campoSyncTexto: $('#campo-sync-texto'),
+    campoSyncRetry: $('#campo-sync-retry'),
+    campoGpsRecovery: $('#campo-gps-recovery'),
+    campoGpsRecoveryTxt: $('#campo-gps-recovery-txt'),
+    campoGpsFinalizar: $('#campo-gps-finalizar'),
+    campoGpsDescartar: $('#campo-gps-descartar'),
+    campoRotasBox: $('#campo-rotas-box'),
+    campoRotasCount: $('#campo-rotas-count'),
+    campoRotasLista: $('#campo-rotas-lista'),
+    saveRouteOffline: $('#save-route-offline'),
+    addRouteObs: $('#add-route-obs'),
+    routeCampoObs: $('#route-campo-obs'),
+    navAddObs: $('#nav-add-obs'),
+    campoObsModal: $('#campo-obs-modal'),
+    campoObsModalTitulo: $('#campo-obs-modal-titulo'),
+    campoObsFechar: $('#campo-obs-fechar'),
+    campoObsForm: $('#campo-obs-form'),
+    campoObsRotaLabel: $('#campo-obs-rota-label'),
+    campoObsCoordLabel: $('#campo-obs-coord-label'),
+    campoObsTipo: $('#campo-obs-tipo'),
+    campoObsDesc: $('#campo-obs-desc'),
+    campoObsErro: $('#campo-obs-erro'),
+    campoObsCancelar: $('#campo-obs-cancelar'),
+    campoObsSalvar: $('#campo-obs-salvar'),
   };
 
   /* ─────────────── Mapa ─────────────── */
@@ -585,13 +614,64 @@ import {
     },
   });
 
+  // ── Camada de trilha GPS real percorrida (nunca substitui a rota calculada) ──
+  const gpsTrailSource = new ol.source.Vector({ features: [] });
+  const gpsTrailLayer = new ol.layer.Vector({
+    source: gpsTrailSource,
+    zIndex: 22,
+    style: () => [
+      new ol.style.Style({
+        stroke: new ol.style.Stroke({
+          color: 'rgba(255,255,255,0.9)',
+          width: 6.5,
+          lineCap: 'round',
+          lineJoin: 'round',
+        }),
+      }),
+      new ol.style.Style({
+        stroke: new ol.style.Stroke({
+          color: '#047857',
+          width: 3.5,
+          lineCap: 'round',
+          lineJoin: 'round',
+          lineDash: [8, 6],
+        }),
+      }),
+    ],
+  });
+
+  // ── Camada de observações vinculadas à rota (SIGA_ROTA_OBSERVACAO) ──
+  const routeObsSource = new ol.source.Vector({ features: [] });
+  const routeObsLayer = new ol.layer.Vector({
+    source: routeObsSource,
+    zIndex: 27,
+    style: (feature) => {
+      const st = feature.get('status');
+      const fill = st === 'CONCLUIDA' ? '#15803d' : st === 'REABERTA' ? '#b45309' : '#1d4ed8';
+      return new ol.style.Style({
+        image: new ol.style.Circle({
+          radius: 8.5,
+          fill: new ol.style.Fill({ color: fill }),
+          stroke: new ol.style.Stroke({ color: '#ffffff', width: 2.2 }),
+        }),
+        text: new ol.style.Text({
+          text: 'O',
+          font: 'bold 10px sans-serif',
+          fill: new ol.style.Fill({ color: '#ffffff' }),
+        }),
+      });
+    },
+  });
+
   // a casca fica ABAIXO do núcleo da rede, e ambos abaixo da rota
   map.addLayer(axisCasingLayer);
   map.addLayer(axisLayer);
   map.addLayer(altRouteLayer);
   map.addLayer(occSegmentHighlightLayer);
   map.addLayer(routeLayer);
+  map.addLayer(gpsTrailLayer);
   map.addLayer(occClusterLayer);
+  map.addLayer(routeObsLayer);
   map.addLayer(markerLayer);
 
   // ── Arrastar os pontos no mapa ──────────────────────────────────────────
@@ -979,7 +1059,7 @@ import {
 
   function stopPicking() {
     state.picking = null;
-    if (!state.pickingOccurrence) {
+    if (!state.pickingOccurrence && !state.pickingRouteObs) {
       els.pickBanner.hidden = true;
       els.map.classList.remove('map--picking');
     }
@@ -988,6 +1068,7 @@ import {
 
   function startPickingOccurrence() {
     stopPicking();
+    stopPickingRouteObs();
     fecharDetalheOcorrencia();
     state.pickingOccurrence = true;
     els.pickLabel.textContent = 'local da ocorrência na via';
@@ -999,19 +1080,50 @@ import {
 
   function stopPickingOccurrence() {
     state.pickingOccurrence = false;
-    if (!state.picking) {
+    if (!state.picking && !state.pickingRouteObs) {
       els.pickBanner.hidden = true;
       els.map.classList.remove('map--picking');
     }
     if (els.btnNovaOcorrencia) els.btnNovaOcorrencia.disabled = false;
   }
 
+  function startPickingRouteObs() {
+    const rotaAtiva = campoWeb.obterRotaParaObservacao();
+    if (!rotaAtiva) {
+      setStatus('Calcule ou abra uma rota salva antes de registrar observação.', 'err');
+      return;
+    }
+    stopPicking();
+    stopPickingOccurrence();
+    state.pickingRouteObs = true;
+    els.pickLabel.textContent = 'ponto da observação na rota';
+    els.pickBanner.hidden = false;
+    els.map.classList.add('map--picking');
+    setStatus('Clique no mapa para posicionar a observação vinculada à rota.', 'busy');
+  }
+
+  function stopPickingRouteObs() {
+    state.pickingRouteObs = false;
+    if (!state.picking && !state.pickingOccurrence) {
+      els.pickBanner.hidden = true;
+      els.map.classList.remove('map--picking');
+    }
+  }
+
   els.pickCancel.addEventListener('click', () => {
     stopPicking();
     stopPickingOccurrence();
+    stopPickingRouteObs();
   });
 
   map.on('click', async (evt) => {
+    if (state.pickingRouteObs) {
+      const lonLat = ol.proj.toLonLat(evt.coordinate);
+      stopPickingRouteObs();
+      abrirModalCampoObs({ latitude: lonLat[1], longitude: lonLat[0] });
+      return;
+    }
+
     if (state.pickingOccurrence) {
       const lonLat = ol.proj.toLonLat(evt.coordinate);
       stopPickingOccurrence();
@@ -1061,7 +1173,7 @@ import {
 
   // Clique em marcador/cluster de ocorrência, rota alternativa ou trecho da rota
   map.on('click', (evt) => {
-    if (state.picking || state.pickingOccurrence) return;
+    if (state.picking || state.pickingOccurrence || state.pickingRouteObs) return;
 
     // 1. Ocorrências no mapa (cluster expande ao clicar; item único abre detalhes)
     if (state.mostrarOcorrenciasMapa) {
@@ -1128,7 +1240,7 @@ import {
   });
 
   map.on('pointermove', (evt) => {
-    if (!state.picking && !state.pickingOccurrence) {
+    if (!state.picking && !state.pickingOccurrence && !state.pickingRouteObs) {
       let clicavel = false;
       if (state.mostrarOcorrenciasMapa) {
         clicavel = map.hasFeatureAtPixel(evt.pixel, {
@@ -1196,6 +1308,7 @@ import {
       axisSource.addFeatures(feats);
       axisCasingSource.addFeatures(feats);
       state.networkLoaded = true;
+      void campoWeb.salvarCacheRede({ type: 'FeatureCollection', features });
 
       // Enquadra a rede carregada (a camada cobre apenas parte do
       // municipio; um centro fixo deixaria a maior parte fora da tela).
@@ -1234,6 +1347,38 @@ import {
         emFallback ? 'err' : 'ok',
       );
     } catch (err) {
+      try {
+        const cache = await campoWeb.carregarCacheRede();
+        const cachedFeatures = cache?.featureCollection?.features;
+        if (Array.isArray(cachedFeatures) && cachedFeatures.length) {
+          axisSource.clear();
+          axisCasingSource.clear();
+          const feats = cachedFeatures.map(toOlFeature);
+          axisSource.addFeatures(feats);
+          axisCasingSource.addFeatures(feats);
+          state.networkLoaded = true;
+          if (!state.userMoved) {
+            const extent = axisSource.getExtent();
+            if (!isEmpty(extent)) {
+              map.getView().fit(extent, {
+                padding: [40, 40, 40, 40],
+                duration: 0,
+                maxZoom: 15,
+              });
+              framed = true;
+            }
+          }
+          setStatus(
+            'Modo offline: rede viária em cache (' +
+              cachedFeatures.length.toLocaleString('pt-BR') +
+              ' eixos). Rotas salvas e observações continuam disponíveis.',
+            'ok',
+          );
+          return;
+        }
+      } catch {
+        /* fallback ao erro original se o cache local também falhar */
+      }
       setStatus('Falha ao carregar a rede: ' + err.message, 'err');
     }
   }
@@ -2107,6 +2252,12 @@ import {
     }
     limparFeedbackGpx();
     if (els.exportGpx) els.exportGpx.hidden = true;
+    if (els.saveRouteOffline) els.saveRouteOffline.hidden = true;
+    if (els.addRouteObs) els.addRouteObs.hidden = true;
+    if (els.routeCampoObs) {
+      els.routeCampoObs.hidden = true;
+      els.routeCampoObs.innerHTML = '';
+    }
     if (els.startNav) els.startNav.hidden = true;
     els.resultBlock.hidden = false;
     els.distanceValue.className = 'distance__value is-error';
@@ -2411,6 +2562,25 @@ import {
 
     // desenha a rota (no circuito, o retorno à origem vai tracejado)
     desenharRota(data, opcoes);
+
+    // Persistência offline-first automática da rota calculada (sem sobrescrever GPS)
+    if (els.saveRouteOffline) els.saveRouteOffline.hidden = !!(data.ok === false || data.parcial);
+    if (els.addRouteObs) els.addRouteObs.hidden = !!(data.ok === false || data.parcial);
+    if (!opcoes.naoSalvarLocal && data.ok !== false && !data.parcial && typeof campoWeb !== 'undefined') {
+      void campoWeb.salvarRotaCalculada(data, {
+        pontos: state.lista.pontos,
+        modo: state.modo,
+        circular: state.circuito,
+        origemSalvamento: 'auto',
+      }).then((res) => {
+        if (res?.rota) {
+          state.rotaAtual.idCliente = res.rota.idCliente;
+          void atualizarObservacoesDaRotaAtiva();
+        }
+      }).catch(() => {});
+    } else if (typeof campoWeb !== 'undefined') {
+      void atualizarObservacoesDaRotaAtiva();
+    }
   }
 
   /* ─────────────── Mostrar/ocultar trechos (sobreposições) ─────────────── */
@@ -2680,7 +2850,16 @@ import {
     state.comparacaoAlternativas = null;
     limparFeedbackGpx();
     if (els.exportGpx) els.exportGpx.hidden = true;
+    if (els.saveRouteOffline) els.saveRouteOffline.hidden = true;
+    if (els.addRouteObs) els.addRouteObs.hidden = true;
+    if (els.routeCampoObs) {
+      els.routeCampoObs.hidden = true;
+      els.routeCampoObs.innerHTML = '';
+    }
     if (els.startNav) els.startNav.hidden = true;
+    gpsTrailSource.clear();
+    routeObsSource.clear();
+    campoWeb.definirRotaCalculadaAtiva(null);
     if (els.legendAlt) els.legendAlt.hidden = true;
     if (els.routeAlternatives) {
       els.routeAlternatives.hidden = true;
@@ -2699,6 +2878,428 @@ import {
     setStatus('Pronto', 'idle');
   });
 
+  /* ─────────────── Campo offline-first, GPS, Observações & Sync ─────────────── */
+
+  let pontosTrilhaAoVivo = [];
+
+  function atualizarIndicadorSyncCampo(resumo) {
+    if (!resumo || !els.campoSyncPill || !els.campoSyncTexto) return;
+    els.campoSyncPill.dataset.syncState = resumo.estado || 'IDLE';
+    els.campoSyncTexto.textContent = resumo.texto || 'Salvo no dispositivo';
+    if (els.campoSyncRetry) {
+      els.campoSyncRetry.hidden = !resumo.podeTentarManual;
+      els.campoSyncRetry.title = resumo.ultimoErro || 'Tentar sincronizar agora';
+    }
+  }
+
+  function classeBadgeSync(syncStatus) {
+    if (syncStatus === 'SYNCED') return 'campo-badge--synced';
+    if (syncStatus === 'ERROR') return 'campo-badge--error';
+    return 'campo-badge--pending';
+  }
+
+  async function renderizarRotasSalvasCampo() {
+    if (!els.campoRotasLista || !els.campoRotasCount) return;
+    try {
+      const rotas = await campoWeb.listarRotasSalvas({ incluirSimuladas: false, limit: 40 });
+      els.campoRotasCount.textContent = String(rotas.length);
+      if (!rotas.length) {
+        els.campoRotasLista.innerHTML = '<p class="campo-vazio">Nenhuma rota salva no dispositivo.</p>';
+        return;
+      }
+      els.campoRotasLista.innerHTML = rotas.map((r) => {
+        const ehGps = r.tipoRota === 'GPS';
+        const d = formatDistance(r.distanciaMetros || 0);
+        const dt = formatarDataHoraPtBr(r.dataCriacao);
+        const syncRotulo = campoWeb.rotuloSyncStatus(r.syncStatus);
+        return (
+          '<div class="saved-route-item" data-rota-id="' + escapeHtml(r.idCliente) + '">' +
+          '<div class="saved-route-item__top">' +
+          '<b>' + escapeHtml(r.titulo || (ehGps ? 'Execução GPS' : 'Rota calculada')) + '</b>' +
+          '<span class="campo-badge ' + (ehGps ? 'campo-badge--gps' : '') + '">' + escapeHtml(r.tipoRota) + '</span>' +
+          '</div>' +
+          '<div class="saved-route-item__meta">' +
+          escapeHtml(d.v + ' ' + d.u) + ' · ' + escapeHtml(r.status) + ' · ' + escapeHtml(dt) +
+          ' · <span class="campo-badge ' + classeBadgeSync(r.syncStatus) + '">' + escapeHtml(syncRotulo) + '</span>' +
+          '</div>' +
+          '<div class="saved-route-item__acoes">' +
+          '<button type="button" class="mini" data-acao-rota="abrir">Abrir no mapa</button>' +
+          '<button type="button" class="mini" data-acao-rota="obs">Observações</button>' +
+          '</div>' +
+          '</div>'
+        );
+      }).join('');
+    } catch {
+      /* mantém lista atual se driver estiver inicializando */
+    }
+  }
+
+  async function reabrirRotaSalvaCampo(idCliente) {
+    const reg = await campoWeb.obterRota(idCliente);
+    if (!reg) return;
+    if (reg.tipoRota === 'GPS') {
+      gpsTrailSource.clear();
+      if (reg.geometry) {
+        const feat = toOlFeature({
+          type: 'Feature',
+          properties: { idCliente: reg.idCliente, tipoRota: 'GPS' },
+          geometry: reg.geometry,
+        });
+        gpsTrailSource.addFeature(feat);
+        const ext = feat.getGeometry().getExtent();
+        if (!isEmpty(ext)) {
+          map.getView().fit(ext, { padding: [70, 70, 70, 70], duration: 450, maxZoom: 18 });
+        }
+      }
+      if (reg.idRotaOrigemCliente) {
+        const orig = await campoWeb.obterRota(reg.idRotaOrigemCliente);
+        if (orig) {
+          await reabrirRotaSalvaCampo(orig.idCliente);
+          // reaplica a trilha GPS sobre a rota original sem substituí-la
+          if (reg.geometry) {
+            gpsTrailSource.clear();
+            gpsTrailSource.addFeature(toOlFeature({
+              type: 'Feature',
+              properties: { idCliente: reg.idCliente, tipoRota: 'GPS' },
+              geometry: reg.geometry,
+            }));
+          }
+        }
+      }
+      await renderizarObservacoesDaRotaCampo(reg.idCliente);
+      setStatus('Execução GPS restaurada do armazenamento local (' + reg.status + ').', 'ok');
+      return;
+    }
+
+    // Rota CALCULADA: restaura pontos do circuito e desenha offline
+    if (Array.isArray(reg.pontosJson) && reg.pontosJson.length >= 2) {
+      const novaLista = criarListaCircuito();
+      novaLista.pontos = reg.pontosJson.map((p, idx) => ({
+        id: 'rest-' + idx + '-' + reg.idCliente.slice(0, 6),
+        tipo: idx === 0 ? TIPOS.ORIGEM : TIPOS.PARADA,
+        rotulo: p.rotulo || String.fromCharCode(65 + idx),
+        enderecoDigital: p.enderecoDigital || '',
+        codigoCompleto: p.codigoCompleto || '',
+        latitude: p.latitude,
+        longitude: p.longitude,
+        origem: p.enderecoDigital ? 'codigo' : 'coordenada',
+        status: p.latitude != null ? STATUS.CONVERTIDO : STATUS.VAZIO,
+        mensagem: 'Restaurado do armazenamento offline.',
+      }));
+      rotularPontos(novaLista);
+      state.lista = novaLista;
+      state.modo = reg.modoCalculo || 'usuario';
+      renderizarPontos();
+    }
+
+    campoWeb.definirRotaCalculadaAtiva(reg);
+    const reconstruida = campoWeb.reconstruirRespostaRotaDeRegistro(reg);
+    if (reconstruida) {
+      showRoute(reconstruida, { naoSalvarLocal: true });
+      setStatus('Rota salva aberta offline (' + (reg.titulo || reg.idCliente) + ').', 'ok');
+    }
+    await renderizarObservacoesDaRotaCampo(reg.idCliente);
+  }
+
+  async function renderizarObservacoesDaRotaCampo(idRotaCliente) {
+    routeObsSource.clear();
+    if (!els.routeCampoObs) return;
+    if (!idRotaCliente) {
+      els.routeCampoObs.hidden = true;
+      els.routeCampoObs.innerHTML = '';
+      return;
+    }
+    const lista = await campoWeb.listarObservacoes({
+      idRotaCliente,
+      incluirSimuladas: false,
+      incluirEventos: true,
+    });
+    for (const obs of lista) {
+      routeObsSource.addFeature(
+        new ol.Feature({
+          geometry: new ol.geom.Point(ol.proj.fromLonLat([obs.longitude, obs.latitude])),
+          idCliente: obs.idCliente,
+          status: obs.status,
+        }),
+      );
+    }
+
+    if (!lista.length) {
+      els.routeCampoObs.hidden = false;
+      els.routeCampoObs.innerHTML = '<div class="campo-vazio">Nenhuma observação registrada para esta rota.</div>';
+      return;
+    }
+
+    els.routeCampoObs.hidden = false;
+    els.routeCampoObs.innerHTML =
+      '<div class="route-occ__titulo">Observações da rota (' + lista.length + ')</div>' +
+      lista.map((obs) => {
+        const tipoLbl = campoWeb.rotuloTipoObservacao(obs.tipoObservacao);
+        const stLbl = campoWeb.rotuloStatusObservacaoCampo(obs.status);
+        const syncLbl = campoWeb.rotuloSyncStatus(obs.syncStatus);
+        const proxStatus = obs.status === 'CONCLUIDA' ? 'REABERTA' : 'CONCLUIDA';
+        const proxRotulo = obs.status === 'CONCLUIDA' ? 'Reabrir' : 'Concluir';
+        const eventosHtml = Array.isArray(obs.eventos) && obs.eventos.length
+          ? '<details class="route-campo-obs__hist"><summary>Histórico (' + obs.eventos.length + ')</summary>' +
+            obs.eventos.map((e) =>
+              '<div>' + escapeHtml(e.tipoEvento) + ' · ' + escapeHtml(formatarDataHoraPtBr(e.dataEvento)) + '</div>',
+            ).join('') +
+            '</details>'
+          : '';
+        return (
+          '<div class="route-campo-obs__item" data-obs-cliente="' + escapeHtml(obs.idCliente) + '">' +
+          '<div class="route-campo-obs__head">' +
+          '<b>' + escapeHtml(tipoLbl) + '</b>' +
+          '<span><span class="campo-badge">' + escapeHtml(stLbl) + '</span> ' +
+          '<span class="campo-badge ' + classeBadgeSync(obs.syncStatus) + '">' + escapeHtml(syncLbl) + '</span></span>' +
+          '</div>' +
+          '<p class="route-campo-obs__desc">' + escapeHtml(obs.descricao) + '</p>' +
+          (obs.syncErro ? '<div class="saved-route-item__meta" style="color:#991b1b">' + escapeHtml(obs.syncErro) + '</div>' : '') +
+          '<div class="route-campo-obs__acoes">' +
+          '<button type="button" class="mini" data-obs-acao="editar">Editar</button>' +
+          '<button type="button" class="mini" data-obs-acao="status" data-novo-status="' + proxStatus + '">' + proxRotulo + '</button>' +
+          '</div>' +
+          eventosHtml +
+          '</div>'
+        );
+      }).join('');
+  }
+
+  async function atualizarObservacoesDaRotaAtiva() {
+    const alvo = campoWeb.obterRotaParaObservacao();
+    await renderizarObservacoesDaRotaCampo(alvo?.idCliente || null);
+  }
+
+  function preencherTiposObservacaoModal(selecionado = 'VISITA_REALIZADA') {
+    if (!els.campoObsTipo) return;
+    els.campoObsTipo.innerHTML = TIPO_OBSERVACAO_CATALOGO.map((t) =>
+      '<option value="' + t.id + '"' + (t.id === selecionado ? ' selected' : '') + '>' +
+      escapeHtml(t.rotulo) + '</option>',
+    ).join('');
+  }
+
+  function abrirModalCampoObs({ idClienteEdicao = null, latitude = null, longitude = null, idRotaCliente = null, descricao = '', tipoObservacao = 'VISITA_REALIZADA' } = {}) {
+    const rotaAtiva = idRotaCliente ? { idCliente: idRotaCliente } : campoWeb.obterRotaParaObservacao();
+    if (!rotaAtiva) {
+      setStatus('Calcule ou abra uma rota salva antes de registrar uma observação.', 'err');
+      return;
+    }
+    let lat = latitude;
+    let lon = longitude;
+    if (lat == null || lon == null) {
+      const posNav = navUI?.estado?.controlador?.posicao;
+      if (posNav && posNav.latitude != null) {
+        lat = posNav.latitude;
+        lon = posNav.longitude;
+      } else {
+        const p0 = state.lista.pontos.find((p) => p.latitude != null && p.longitude != null);
+        if (p0) {
+          lat = p0.latitude;
+          lon = p0.longitude;
+        } else {
+          const c = ol.proj.toLonLat(map.getView().getCenter());
+          lon = c[0];
+          lat = c[1];
+        }
+      }
+    }
+    state.rascunhoCampoObs = {
+      idClienteEdicao,
+      idRotaCliente: rotaAtiva.idCliente,
+      latitude: Number(lat),
+      longitude: Number(lon),
+    };
+    if (els.campoObsModalTitulo) {
+      els.campoObsModalTitulo.textContent = idClienteEdicao ? 'Editar observação da rota' : 'Nova observação da rota';
+    }
+    if (els.campoObsRotaLabel) {
+      els.campoObsRotaLabel.textContent = 'Vínculo: ' + (campoWeb.execucaoGpsAtiva && !campoWeb.execucaoGpsAtiva.simulado ? 'Rota GPS em execução' : 'Rota calculada');
+    }
+    if (els.campoObsCoordLabel) {
+      els.campoObsCoordLabel.textContent = 'Ponto: ' + Number(lat).toFixed(5) + ', ' + Number(lon).toFixed(5);
+    }
+    preencherTiposObservacaoModal(tipoObservacao);
+    if (els.campoObsDesc) els.campoObsDesc.value = descricao || '';
+    if (els.campoObsErro) {
+      els.campoObsErro.hidden = true;
+      els.campoObsErro.textContent = '';
+    }
+    if (els.campoObsModal) els.campoObsModal.hidden = false;
+  }
+
+  function fecharModalCampoObs() {
+    state.rascunhoCampoObs = null;
+    if (els.campoObsModal) els.campoObsModal.hidden = true;
+  }
+
+  async function verificarRecuperacaoGpsCampo() {
+    if (!els.campoGpsRecovery) return;
+    const pendentes = await campoWeb.listarExecucoesGpsEmAndamento({ incluirSimuladas: false });
+    if (!pendentes.length) {
+      els.campoGpsRecovery.hidden = true;
+      return;
+    }
+    const alvo = pendentes[0];
+    els.campoGpsRecovery.dataset.rotaCliente = alvo.idCliente;
+    if (els.campoGpsRecoveryTxt) {
+      els.campoGpsRecoveryTxt.textContent =
+        'Execução GPS anterior encontrada (' + (alvo.totalPontos || 0) + ' pontos capturados). Deseja salvar a trilha capturada?';
+    }
+    els.campoGpsRecovery.hidden = false;
+  }
+
+  const campoWeb = criarServicoCampoWeb({
+    obterUsuarioId: () => state.usuarioId,
+    aoMudarSync: atualizarIndicadorSyncCampo,
+    aoMudar: () => {
+      void renderizarRotasSalvasCampo();
+    },
+  });
+
+  if (els.campoSyncRetry) {
+    els.campoSyncRetry.addEventListener('click', () => {
+      setStatus('Tentando sincronizar registros pendentes…', 'busy');
+      void campoWeb.sincronizarAgora().then((r) => {
+        if (r?.ok) setStatus('Sincronização concluída.', 'ok');
+        else if (r?.message) setStatus(r.message, 'err');
+      });
+    });
+  }
+
+  if (els.campoGpsFinalizar) {
+    els.campoGpsFinalizar.addEventListener('click', () => {
+      const id = els.campoGpsRecovery?.dataset?.rotaCliente;
+      if (!id) return;
+      void campoWeb.recuperarExecucaoPendente(id, 'finalizar').then(() => {
+        if (els.campoGpsRecovery) els.campoGpsRecovery.hidden = true;
+        setStatus('Trilha GPS recuperada e salva localmente.', 'ok');
+      });
+    });
+  }
+
+  if (els.campoGpsDescartar) {
+    els.campoGpsDescartar.addEventListener('click', () => {
+      const id = els.campoGpsRecovery?.dataset?.rotaCliente;
+      if (!id) return;
+      void campoWeb.recuperarExecucaoPendente(id, 'descartar').then(() => {
+        if (els.campoGpsRecovery) els.campoGpsRecovery.hidden = true;
+      });
+    });
+  }
+
+  if (els.campoRotasLista) {
+    els.campoRotasLista.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-acao-rota]');
+      const card = ev.target.closest('[data-rota-id]');
+      if (!btn || !card) return;
+      const id = card.dataset.rotaId;
+      if (btn.dataset.acaoRota === 'abrir') {
+        void reabrirRotaSalvaCampo(id);
+      } else if (btn.dataset.acaoRota === 'obs') {
+        void reabrirRotaSalvaCampo(id).then(() => {
+          if (els.routeCampoObs) els.routeCampoObs.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+        });
+      }
+    });
+  }
+
+  if (els.saveRouteOffline) {
+    els.saveRouteOffline.addEventListener('click', () => {
+      const rota = state.rotaAtual;
+      if (!rota || rota.ok === false || rota.parcial) return;
+      void campoWeb.salvarRotaCalculada(rota, {
+        pontos: state.lista.pontos,
+        modo: state.modo,
+        circular: state.circuito,
+        origemSalvamento: 'manual',
+      }).then((res) => {
+        if (res?.rota) state.rotaAtual.idCliente = res.rota.idCliente;
+        setStatus('Rota salva no dispositivo (disponível offline).', 'ok');
+      });
+    });
+  }
+
+  if (els.addRouteObs) {
+    els.addRouteObs.addEventListener('click', () => startPickingRouteObs());
+  }
+
+  if (els.navAddObs) {
+    els.navAddObs.addEventListener('click', () => {
+      const pos = navUI?.estado?.controlador?.posicao;
+      if (pos && pos.latitude != null) {
+        abrirModalCampoObs({ latitude: pos.latitude, longitude: pos.longitude });
+      } else {
+        startPickingRouteObs();
+      }
+    });
+  }
+
+  if (els.campoObsFechar) els.campoObsFechar.addEventListener('click', fecharModalCampoObs);
+  if (els.campoObsCancelar) els.campoObsCancelar.addEventListener('click', fecharModalCampoObs);
+
+  if (els.campoObsForm) {
+    els.campoObsForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const rasc = state.rascunhoCampoObs;
+      if (!rasc) return;
+      const tipoObservacao = els.campoObsTipo ? els.campoObsTipo.value : 'VISITA_REALIZADA';
+      const descricao = els.campoObsDesc ? els.campoObsDesc.value : '';
+      try {
+        if (rasc.idClienteEdicao) {
+          await campoWeb.editarObservacao({
+            idCliente: rasc.idClienteEdicao,
+            tipoObservacao,
+            descricao,
+          });
+          setStatus('Observação atualizada localmente.', 'ok');
+        } else {
+          await campoWeb.criarObservacao({
+            idRotaCliente: rasc.idRotaCliente,
+            latitude: rasc.latitude,
+            longitude: rasc.longitude,
+            tipoObservacao,
+            descricao,
+          });
+          setStatus('Observação salva no dispositivo e vinculada à rota.', 'ok');
+        }
+        fecharModalCampoObs();
+        await renderizarObservacoesDaRotaCampo(rasc.idRotaCliente);
+      } catch (err) {
+        if (els.campoObsErro) {
+          els.campoObsErro.hidden = false;
+          els.campoObsErro.textContent = err.message || 'Erro ao salvar observação.';
+        }
+      }
+    });
+  }
+
+  if (els.routeCampoObs) {
+    els.routeCampoObs.addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('[data-obs-acao]');
+      const card = ev.target.closest('[data-obs-cliente]');
+      if (!btn || !card) return;
+      const idCliente = card.dataset.obsCliente;
+      const obs = await campoWeb.repositorio.driver.getObservacao(idCliente);
+      if (!obs) return;
+
+      if (btn.dataset.obsAcao === 'editar') {
+        abrirModalCampoObs({
+          idClienteEdicao: obs.idCliente,
+          idRotaCliente: obs.idRotaCliente,
+          latitude: obs.latitude,
+          longitude: obs.longitude,
+          descricao: obs.descricao,
+          tipoObservacao: obs.tipoObservacao,
+        });
+      } else if (btn.dataset.obsAcao === 'status') {
+        const novoStatus = btn.dataset.novoStatus;
+        await campoWeb.alterarStatusObservacao({ idCliente: obs.idCliente, novoStatus });
+        await renderizarObservacoesDaRotaCampo(obs.idRotaCliente);
+        setStatus('Status da observação atualizado no dispositivo.', 'ok');
+      }
+    });
+  }
+
   /* ─────────────── Arranque ─────────────── */
 
   // exposto para automação e depuração no console do navegador
@@ -2712,11 +3313,14 @@ import {
     axisSource,
     axisCasingSource,
     routeSource,
+    gpsTrailSource,
+    routeObsSource,
     altRouteSource,
     occSource,
     occClusterSource,
     occSegmentHighlightSource,
     markerSource,
+    campo: campoWeb,
     // ganchos usados pela interface de navegação ativa
     showRoute,
     desenharRota,
@@ -2728,10 +3332,49 @@ import {
     definirCamadaBase,
     selecionarRotaAlternativa,
     loadOcorrencias,
-    fetchApi: fetch,
-    clienteRede,
-    exportarGpx,
-  };
+        fetchApi: fetch,
+        clienteRede,
+        aoIniciarNavegacaoCampo: (rota, opts) => {
+          pontosTrilhaAoVivo = [];
+          gpsTrailSource.clear();
+          return campoWeb.iniciarNavegacaoGps(rota, opts);
+        },
+        aoPontoGpsNavegacaoCampo: async (p) => {
+          const res = await campoWeb.registrarPontoGps(p);
+          if (res?.aceito && res?.ponto && !res.ponto.simulado) {
+            if (!pontosTrilhaAoVivo.length || res.novoSegmento) {
+              pontosTrilhaAoVivo.push([]);
+            }
+            pontosTrilhaAoVivo[pontosTrilhaAoVivo.length - 1].push([
+              res.ponto.longitude,
+              res.ponto.latitude,
+            ]);
+            const validos = pontosTrilhaAoVivo.filter((seg) => seg.length >= 2);
+            if (validos.length === 1) {
+              gpsTrailSource.clear();
+              gpsTrailSource.addFeature(toOlFeature({
+                type: 'Feature',
+                geometry: { type: 'LineString', coordinates: validos[0] },
+              }));
+            } else if (validos.length > 1) {
+              gpsTrailSource.clear();
+              gpsTrailSource.addFeature(toOlFeature({
+                type: 'Feature',
+                geometry: { type: 'MultiLineString', coordinates: validos },
+              }));
+            }
+          }
+          return res;
+        },
+        aoPausarNavegacaoCampo: () => campoWeb.pausarNavegacaoGps(),
+        aoRetomarNavegacaoCampo: () => campoWeb.retomarNavegacaoGps(),
+        aoEncerrarNavegacaoCampo: async (opts) => {
+          const res = await campoWeb.finalizarNavegacaoGps(opts);
+          await atualizarObservacoesDaRotaAtiva();
+          return res;
+        },
+        exportarGpx,
+      };
   // a rota atual é lida sempre do estado (nunca fica desatualizada)
   Object.defineProperty(window.__app, 'rotaAtual', {
     get: () => state.rotaAtual && assinaturaRota === assinaturaPlanejador(state) ? state.rotaAtual : null,
@@ -2765,5 +3408,16 @@ import {
   inicializarPreferenciasUI();
   atualizarLegenda();
   setStatus('Carregando a rede viária…', 'busy');
+  void campoWeb.inicializar().then(async () => {
+    await renderizarRotasSalvasCampo();
+    await verificarRecuperacaoGpsCampo();
+    if (navigator.onLine !== false) void campoWeb.sincronizarPendentes();
+  });
+  window.addEventListener('online', () => { void campoWeb.sincronizarPendentes(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && navigator.onLine !== false) {
+      void campoWeb.sincronizarPendentes();
+    }
+  });
   loadNetwork();
 })();

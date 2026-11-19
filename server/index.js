@@ -47,6 +47,7 @@ const ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const CORE_DIR = path.join(ROOT, 'core');
 const OCORRENCIAS_DIR = path.join(ROOT, 'ocorrencias');
+const CAMPO_DIR = path.join(ROOT, 'campo');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -208,12 +209,16 @@ async function serveStatic(req, res, pathname) {
     ? CORE_DIR
     : rel.startsWith('/ocorrencias/')
       ? OCORRENCIAS_DIR
-      : PUBLIC_DIR;
+      : rel.startsWith('/campo/')
+        ? CAMPO_DIR
+        : PUBLIC_DIR;
   const subRel = rel.startsWith('/core/')
     ? rel.slice('/core'.length)
     : rel.startsWith('/ocorrencias/')
       ? rel.slice('/ocorrencias'.length)
-      : rel;
+      : rel.startsWith('/campo/')
+        ? rel.slice('/campo'.length)
+        : rel;
   const filePath = path.join(baseDir, subRel);
   if (!filePath.startsWith(baseDir)) {
     sendJson(res, 403, { error: 'Acesso negado' });
