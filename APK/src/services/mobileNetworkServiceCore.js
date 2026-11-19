@@ -28,10 +28,13 @@ import { calcularRotaComAlternativas } from '../ocorrencias/roteamentoAlternativ
 import { criarServicoEnderecoDigital, MODOS } from '../core/enderecoDigitalService.js';
 import { WFS_DEFAULTS, UPDATE_DEFAULTS, LAYER_NAME } from '../core/config.js';
 import {
+  LOCAL_MODE_SENTINEL,
   STORAGE_KEY_API_URL,
   STORAGE_KEY_PENDING_SYNC,
+  montarUrlEndpointApi,
   normalizarApiUrl,
   resolverApiUrlInicial,
+  resolverTipoTransporteApi,
 } from '../config/apiConfig.js';
 
 export const STORAGE_KEY_SNAPSHOT = '@santo_andre_routing:wfs_snapshot_v1';
@@ -82,6 +85,7 @@ export class MobileNetworkServiceCore {
 
     const initialApiUrl = resolverApiUrlInicial(options);
     this.explicitApiUrl = options.remoteApiUrl !== undefined;
+    this.runtimeConfigLoaded = this.explicitApiUrl;
 
     this.options = {
       snapshotTtl: options.snapshotTtl ?? WFS_DEFAULTS.snapshotTtl,
@@ -147,14 +151,25 @@ export class MobileNetworkServiceCore {
   }
 
   async _loadRuntimeConfigFromStorage() {
-    if (!this.storage?.getItem) return;
-    if (!this.explicitApiUrl && !this.options.remoteApiUrl) {
+    if (!this.storage?.getItem) {
+      this.runtimeConfigLoaded = true;
+      return;
+    }
+    if (!this.explicitApiUrl) {
       try {
         const storedUrl = await this.storage.getItem(STORAGE_KEY_API_URL);
-        const normalized = normalizarApiUrl(storedUrl);
-        if (normalized) {
-          this.options.remoteApiUrl = normalized;
-          this.remote.execution = 'remote';
+        if (typeof storedUrl === 'string') {
+          const trimmed = storedUrl.trim();
+          if (trimmed.toLowerCase() === LOCAL_MODE_SENTINEL) {
+            this.options.remoteApiUrl = null;
+            this.remote.execution = 'local';
+          } else {
+            const normalized = normalizarApiUrl(trimmed);
+            if (normalized) {
+              this.options.remoteApiUrl = normalized;
+              this.remote.execution = 'remote';
+            }
+          }
         }
       } catch {
         /* segue com configuração padrão */
@@ -171,6 +186,7 @@ export class MobileNetworkServiceCore {
     } catch {
       /* ignora histórico de pendências inválido */
     }
+    this.runtimeConfigLoaded = true;
   }
 
   async _savePendingSync() {
@@ -199,14 +215,17 @@ export class MobileNetworkServiceCore {
   async setRemoteApiUrl(url) {
     const normalized = normalizarApiUrl(url);
     this.explicitApiUrl = true;
+    this.runtimeConfigLoaded = true;
     this.options.remoteApiUrl = normalized;
     this.remote.online = false;
     this.remote.execution = normalized ? 'remote' : 'local';
     this.remote.backendSource = null;
+    this.remote.serverBuiltAt = null;
     this.remote.lastError = null;
     if (this.storage?.setItem) {
       try {
-        await this.storage.setItem(STORAGE_KEY_API_URL, normalized || '');
+        const valueToPersist = normalized || (resolverApiUrlInicial() ? LOCAL_MODE_SENTINEL : '');
+        await this.storage.setItem(STORAGE_KEY_API_URL, valueToPersist);
       } catch {
         /* ignora erro de armazenamento */
       }
@@ -223,7 +242,7 @@ export class MobileNetworkServiceCore {
     if (!this._hasRemoteApi()) {
       throw new Error('Servidor Node.js não configurado para este ambiente.');
     }
-    const url = `${this.options.remoteApiUrl}${endpointPath}`;
+    const url = montarUrlEndpointApi(this.options.remoteApiUrl, endpointPath);
     const timeout = timeoutMs ?? this.options.apiTimeoutMs;
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = controller && timeout > 0
@@ -536,64 +555,72 @@ export class MobileNetworkServiceCore {
       }
 
       const startedAt = Date.now();
-      const healthResp = await this._fetchApiJson('/api/health');
-      if (!healthResp.ok) {
-        throw new Error(healthResp.body?.message || `HTTP ${healthResp.status} em /api/health.`);
+      try {
+        const healthResp = await this._fetchApiJson('/api/health');
+        if (!healthResp.ok) {
+          throw new Error(healthResp.body?.message || `HTTP ${healthResp.status} em /api/health.`);
+        }
+        const health = healthResp.body || {};
+
+        const backendSource = health.originMode || health.source || null;
+        const serverFeatures = Number.isFinite(health.features) ? health.features : null;
+        const needsNetworkUpdate =
+          forceNetworkReload ||
+          !this.state ||
+          this.state.source !== 'api-node' ||
+          (backendSource && backendSource !== this.remote.backendSource) ||
+          (health.builtAt && health.builtAt !== this.remote.serverBuiltAt) ||
+          (serverFeatures !== null && serverFeatures !== this.state.features.length);
+
+        let changed = false;
+        if (needsNetworkUpdate || !health.ready) {
+          const revision = ++this.requestRevision;
+          const prevFp = this.update.fingerprint;
+          await this._fetchRemoteAndApply(revision, startedAt, { clearPending: false });
+          changed = prevFp !== this.update.fingerprint || this.state?.source === 'api-node';
+        } else {
+          this.remote.online = true;
+          this.remote.execution = 'remote';
+          this.remote.backendSource = backendSource || this.remote.backendSource;
+          this.remote.lastSyncAt = new Date().toISOString();
+          this.remote.lastError = null;
+        }
+
+        const pendingFlushed = this.remote.pendingSync.length;
+        if (pendingFlushed > 0) {
+          this.remote.pendingSync = [];
+          await this._savePendingSync();
+        }
+
+        this.update.lastCheckedAt = new Date().toISOString();
+        this.update.lastResult = {
+          deep: true,
+          changed,
+          reason: changed
+            ? `Sincronizado com servidor Node.js (${this.remote.backendSource || 'wfs'})`
+            : 'Sincronizado com servidor Node.js (sem alterações)',
+          serverTotal: this.state?.serverTotal ?? serverFeatures,
+          knownTotal: this.state?.features?.length ?? null,
+          elapsedMs: Date.now() - startedAt,
+        };
+        this._emit();
+
+        return {
+          synced: true,
+          changed,
+          backendSource: this.remote.backendSource,
+          pendingFlushed,
+          serverTotal: this.state?.serverTotal ?? null,
+          knownTotal: this.state?.features?.length ?? null,
+          reason: this.update.lastResult.reason,
+        };
+      } catch (err) {
+        this.remote.online = false;
+        this.remote.execution = 'local-fallback';
+        this.remote.lastError = err?.message || String(err);
+        this._emit();
+        throw err;
       }
-      const health = healthResp.body || {};
-
-      const backendSource = health.originMode || health.source || null;
-      const serverFeatures = Number.isFinite(health.features) ? health.features : null;
-      const needsNetworkUpdate =
-        forceNetworkReload ||
-        !this.state ||
-        this.state.source !== 'api-node' ||
-        (backendSource && backendSource !== this.remote.backendSource) ||
-        (health.builtAt && health.builtAt !== this.remote.serverBuiltAt) ||
-        (serverFeatures !== null && serverFeatures !== this.state.features.length);
-
-      let changed = false;
-      if (needsNetworkUpdate || !health.ready) {
-        const revision = ++this.requestRevision;
-        const prevFp = this.update.fingerprint;
-        await this._fetchRemoteAndApply(revision, startedAt, { clearPending: false });
-        changed = prevFp !== this.update.fingerprint || this.state?.source === 'api-node';
-      } else {
-        this.remote.online = true;
-        this.remote.execution = 'remote';
-        this.remote.backendSource = backendSource || this.remote.backendSource;
-        this.remote.lastSyncAt = new Date().toISOString();
-        this.remote.lastError = null;
-      }
-
-      const pendingFlushed = this.remote.pendingSync.length;
-      if (pendingFlushed > 0) {
-        this.remote.pendingSync = [];
-        await this._savePendingSync();
-      }
-
-      this.update.lastCheckedAt = new Date().toISOString();
-      this.update.lastResult = {
-        deep: true,
-        changed,
-        reason: changed
-          ? `Sincronizado com servidor Node.js (${this.remote.backendSource || 'wfs'})`
-          : 'Sincronizado com servidor Node.js (sem alterações)',
-        serverTotal: this.state?.serverTotal ?? serverFeatures,
-        knownTotal: this.state?.features?.length ?? null,
-        elapsedMs: Date.now() - startedAt,
-      };
-      this._emit();
-
-      return {
-        synced: true,
-        changed,
-        backendSource: this.remote.backendSource,
-        pendingFlushed,
-        serverTotal: this.state?.serverTotal ?? null,
-        knownTotal: this.state?.features?.length ?? null,
-        reason: this.update.lastResult.reason,
-      };
     })().finally(() => {
       this.syncing = null;
     });
@@ -916,6 +943,7 @@ export class MobileNetworkServiceCore {
         configured,
         supported: true,
         url: configured ? this.options.remoteApiUrl : null,
+        transport: configured ? resolverTipoTransporteApi(this.options.remoteApiUrl) : 'local',
         execution: configured ? this.remote.execution : 'local',
         online: configured ? this.remote.online : false,
         backendSource: configured ? this.remote.backendSource : null,

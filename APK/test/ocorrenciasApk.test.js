@@ -385,3 +385,70 @@ test('Componentes JSX RoutePreferencesSection, OccurrenceModal e RouteResultPane
   assert.equal(bypass, true);
   assert.equal(selecionada, null);
 });
+
+test('OcorrenciasMobileService opera via proxy WebForms ApiProxy.ashx e respeita URL carregada do AsyncStorage', async () => {
+  const { STORAGE_KEY_API_URL } = await import('../src/config/apiConfig.js');
+  const mapStore = new Map();
+  mapStore.set(STORAGE_KEY_API_URL, 'https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx');
+  const storage = {
+    async getItem(k) { return mapStore.has(k) ? mapStore.get(k) : null; },
+    async setItem(k, v) { mapStore.set(k, v); },
+  };
+  const urlsChamadas = [];
+  const ocorrenciaFake = {
+    id: 'occ-ashx-1',
+    categoria: 'alagamento',
+    classificacao: 'evita',
+    temporalidade: 'temporaria',
+    status: 'ativa',
+    localizacao: { latitude: -23.66, longitude: -46.53, logradouro: 'Av. Teste' },
+    contadores: { confirmacoes: 1, resolvida: 0, contestacoes: 0 },
+    interacoes: [{ usuarioId: 'apk-u', tipo: 'confirmar' }],
+  };
+
+  const fetchImpl = async (url, init) => {
+    urlsChamadas.push(`${init?.method || 'GET'} ${url}`);
+    const u = new URL(url);
+    assert.equal(u.pathname, '/SigaApp/SigaRotas/ApiProxy.ashx');
+    const ep = u.searchParams.get('endpoint');
+    if (ep === '/api/ocorrencias' && (init?.method || 'GET') === 'GET') {
+      return new Response(JSON.stringify({ ok: true, ocorrencias: [ocorrenciaFake] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (ep === '/api/ocorrencias' && init?.method === 'POST') {
+      return new Response(JSON.stringify({ ok: true, ocorrencia: ocorrenciaFake }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (ep === '/api/ocorrencias/interagir') {
+      return new Response(JSON.stringify({
+        ok: true,
+        ocorrencia: { ...ocorrenciaFake, contadores: { confirmacoes: 2, resolvida: 0, contestacoes: 0 } },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response('{}', { status: 404 });
+  };
+
+  // Sem remoteApiUrl no construtor: URL vem do AsyncStorage (sem race condition no startup)
+  const { snapshot } = criarRedeTeste();
+  const net = new MobileNetworkServiceCore({
+    storage,
+    embeddedSnapshot: snapshot,
+    fetchImpl,
+    allowWfs: false,
+    autoUpdate: { enabled: false },
+  });
+  const occSvc = new OcorrenciasMobileService({ storage, networkService: net });
+  const ativas = await occSvc.listarAtivas();
+  assert.equal(ativas.length, 1);
+  assert.equal(ativas[0].id, 'occ-ashx-1');
+
+  const voto = await occSvc.interagir({ id: 'occ-ashx-1', tipo: 'confirmar', usuarioId: 'apk-u2' });
+  assert.equal(voto.ok, true);
+  assert.equal(voto.ocorrencia.contadores.confirmacoes, 2);
+  assert.ok(urlsChamadas.some((u) => u.includes('endpoint=%2Fapi%2Focorrencias')));
+  assert.ok(urlsChamadas.some((u) => u.includes('endpoint=%2Fapi%2Focorrencias%2Finteragir')));
+});

@@ -65,3 +65,38 @@ test('integração: painel mostra grafo/cache reais, quota e recuperação offli
  quota=false;await panel.executar('verificar');assert.equal(changes.at(-1).meta.cache.status,'persisted');panel.descartar();
  const restarted=new MobileNetworkServiceCore({...options,allowWfs:false});const recovered=[],next=criarPainelRede({service:restarted,aoMudar:s=>recovered.push(s)});await next.abrir();assert.equal(recovered.at(-1).meta.source,'wfs-cache');assert.equal(recovered.at(-1).meta.update.enabled,false);assert.equal(recovered.at(-1).features[0].properties.ID,2);next.descartar();
 });
+
+test('painel configura servidor backend (ApiProxy.ashx e modo local) e trata URL inválida ou erro',async()=>{
+ let currentUrl=null;
+ const calls=[];
+ const c=setup({
+  options:{allowWfs:false},
+  async setRemoteApiUrl(url){currentUrl=url||null;calls.push(['setUrl',currentUrl]);},
+  async syncWithServer(opts){calls.push(['sync',opts]);return {synced:true,backendSource:'wfs',knownTotal:4545};},
+  getNetworkMeta(){return this.state?{source:currentUrl?'api-node':'snapshot',features:this.state.features.length,cache:{status:'unknown'},remoteApi:{configured:Boolean(currentUrl),url:currentUrl,transport:currentUrl?.endsWith('.ashx')?'ashx':'direct',execution:currentUrl?'remote':'local'},update:{}}:null;},
+ });
+ await c.panel.abrir();
+
+ const invalida=await c.panel.configurarServidor('ftp://errado');
+ assert.equal(invalida.ok,false);
+ assert.equal(invalida.codigo,'URL_INVALIDA');
+ assert.equal(c.changes.at(-1).feedback.kind,'err');
+
+ const okRemote=await c.panel.configurarServidor('https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx');
+ assert.equal(okRemote.ok,true);
+ assert.equal(okRemote.mode,'remote');
+ assert.match(c.changes.at(-1).feedback.text,/ApiProxy\.ashx/);
+ assert.equal(apresentarRede(c.changes.at(-1).meta).transporte,'Proxy WebForms (ApiProxy.ashx)');
+
+ const okLocal=await c.panel.configurarServidor('');
+ assert.equal(okLocal.ok,true);
+ assert.equal(okLocal.mode,'local');
+ assert.match(c.changes.at(-1).feedback.text,/Modo local/);
+ assert.equal(apresentarRede(c.changes.at(-1).meta).transporte,'Modo local (sem servidor configurado)');
+
+ c.service.syncWithServer=async()=>{throw new Error('503 indisponível');};
+ const falha=await c.panel.configurarServidor('https://api.siga.local');
+ assert.equal(falha.ok,false);
+ assert.match(c.changes.at(-1).feedback.text,/503 indisponível/);
+ c.panel.descartar();
+});

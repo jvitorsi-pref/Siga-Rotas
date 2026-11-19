@@ -18,7 +18,15 @@ nenhum momento.
 
 ---
 
-**Estado atual:** o APK define a referência visual e o Web acompanha as mesmas funcionalidades. O fluxo atual usa circuitos (`A → paradas → A`), dois botões de cálculo, preenchimento automático de Endereço Digital (Plus Code) ao selecionar pontos no mapa, alternância instantânea e persistente entre **Mapa padrão** (OpenStreetMap) e **Satélite** (Esri World Imagery), zoom mais profundo com atribuição visível e exportação da rota em GPX 1.1 (download direto na Web e salvamento SAF no APK); a funcionalidade experimental de coleta de campo foi removida do aplicativo ativo. Consulte [UNIFICACAO.md](docs/UNIFICACAO.md) para o histórico da unificação; as seções históricas abaixo permanecem como registro das rodadas anteriores.
+**Estado atual:** o APK define a referência visual e o Web acompanha as mesmas funcionalidades. O fluxo atual usa circuitos (`A → paradas → A`), dois botões de cálculo, preenchimento automático de Endereço Digital (Plus Code) ao selecionar pontos no mapa, alternância instantânea e persistente entre **Mapa padrão** (OpenStreetMap) e **Satélite** (Esri World Imagery), zoom mais profundo com atribuição visível, ocorrências colaborativas nas vias com preferências de trajeto/rotas alternativas e exportação da rota em GPX 1.1 (download direto na Web e salvamento SAF no APK). Consulte [UNIFICACAO.md](docs/UNIFICACAO.md) para o histórico da unificação; as seções históricas abaixo permanecem como registro das rodadas anteriores.
+
+### Publicação em produção (Node.js + WebForms + APK + Ocorrências)
+
+Para publicar o sistema completo em produção integrando o portal ASP.NET WebForms e o aplicativo Android ao mesmo motor Node.js (e compartilhando `data/ocorrencias.json`), consulte o passo a passo detalhado em [webforms/README-WEBFORMS.md](webforms/README-WEBFORMS.md) e [APK/README.md](APK/README.md). Resumo dos pontos obrigatórios:
+
+1. **Backend Node.js centralizado (`127.0.0.1:8094`):** copie `server/`, `core/`, `ocorrencias/`, `public/`, `data/`, `scripts/`, `web.config` e `webforms/ApiProxy.ashx` (na raiz do subsite em `~/SigaApp/SigaRotas/ApiProxy.ashx`). Não precisa de `npm install` nem `node_modules` em produção. Garanta a execução contínua via Agendador de Tarefas com `scripts\siga-node.cmd ensure` e permissão de escrita em `data/` (onde ficam `network.snapshot.json` e `ocorrencias.json`).
+2. **WebForms (`<iframe>`):** o `public/index.html` usa automaticamente `../ApiProxy.ashx` na mesma origem do portal (sem abrir porta pública nem exigir ARR/URL Rewrite).
+3. **APK Android:** aponte para a URL pública do proxy WebForms (`https://<portal>/SigaApp/SigaRotas/ApiProxy.ashx`) ou para um proxy reverso `/api/*` via `EXPO_PUBLIC_SIGA_API_URL` no build **ou** direto no aparelho em **Rede viária → Configurar servidor backend** (sem recompilar). Se o portal exigir login, libere acesso anônimo para `ApiProxy.ashx` no IIS. A alternância online ↔ offline no APK é automática assim que a URL está configurada.
 
 ## 1. Sumário
 

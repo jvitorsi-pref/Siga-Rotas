@@ -138,8 +138,19 @@ export class OcorrenciasMobileService {
     );
   }
 
+  async _garantirConfigRede() {
+    if (
+      this.networkService &&
+      !this.networkService.runtimeConfigLoaded &&
+      typeof this.networkService._loadRuntimeConfigFromStorage === 'function'
+    ) {
+      await this.networkService._loadRuntimeConfigFromStorage();
+    }
+  }
+
   async sincronizarPendentes() {
     await this._carregarCacheLocal();
+    await this._garantirConfigRede();
     if (!this.pendentes.length || !this._podeConsultarServidor()) {
       return { flushed: 0, remaining: this.pendentes.length };
     }
@@ -178,6 +189,7 @@ export class OcorrenciasMobileService {
 
   async listarAtivas({ agora = Date.now() } = {}) {
     await this._carregarCacheLocal(agora);
+    await this._garantirConfigRede();
     if (this._podeConsultarServidor()) {
       try {
         await this.sincronizarPendentes();
@@ -195,6 +207,7 @@ export class OcorrenciasMobileService {
   }
 
   async associarSegmento({ latitude, longitude, featureIdPreferido = null }) {
+    await this._garantirConfigRede();
     if (this._podeConsultarServidor()) {
       try {
         const resp = await this.networkService._fetchApiJson('/api/ocorrencias/segmento', {
@@ -216,6 +229,7 @@ export class OcorrenciasMobileService {
 
   async registrar(payload, { usuarioId, agora = Date.now() } = {}) {
     await this._carregarCacheLocal(agora);
+    await this._garantirConfigRede();
     const uid = usuarioId || (await this.obterOuCriarUsuarioId());
     const corpo = { ...payload, usuarioId: uid };
 
@@ -259,6 +273,7 @@ export class OcorrenciasMobileService {
 
   async interagir({ id, tipo, usuarioId, agora = Date.now() } = {}) {
     await this._carregarCacheLocal(agora);
+    await this._garantirConfigRede();
     const uid = usuarioId || (await this.obterOuCriarUsuarioId());
     const corpo = { id, tipo, usuarioId: uid };
 

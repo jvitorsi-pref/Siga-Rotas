@@ -228,7 +228,9 @@ export default function App() {
       }
     } });
     networkPanelRef.current = painel;
-    void painel.abrir();
+    void painel.abrir().then(() => {
+      void svcOcc.listarAtivas().then((ativas) => setOcorrencias(ativas)).catch(() => {});
+    });
     const appStateSub = AppState?.addEventListener?.('change', (nextState) => {
       if (nextState === 'active') {
         void mobileNetworkService.syncWithServer().then(() => svcOcc.listarAtivas().then((ativas) => setOcorrencias(ativas))).catch(() => {});
@@ -240,6 +242,17 @@ export default function App() {
       networkPanelRef.current = null;
     };
   }, [setStatus]);
+
+  const handleSaveApiUrl = async (rawUrl) => {
+    const res = await networkPanelRef.current?.configurarServidor(rawUrl);
+    if (res?.ok && res.mode === 'remote') {
+      await ocorrenciasServiceRef.current
+        ?.listarAtivas()
+        .then((ativas) => setOcorrencias(ativas))
+        .catch(() => {});
+    }
+    return res;
+  };
 
   // ─────────────── Manipulação dos pontos do trajeto ───────────────
 
@@ -1095,6 +1108,7 @@ export default function App() {
               onRetry={() => networkPanelRef.current?.executar('carregar')}
               onCheckUpdates={() => networkPanelRef.current?.executar('verificar')}
               onRefreshWfs={() => networkPanelRef.current?.executar('baixar')}
+              onSaveApiUrl={handleSaveApiUrl}
             />
           </ScrollView>
         )}

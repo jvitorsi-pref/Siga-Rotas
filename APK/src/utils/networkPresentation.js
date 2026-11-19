@@ -35,6 +35,14 @@ export function apresentarRede(meta) {
     }
   }
 
+  let transporte = 'Modo local (sem servidor configurado)';
+  if (meta?.remoteApi?.configured) {
+    transporte =
+      meta.remoteApi.transport === 'ashx'
+        ? 'Proxy WebForms (ApiProxy.ashx)'
+        : 'API Node.js direta (/api/*)';
+  }
+
   const avisosBase = Array.isArray(meta?.warnings) ? meta.warnings.map(String) : [];
   const avisosExtra = [];
   if (meta?.cache?.error) avisosExtra.push(String(meta.cache.error));
@@ -55,6 +63,8 @@ export function apresentarRede(meta) {
       estados[meta?.cache?.status] ||
       (meta?.source === 'snapshot' ? 'Snapshot incluído no APK' : 'Persistência não informada'),
     calculo,
+    transporte,
+    servidor: meta?.remoteApi?.configured ? meta.remoteApi.url || null : null,
     avisos: [...avisosBase, ...avisosExtra],
     erros: (meta?.update?.recentErrors || []).map((e) => String(e.message || e)).slice(-5),
   };

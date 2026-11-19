@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MobileNetworkServiceCore, STORAGE_KEY_SNAPSHOT, fingerprintOf } from '../src/services/mobileNetworkServiceCore.js';
+import {
+  STORAGE_KEY_API_URL,
+  montarUrlEndpointApi,
+  normalizarApiUrl,
+  resolverTipoTransporteApi,
+} from '../src/config/apiConfig.js';
 import { readFileSync } from 'node:fs';
 import { buildGraph } from '../src/core/graph.js';
 import { WFS_DEFAULTS, UPDATE_DEFAULTS, LAYER_NAME } from '../src/core/config.js';
@@ -146,4 +152,101 @@ test('fingerprint não depende da ordem das feições e integração com servido
  assert.equal(srv.getNetworkMeta().remoteApi.online,true);
  assert.equal(srv.getNetworkMeta().remoteApi.backendSource,'snapshot');
  assert.equal(srv.getNetworkMeta().remoteApi.pendingSyncCount,0);
+});
+
+test('apiConfig e MobileNetworkServiceCore suportam proxy WebForms ApiProxy.ashx e troca dinâmica de servidor',async()=>{
+ assert.equal(normalizarApiUrl('https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx?endpoint=/api/health'),'https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx');
+ assert.equal(resolverTipoTransporteApi('https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx'),'ashx');
+ assert.equal(resolverTipoTransporteApi('https://node.siga.local/'),'direct');
+ assert.equal(montarUrlEndpointApi('https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx','/api/health'),'https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx?endpoint=%2Fapi%2Fhealth');
+ assert.equal(montarUrlEndpointApi('https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx','/api/endereco-digital?modo=local&codigo=8FP9%2BJ6'),'https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx?endpoint=%2Fapi%2Fendereco-digital&modo=local&codigo=8FP9%2BJ6');
+
+ const valores=new Map();
+ const storage={
+  async getItem(k){return valores.has(k)?valores.get(k):null;},
+  async setItem(k,v){valores.set(k,v);},
+ };
+ const chamadas=[];
+ const featuresServidor=[feature(30,250)];
+ const fetchMock=async(url,init)=>{
+  chamadas.push({url:String(url),method:init?.method||'GET'});
+  const u=new URL(url);
+  assert.equal(u.pathname,'/SigaApp/SigaRotas/ApiProxy.ashx');
+  const ep=u.searchParams.get('endpoint');
+  if(ep==='/api/health'){
+   return new Response(JSON.stringify({ready:true,source:'wfs',originMode:'wfs',features:1,builtAt:'2026-11-16T02:00:00.000Z'}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  if(ep==='/api/network'){
+   return new Response(JSON.stringify({type:'FeatureCollection',features:featuresServidor,meta:{source:'wfs',originMode:'wfs',strategy:'single',builtAt:'2026-11-16T02:00:00.000Z',serverTotal:1,attributes:['ID'],warnings:[]}}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  if(ep==='/api/endereco-digital'){
+   assert.equal(u.searchParams.get('codigo'),'8FP9+J6');
+   return new Response(JSON.stringify({ok:true,status:'CONVERTIDO',latitude:-23.66,longitude:-46.54,codigoNormalizado:'8FP9+J6'}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  if(ep==='/api/rota-paradas'){
+   return new Response(JSON.stringify({ok:true,distance:250,circular:true,sequencia:['A','B'],sequenciaCompleta:['A','B','A'],legs:[],geometry:{type:'LineString',coordinates:[]},streets:['Rua teste']}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  return new Response('{}',{status:404});
+ };
+
+ // Inicia sem URL (modo local) e depois aponta para o ApiProxy.ashx em runtime
+ const srv=new MobileNetworkServiceCore({
+  storage,
+  embeddedSnapshot:{...result(1,100),savedAt:1000},
+  fetchImpl:fetchMock,
+  allowWfs:false,
+  autoUpdate:{enabled:false},
+ });
+ const localState=await srv.ensureReady();
+ assert.equal(localState.source,'snapshot');
+ assert.equal(srv.getNetworkMeta().remoteApi.configured,false);
+ assert.equal(srv.getNetworkMeta().remoteApi.transport,'local');
+
+ await srv.setRemoteApiUrl('https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx');
+ const sync=await srv.syncWithServer({forceNetworkReload:true});
+ assert.equal(sync.synced,true);
+ assert.equal(srv.state.source,'api-node');
+ assert.equal(srv.state.features[0].properties.ID,30);
+ assert.equal(srv.getNetworkMeta().remoteApi.transport,'ashx');
+ assert.equal(valores.get(STORAGE_KEY_API_URL),'https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx');
+
+ const ed=await srv.resolverEnderecoDigital('8FP9+J6');
+ assert.equal(ed.status,'CONVERTIDO');
+ const rt=await srv.calcularRotaParadas([{rotulo:'A',longitude:coord(0)[0],latitude:coord(0)[1]},{rotulo:'B',longitude:coord(250)[0],latitude:coord(250)[1]}],{modo:'usuario',circular:true});
+ assert.equal(rt.distance,250);
+ assert.ok(chamadas.every(c=>c.url.includes('/ApiProxy.ashx?endpoint=%2Fapi%2F')));
+
+ // Novo ciclo carregando URL salva em AsyncStorage automaticamente
+ const prevEnv=process.env.EXPO_PUBLIC_SIGA_API_URL;
+ process.env.EXPO_PUBLIC_SIGA_API_URL='https://build-padrao.siga.local';
+ try{
+  const reloaded=new MobileNetworkServiceCore({
+   storage,
+   embeddedSnapshot:{...result(1,100),savedAt:1000},
+   fetchImpl:fetchMock,
+   allowWfs:false,
+   autoUpdate:{enabled:false},
+  });
+  await reloaded.ensureReady();
+  assert.equal(reloaded.getNetworkMeta().remoteApi.url,'https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx');
+  assert.equal(reloaded.getNetworkMeta().remoteApi.transport,'ashx');
+
+  // Troca explícita para modo local persiste sentinela mesmo com variável de build presente
+  await reloaded.setRemoteApiUrl('');
+  assert.equal(valores.get(STORAGE_KEY_API_URL),'local');
+  const forcedLocal=new MobileNetworkServiceCore({
+   storage,
+   embeddedSnapshot:{...result(1,100),savedAt:1000},
+   fetchImpl:fetchMock,
+   allowWfs:false,
+   autoUpdate:{enabled:false},
+  });
+  const stLocal=await forcedLocal.ensureReady();
+  assert.equal(stLocal.source,'wfs-cache');
+  assert.equal(forcedLocal.getNetworkMeta().remoteApi.configured,false);
+  assert.equal(forcedLocal.getNetworkMeta().remoteApi.transport,'local');
+ }finally{
+  if(prevEnv===undefined) delete process.env.EXPO_PUBLIC_SIGA_API_URL;
+  else process.env.EXPO_PUBLIC_SIGA_API_URL=prevEnv;
+ }
 });

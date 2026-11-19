@@ -12,10 +12,9 @@ Adaptação do **Motor de Roteamento Viário de Santo André** (`siga:SIGA_EIXO_
 - Fonte “WFS — carregado nesta sessão” não indica conexão ativa. Cache local e snapshot embarcado são identificados separadamente. Falha de gravação informa quando uma atualização ficou apenas em memória.
 - Alternar Painel/Dividido/Mapa mantém a mesma WebView e a preferência da legenda. No modo Painel ela fica invisível e sem interação/acessibilidade, mas retida em memória para não perder a câmera. Redimensionar não reenquadra a rota; novos cálculos ou os comandos explícitos Rede/Rota continuam podendo enquadrar.
 - Se o CDN do OpenLayers falhar ou ultrapassar o prazo nominal de 3 s, o mapa vetorial Canvas inicia sem depender dele. Não troca de motor se o script chegar depois. O Canvas usa o fundo claro, rede/rotas/pontos locais, arraste, roda do mouse, pinça e os botões +/− no mesmo lugar/aparência do OpenLayers; não oferece tiles OSM offline, rotação, inércia nem teclado como o mapa vetorial completo.
-- O painel trata da **rede viária**, não de sincronização de dados coletados. **Coleta de localização está adiada** por decisão do usuário. Cálculo continua local; delegação por URL remota não está implementada.
-- Estado validado em código/testes: **299 testes Web / 208 APK**, exportação Android/Hermes. Execução/gestos, AsyncStorage real e aparência em aparelho ainda requerem homologação.
-- O painel trata apenas da **rede viária** (consulta WFS, cache local e diagnóstico do grafo). Cálculo continua local; delegação por URL remota não está implementada.
-- Estado validado em código/testes: **299 testes Web / 195 APK**, exportação Android/Hermes. Execução/gestos, AsyncStorage real e aparência em aparelho ainda requerem homologação.
+- O painel **Rede viária** exibe fonte, cache, modo de cálculo (servidor Node.js × local no aparelho), transporte (`API Node.js direta` × `Proxy WebForms ApiProxy.ashx`), URL configurada, erros do serviço e diagnóstico expansível do grafo. Também permite configurar/alterar a URL do servidor backend diretamente no aparelho (**▸ Configurar servidor backend**) sem precisar recompilar o APK.
+- **Conexão servidor × local automática:** quando há uma URL de servidor configurada (via `EXPO_PUBLIC_SIGA_API_URL` no build ou salva em **Rede viária**), o app consulta o servidor Node.js primeiro e alterna automaticamente para contingência local offline caso fique sem internet ou o backend esteja fora (enfileirando ocorrências/votos pendentes e sincronizando ao reconectar). Sem nenhuma URL configurada, o app opera 100% local no aparelho.
+- O aplicativo também inclui preferências individuais de trajeto (considerar, priorizar sem dificuldades ou ignorar alertas), ocorrências colaborativas nas vias (com modal de registro/confirmação/contestação) e seleção de rotas alternativas quando desvios são encontrados.
 
 ---
 
@@ -173,3 +172,25 @@ npm install
 npx eas-cli build --platform android --profile preview
 ```
 Ao concluir, o EAS disponibiliza o link direto e QR Code para baixar e instalar o `.apk` no emulador ou celular Android.
+
+### Opção D — Apontar o APK para o servidor backend em produção
+
+O APK funciona **100% offline** por padrão usando o snapshot embutido, ou **integrado ao backend centralizado Node.js** (inclusive usando exatamente o mesmo `ApiProxy.ashx` do portal WebForms, sem exigir abertura de portas ou ARR/URL Rewrite no IIS). Consulte também [webforms/README-WEBFORMS.md](../webforms/README-WEBFORMS.md).
+
+1. **No build do APK (recomendado para distribuição):** defina `EXPO_PUBLIC_SIGA_API_URL` antes de compilar (`npm run apk:release` ou `eas build`):
+   ```bash
+   # Via proxy WebForms existente no IIS:
+   EXPO_PUBLIC_SIGA_API_URL=https://seu-portal.santoandre.sp.gov.br/SigaApp/SigaRotas/ApiProxy.ashx
+
+   # Ou via URL direta / proxy reverso /api/*:
+   # EXPO_PUBLIC_SIGA_API_URL=https://api-rotas.santoandre.sp.gov.br
+   ```
+   O arquivo `src/config/apiConfig.js` detecta automaticamente URLs terminadas em `.ashx` e traduz as rotas para `?endpoint=%2Fapi%2F...`.
+
+2. **Direto no aparelho (sem recompilar o APK):**
+   - Abra o painel **Rede viária** → toque em **▸ Configurar servidor backend**;
+   - Digite a URL do servidor Node.js ou do `ApiProxy.ashx` e toque em **Conectar e sincronizar** (fica salva no `AsyncStorage` do aparelho);
+   - Para voltar a operar apenas offline no aparelho, toque em **Usar modo local**.
+
+> **Atenção ao IIS em produção:** se o portal WebForms exigir login (*Forms Auth* / *Windows Auth*), libere acesso anônimo para `ApiProxy.ashx` no IIS para que as chamadas externas do celular não recebam redirecionamento HTML de login.
+
