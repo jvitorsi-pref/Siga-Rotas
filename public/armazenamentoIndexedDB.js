@@ -7,7 +7,7 @@
  * e o cache vetorial da rede viária (`cache_rede`).
  */
 
-import { SYNC_STATUS, TIPO_ROTA } from '../campo/modeloCampo.js';
+import { ENTIDADE_SYNC, SYNC_STATUS, TIPO_ROTA } from '../campo/modeloCampo.js';
 
 export const NOME_BANCO_INDEXEDDB = 'siga_rotas_campo_db';
 export const VERSAO_BANCO_INDEXEDDB = 1;
@@ -282,6 +282,146 @@ export function criarDriverIndexedDB({
       const tx = db.transaction([STORES.CACHE_REDE], 'readonly');
       const row = await reqParaPromise(tx.objectStore(STORES.CACHE_REDE).get(chave));
       return row ? row.payload : null;
+    },
+
+    async deleteObservacao(idCliente) {
+      const db = await abrirBanco();
+      const tx = db.transaction(
+        [STORES.OBSERVACOES, STORES.EVENTOS, STORES.SYNC_FILA],
+        'readwrite',
+      );
+      const obsStore = tx.objectStore(STORES.OBSERVACOES);
+      const evtStore = tx.objectStore(STORES.EVENTOS);
+      const syncStore = tx.objectStore(STORES.SYNC_FILA);
+
+      const obs = await reqParaPromise(obsStore.get(idCliente));
+      if (!obs) {
+        await txParaPromise(tx);
+        return { removida: false, idRotaCliente: null, eventosRemovidos: 0, syncRemovidos: 0 };
+      }
+
+      const evts = (await reqParaPromise(evtStore.index('idObservacaoCliente').getAll(idCliente))) || [];
+      const evtIds = new Set(evts.map((e) => e.idEvento));
+      for (const eid of evtIds) {
+        evtStore.delete(eid);
+      }
+      obsStore.delete(idCliente);
+
+      const todosSync = (await reqParaPromise(syncStore.getAll())) || [];
+      let syncRemovidos = 0;
+      for (const item of todosSync) {
+        if (
+          item.entidadeId === idCliente ||
+          evtIds.has(item.entidadeId) ||
+          item.dependeDe === idCliente
+        ) {
+          syncStore.delete(item.idSync);
+          syncRemovidos += 1;
+        }
+      }
+
+      await txParaPromise(tx);
+      return {
+        removida: true,
+        idRotaCliente: obs.idRotaCliente,
+        eventosRemovidos: evtIds.size,
+        syncRemovidos,
+      };
+    },
+
+    async deleteRotaLocal(idCliente) {
+      const db = await abrirBanco();
+      const tx = db.transaction(
+        [STORES.ROTAS, STORES.PONTOS_GPS, STORES.OBSERVACOES, STORES.EVENTOS, STORES.SYNC_FILA],
+        'readwrite',
+      );
+      const rotasStore = tx.objectStore(STORES.ROTAS);
+      const ptsStore = tx.objectStore(STORES.PONTOS_GPS);
+      const obsStore = tx.objectStore(STORES.OBSERVACOES);
+      const evtStore = tx.objectStore(STORES.EVENTOS);
+      const syncStore = tx.objectStore(STORES.SYNC_FILA);
+
+      const rota = await reqParaPromise(rotasStore.get(idCliente));
+      if (!rota) {
+        await txParaPromise(tx);
+        return { removida: false, tipoRota: null, observacoesRemovidas: 0, pontosRemovidos: 0 };
+      }
+
+      // Preserva execuções GPS independentes que apenas apontavam para a rota calculada excluída
+      const vinculadas = (await reqParaPromise(
+        rotasStore.index('idRotaOrigemCliente').getAll(idCliente),
+      )) || [];
+      for (const outra of vinculadas) {
+        if (outra.idCliente !== idCliente) {
+          rotasStore.put({
+            ...outra,
+            idRotaOrigemCliente: null,
+            idRotaOrigemServidor: null,
+          });
+        }
+      }
+
+      const ptsLista = (await reqParaPromise(
+        ptsStore.index('idRotaCliente').getAll(idCliente),
+      )) || [];
+      for (const pt of ptsLista) {
+        ptsStore.delete(pt.idPonto);
+      }
+
+      const obsLista = (await reqParaPromise(
+        obsStore.index('idRotaCliente').getAll(idCliente),
+      )) || [];
+      const obsIds = new Set(obsLista.map((o) => o.idCliente));
+      const evtIds = new Set();
+      for (const oid of obsIds) {
+        const evtsObs = (await reqParaPromise(
+          evtStore.index('idObservacaoCliente').getAll(oid),
+        )) || [];
+        for (const ev of evtsObs) {
+          evtIds.add(ev.idEvento);
+          evtStore.delete(ev.idEvento);
+        }
+        obsStore.delete(oid);
+      }
+
+      rotasStore.delete(idCliente);
+
+      const todosSync = (await reqParaPromise(syncStore.getAll())) || [];
+      for (const item of todosSync) {
+        if (item.entidadeTipo === ENTIDADE_SYNC.ROTA && item.dependeDe === idCliente) {
+          syncStore.put({ ...item, dependeDe: null });
+        } else if (
+          item.entidadeId === idCliente ||
+          obsIds.has(item.entidadeId) ||
+          evtIds.has(item.entidadeId) ||
+          obsIds.has(item.dependeDe)
+        ) {
+          syncStore.delete(item.idSync);
+        }
+      }
+
+      await txParaPromise(tx);
+      return {
+        removida: true,
+        tipoRota: rota.tipoRota,
+        observacoesRemovidas: obsIds.size,
+        pontosRemovidos: ptsLista.length,
+      };
+    },
+
+    async clearDadosLocaisCampo() {
+      const db = await abrirBanco();
+      const tx = db.transaction(
+        [STORES.EVENTOS, STORES.OBSERVACOES, STORES.PONTOS_GPS, STORES.ROTAS, STORES.SYNC_FILA],
+        'readwrite',
+      );
+      tx.objectStore(STORES.EVENTOS).clear();
+      tx.objectStore(STORES.OBSERVACOES).clear();
+      tx.objectStore(STORES.PONTOS_GPS).clear();
+      tx.objectStore(STORES.ROTAS).clear();
+      tx.objectStore(STORES.SYNC_FILA).clear();
+      await txParaPromise(tx);
+      return { ok: true };
     },
   };
 }

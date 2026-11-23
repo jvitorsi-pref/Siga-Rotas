@@ -220,7 +220,9 @@ import {
     campoRotasBox: $('#campo-rotas-box'),
     campoRotasCount: $('#campo-rotas-count'),
     campoRotasLista: $('#campo-rotas-lista'),
+    campoLimparDadosLocais: $('#campo-limpar-dados-locais'),
     saveRouteOffline: $('#save-route-offline'),
+    saveRouteOfflineFeedback: $('#save-route-offline-feedback'),
     addRouteObs: $('#add-route-obs'),
     routeCampoObs: $('#route-campo-obs'),
     navAddObs: $('#nav-add-obs'),
@@ -235,6 +237,14 @@ import {
     campoObsErro: $('#campo-obs-erro'),
     campoObsCancelar: $('#campo-obs-cancelar'),
     campoObsSalvar: $('#campo-obs-salvar'),
+    campoConfirmModal: $('#campo-confirm-modal'),
+    campoConfirmTitulo: $('#campo-confirm-titulo'),
+    campoConfirmFechar: $('#campo-confirm-fechar'),
+    campoConfirmMensagem: $('#campo-confirm-mensagem'),
+    campoConfirmLista: $('#campo-confirm-lista'),
+    campoConfirmAlerta: $('#campo-confirm-alerta'),
+    campoConfirmCancelar: $('#campo-confirm-cancelar'),
+    campoConfirmOk: $('#campo-confirm-ok'),
   };
 
   /* ─────────────── Mapa ─────────────── */
@@ -2065,10 +2075,18 @@ import {
 
   function limparAntesDoCalculo() {
     altRouteSource.clear();
+    gpsTrailSource.clear();
     occSegmentHighlightSource.clear();
     state.rotasDisponiveis = [];
     state.rotaSelecionadaId = null;
     state.comparacaoAlternativas = null;
+    state.rotaPlanejadaOriginal = null;
+    state.idRotaGpsAtual = null;
+    if (typeof campoWeb !== 'undefined') {
+      campoWeb.limparSessaoGpsEmMemoria();
+      campoWeb.definirRotaCalculadaAtiva(null);
+    }
+    limparFeedbackSaveOffline();
     if (els.legendAlt) els.legendAlt.hidden = true;
     if (els.routeAlternatives) {
       els.routeAlternatives.hidden = true;
@@ -2209,6 +2227,75 @@ import {
     els.exportGpxFeedback.textContent = mensagem;
   }
 
+  function limparFeedbackSaveOffline() {
+    if (!els.saveRouteOfflineFeedback) return;
+    els.saveRouteOfflineFeedback.hidden = true;
+    els.saveRouteOfflineFeedback.className = 'gpx-feedback';
+    els.saveRouteOfflineFeedback.textContent = '';
+  }
+
+  function mostrarFeedbackSaveOffline(mensagem, tipo) {
+    if (!els.saveRouteOfflineFeedback) return;
+    els.saveRouteOfflineFeedback.hidden = false;
+    els.saveRouteOfflineFeedback.className = 'gpx-feedback gpx-feedback--' + (tipo || 'ok');
+    els.saveRouteOfflineFeedback.textContent = mensagem;
+  }
+
+  function pedirConfirmacaoCampo({
+    titulo = 'Confirmar ação',
+    mensagem = '',
+    itens = [],
+    alerta = '',
+    rotuloConfirmar = 'Confirmar',
+  } = {}) {
+    if (!els.campoConfirmModal) {
+      return Promise.resolve(typeof window.confirm === 'function' ? window.confirm(mensagem || titulo) : false);
+    }
+    return new Promise((resolve) => {
+      if (els.campoConfirmTitulo) els.campoConfirmTitulo.textContent = titulo;
+      if (els.campoConfirmMensagem) els.campoConfirmMensagem.textContent = mensagem;
+      if (els.campoConfirmLista) {
+        if (Array.isArray(itens) && itens.length) {
+          els.campoConfirmLista.hidden = false;
+          els.campoConfirmLista.innerHTML = itens.map((it) => '<li>' + escapeHtml(it) + '</li>').join('');
+        } else {
+          els.campoConfirmLista.hidden = true;
+          els.campoConfirmLista.innerHTML = '';
+        }
+      }
+      if (els.campoConfirmAlerta) {
+        if (alerta) {
+          els.campoConfirmAlerta.hidden = false;
+          els.campoConfirmAlerta.textContent = alerta;
+        } else {
+          els.campoConfirmAlerta.hidden = true;
+          els.campoConfirmAlerta.textContent = '';
+        }
+      }
+      if (els.campoConfirmOk) els.campoConfirmOk.textContent = rotuloConfirmar;
+      els.campoConfirmModal.hidden = false;
+
+      const finalizar = (confirmado) => {
+        els.campoConfirmModal.hidden = true;
+        els.campoConfirmOk?.removeEventListener('click', aoConfirmar);
+        els.campoConfirmCancelar?.removeEventListener('click', aoCancelar);
+        els.campoConfirmFechar?.removeEventListener('click', aoCancelar);
+        els.campoConfirmModal.removeEventListener('click', aoBackdrop);
+        resolve(confirmado);
+      };
+      const aoConfirmar = () => finalizar(true);
+      const aoCancelar = () => finalizar(false);
+      const aoBackdrop = (ev) => {
+        if (ev.target === els.campoConfirmModal) finalizar(false);
+      };
+
+      els.campoConfirmOk?.addEventListener('click', aoConfirmar);
+      els.campoConfirmCancelar?.addEventListener('click', aoCancelar);
+      els.campoConfirmFechar?.addEventListener('click', aoCancelar);
+      els.campoConfirmModal.addEventListener('click', aoBackdrop);
+    });
+  }
+
   async function exportarGpx() {
     if (navUI?.estado?.ativo) {
       const msg = 'Encerre ou finalize a navegação em andamento antes de exportar o GPX. Os dados da navegação permanecem preservados.';
@@ -2234,6 +2321,12 @@ import {
     let pontosGps = [];
     let idGps = state.idRotaGpsAtual;
     try {
+      const sessaoGps = typeof campoWeb !== 'undefined' ? campoWeb.obterUltimaExecucaoGpsSessao?.() : null;
+      if (sessaoGps?.rota && !sessaoGps.rota.simulado && (!idGps || sessaoGps.rota.idCliente === idGps)) {
+        rotaPercorrida = sessaoGps.rota;
+        pontosGps = Array.isArray(sessaoGps.pontosGps) ? sessaoGps.pontosGps : [];
+        if (!idGps) idGps = sessaoGps.rota.idCliente;
+      }
       if (!idGps && rotaCalcOriginal?.idCliente && typeof campoWeb !== 'undefined') {
         const execsGps = await campoWeb.listarRotasSalvas({
           tipoRota: 'GPS',
@@ -2245,7 +2338,7 @@ import {
         );
         if (vinculada) idGps = vinculada.idCliente;
       }
-      if (idGps && typeof campoWeb !== 'undefined') {
+      if (!rotaPercorrida && idGps && typeof campoWeb !== 'undefined') {
         const regGps = await campoWeb.obterRota(idGps);
         if (regGps && !regGps.simulado) {
           rotaPercorrida = regGps;
@@ -2307,6 +2400,7 @@ import {
       els.routeOccurrences.innerHTML = '';
     }
     limparFeedbackGpx();
+    limparFeedbackSaveOffline();
     if (els.exportGpx) els.exportGpx.hidden = true;
     if (els.saveRouteOffline) els.saveRouteOffline.hidden = true;
     if (els.addRouteObs) els.addRouteObs.hidden = true;
@@ -2630,24 +2724,22 @@ import {
     // desenha a rota (no circuito, o retorno à origem vai tracejado)
     desenharRota(data, opcoes);
 
-    // Persistência offline-first automática da rota calculada (sem sobrescrever rota original em desvio nem GPS)
-    if (els.saveRouteOffline) els.saveRouteOffline.hidden = !!(data.ok === false || data.parcial);
+    // Salvamento offline acontece EXCLUSIVAMENTE quando o usuário clicar em "Salvar rotas offline"
+    if (els.saveRouteOffline) {
+      const temGpsSessao = !!(typeof campoWeb !== 'undefined' && campoWeb.obterUltimaExecucaoGpsSessao?.());
+      els.saveRouteOffline.hidden = !!((data.ok === false || data.parcial) && !temGpsSessao);
+    }
     if (els.addRouteObs) els.addRouteObs.hidden = !!(data.ok === false || data.parcial);
-    const deveSalvarLocal = !opcoes.naoSalvarLocal && !opcoes.manterNavegacao;
-    if (deveSalvarLocal && data.ok !== false && !data.parcial && typeof campoWeb !== 'undefined') {
-      void campoWeb.salvarRotaCalculada(data, {
-        pontos: state.lista.pontos,
-        modo: state.modo,
-        circular: state.circuito,
-        origemSalvamento: 'auto',
-      }).then((res) => {
-        if (res?.rota) {
-          state.rotaAtual.idCliente = res.rota.idCliente;
+    if (!opcoes.naoSalvarLocal && !opcoes.manterNavegacao && data.ok !== false && !data.parcial && typeof campoWeb !== 'undefined') {
+      void campoWeb.buscarRotaSalvaPorAssinatura(data, state.lista.pontos).then((jaSalva) => {
+        campoWeb.definirRotaCalculadaAtiva(jaSalva || null);
+        if (jaSalva) {
+          state.rotaAtual.idCliente = jaSalva.idCliente;
           if (state.rotaPlanejadaOriginal?.rota === data) {
-            state.rotaPlanejadaOriginal.rota.idCliente = res.rota.idCliente;
+            state.rotaPlanejadaOriginal.rota.idCliente = jaSalva.idCliente;
           }
-          void atualizarObservacoesDaRotaAtiva();
         }
+        return atualizarObservacoesDaRotaAtiva();
       }).catch(() => {});
     } else if (typeof campoWeb !== 'undefined') {
       void atualizarObservacoesDaRotaAtiva();
@@ -2698,9 +2790,23 @@ import {
     // paradas…): o desenho e a legenda são limpos, para não deixar
     // geometrias antigas no mapa
     state.rotaAtual = null;
+    state.rotaPlanejadaOriginal = null;
+    state.idRotaGpsAtual = null;
+    if (typeof campoWeb !== 'undefined') {
+      campoWeb.limparSessaoGpsEmMemoria();
+      campoWeb.definirRotaCalculadaAtiva(null);
+    }
     limparFeedbackGpx();
+    limparFeedbackSaveOffline();
     if (els.exportGpx) els.exportGpx.hidden = true;
+    if (els.saveRouteOffline) els.saveRouteOffline.hidden = true;
+    if (els.addRouteObs) els.addRouteObs.hidden = true;
+    if (els.routeCampoObs) {
+      els.routeCampoObs.hidden = true;
+      els.routeCampoObs.innerHTML = '';
+    }
     routeSource.clear();
+    gpsTrailSource.clear();
     if (typeof limparAntesDoCalculo === 'function') limparAntesDoCalculo();
     atualizarLegenda([]);
     els.resultBlock.hidden = true;
@@ -2922,6 +3028,7 @@ import {
     state.rotaSelecionadaId = null;
     state.comparacaoAlternativas = null;
     limparFeedbackGpx();
+    limparFeedbackSaveOffline();
     if (els.exportGpx) els.exportGpx.hidden = true;
     if (els.saveRouteOffline) els.saveRouteOffline.hidden = true;
     if (els.addRouteObs) els.addRouteObs.hidden = true;
@@ -2932,6 +3039,7 @@ import {
     if (els.startNav) els.startNav.hidden = true;
     gpsTrailSource.clear();
     routeObsSource.clear();
+    campoWeb.limparSessaoGpsEmMemoria();
     campoWeb.definirRotaCalculadaAtiva(null);
     if (els.legendAlt) els.legendAlt.hidden = true;
     if (els.routeAlternatives) {
@@ -2999,6 +3107,7 @@ import {
           '<button type="button" class="mini" data-acao-rota="abrir">Abrir no mapa</button>' +
           '<button type="button" class="mini" data-acao-rota="gpx">Exportar GPX</button>' +
           '<button type="button" class="mini" data-acao-rota="obs">Observações</button>' +
+          '<button type="button" class="mini mini--danger" data-acao-rota="excluir">Excluir</button>' +
           '</div>' +
           '</div>'
         );
@@ -3121,6 +3230,7 @@ import {
         routeSource.clear();
         altRouteSource.clear();
         limparFeedbackGpx();
+        limparFeedbackSaveOffline();
         if (els.resultBlock) els.resultBlock.hidden = false;
         const d = formatDistance(reg.distanciaMetros || 0);
         if (els.distanceValue) {
@@ -3139,7 +3249,9 @@ import {
         atualizarLegenda([]);
         if (els.startNav) els.startNav.hidden = true;
         if (els.saveRouteOffline) els.saveRouteOffline.hidden = true;
+        if (els.addRouteObs) els.addRouteObs.hidden = false;
         if (els.exportGpx) els.exportGpx.hidden = !reg.geometry;
+        campoWeb.definirRotaCalculadaAtiva(reg);
       }
       await renderizarObservacoesDaRotaCampo(reg.idCliente);
       setStatus('Execução GPS restaurada do armazenamento local (' + reg.status + ').', 'ok');
@@ -3258,6 +3370,7 @@ import {
           '<div class="route-campo-obs__acoes">' +
           '<button type="button" class="mini" data-obs-acao="editar">Editar</button>' +
           '<button type="button" class="mini" data-obs-acao="status" data-novo-status="' + proxStatus + '">' + proxRotulo + '</button>' +
+          '<button type="button" class="mini mini--danger" data-obs-acao="excluir">Excluir</button>' +
           '</div>' +
           eventosHtml +
           '</div>'
@@ -3281,7 +3394,7 @@ import {
   function abrirModalCampoObs({ idClienteEdicao = null, latitude = null, longitude = null, idRotaCliente = null, descricao = '', tipoObservacao = 'VISITA_REALIZADA' } = {}) {
     const rotaAtiva = idRotaCliente ? { idCliente: idRotaCliente } : campoWeb.obterRotaParaObservacao();
     if (!rotaAtiva) {
-      setStatus('Calcule ou abra uma rota salva antes de registrar uma observação.', 'err');
+      setStatus('Salve a rota usando "Salvar rotas offline" ou abra uma rota salva antes de registrar observações.', 'err');
       return;
     }
     let lat = latitude;
@@ -3392,7 +3505,7 @@ import {
   }
 
   if (els.campoRotasLista) {
-    els.campoRotasLista.addEventListener('click', (ev) => {
+    els.campoRotasLista.addEventListener('click', async (ev) => {
       const btn = ev.target.closest('[data-acao-rota]');
       const card = ev.target.closest('[data-rota-id]');
       if (!btn || !card) return;
@@ -3405,23 +3518,170 @@ import {
         void reabrirRotaSalvaCampo(id).then(() => {
           if (els.routeCampoObs) els.routeCampoObs.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
         });
+      } else if (btn.dataset.acaoRota === 'excluir') {
+        if (navUI?.estado?.ativo && campoWeb.execucaoGpsAtiva?.idCliente === id) {
+          setStatus('Encerre a navegação em andamento antes de excluir esta rota.', 'err');
+          return;
+        }
+        const reg = await campoWeb.obterRota(id);
+        if (!reg) return;
+        const titulo = reg.titulo || (reg.tipoRota === 'GPS' ? 'Execução GPS' : 'Rota calculada');
+        const confirmado = await pedirConfirmacaoCampo({
+          titulo: 'Excluir rota salva',
+          mensagem: `Deseja excluir localmente a rota "${titulo}"?`,
+          itens: [
+            'A rota salva será removida do armazenamento local do dispositivo.',
+            'Observações, eventos e pontos GPS vinculados exclusivamente a esta rota também serão excluídos localmente.',
+            'Outras rotas salvas, preferências do aplicativo e dados já sincronizados no servidor não serão afetados.',
+          ],
+          alerta: 'Esta exclusão local não pode ser desfeita neste dispositivo.',
+          rotuloConfirmar: 'Excluir rota',
+        });
+        if (!confirmado) return;
+        try {
+          const estavaAtivaCalc = campoWeb.rotaCalculadaAtiva?.idCliente === id;
+          const estavaAtivaGps = state.idRotaGpsAtual === id;
+          await campoWeb.excluirRotaSalva(id);
+          if (estavaAtivaGps) {
+            state.idRotaGpsAtual = null;
+            gpsTrailSource.clear();
+          }
+          if (estavaAtivaCalc) {
+            if (state.rotaAtual?.idCliente === id) delete state.rotaAtual.idCliente;
+            if (state.rotaPlanejadaOriginal?.rota?.idCliente === id) {
+              delete state.rotaPlanejadaOriginal.rota.idCliente;
+            }
+          }
+          await renderizarRotasSalvasCampo();
+          await atualizarObservacoesDaRotaAtiva();
+          setStatus('Rota salva excluída do dispositivo.', 'ok');
+        } catch (err) {
+          setStatus(err?.message || 'Não foi possível excluir a rota salva.', 'err');
+        }
+      }
+    });
+  }
+
+  if (els.campoLimparDadosLocais) {
+    els.campoLimparDadosLocais.addEventListener('click', async () => {
+      const navAtiva = !!(navUI?.estado?.ativo);
+      if (navAtiva) {
+        const prosseguirNav = await pedirConfirmacaoCampo({
+          titulo: 'Navegação em andamento',
+          mensagem: 'Existe uma navegação em andamento neste momento. Limpar os dados locais agora irá interromper e descartar a navegação atual.',
+          alerta: 'Confirme primeiro se deseja interromper a navegação em andamento para prosseguir com a limpeza local.',
+          rotuloConfirmar: 'Interromper navegação e continuar',
+        });
+        if (!prosseguirNav) return;
+      }
+
+      const confirmado = await pedirConfirmacaoCampo({
+        titulo: 'Limpar dados locais',
+        mensagem: 'Esta ação removerá permanentemente do armazenamento local deste dispositivo:',
+        itens: [
+          'Todas as rotas salvas offline;',
+          'Todos os percursos GPS gravados e pontos de trilha locais;',
+          'Todas as observações de campo e históricos locais;',
+          'Registros temporários e fila pendente de sincronização local.',
+        ],
+        alerta:
+          'Ação irreversível nos dados locais deste dispositivo. Suas preferências do trajeto, configurações, identificação e dados já existentes no servidor remoto serão preservados.',
+        rotuloConfirmar: 'Limpar dados locais',
+      });
+      if (!confirmado) return;
+
+      try {
+        if (navAtiva && navUI) {
+          navUI.aoCalcularRota();
+        }
+        await campoWeb.limparDadosLocais({ forcarInterrupcaoNavegacao: true });
+        routeSource.clear();
+        gpsTrailSource.clear();
+        routeObsSource.clear();
+        altRouteSource.clear();
+        occSegmentHighlightSource.clear();
+        pontosTrilhaAoVivo = [];
+        state.rotaAtual = null;
+        state.rotaPlanejadaOriginal = null;
+        state.idRotaGpsAtual = null;
+        state.rotasDisponiveis = [];
+        state.rotaSelecionadaId = null;
+        state.comparacaoAlternativas = null;
+        limparFeedbackGpx();
+        limparFeedbackSaveOffline();
+        if (els.exportGpx) els.exportGpx.hidden = true;
+        if (els.saveRouteOffline) els.saveRouteOffline.hidden = true;
+        if (els.addRouteObs) els.addRouteObs.hidden = true;
+        if (els.startNav) els.startNav.hidden = true;
+        if (els.routeCampoObs) {
+          els.routeCampoObs.hidden = true;
+          els.routeCampoObs.innerHTML = '';
+        }
+        if (els.campoGpsRecovery) els.campoGpsRecovery.hidden = true;
+        if (els.resultBlock) els.resultBlock.hidden = true;
+        atualizarLegenda([]);
+        await renderizarRotasSalvasCampo();
+        setStatus('Dados locais limpos (preferências e configurações preservadas).', 'ok');
+      } catch (err) {
+        setStatus(err?.message || 'Não foi possível limpar os dados locais.', 'err');
       }
     });
   }
 
   if (els.saveRouteOffline) {
-    els.saveRouteOffline.addEventListener('click', () => {
-      const rota = state.rotaAtual;
-      if (!rota || rota.ok === false || rota.parcial) return;
-      void campoWeb.salvarRotaCalculada(rota, {
-        pontos: state.lista.pontos,
-        modo: state.modo,
-        circular: state.circuito,
-        origemSalvamento: 'manual',
-      }).then((res) => {
-        if (res?.rota) state.rotaAtual.idCliente = res.rota.idCliente;
-        setStatus('Rota salva no dispositivo (disponível offline).', 'ok');
-      });
+    els.saveRouteOffline.addEventListener('click', async () => {
+      const rotaCalc =
+        state.rotaAtual && state.rotaAtual.ok !== false && !state.rotaAtual.parcial
+          ? state.rotaAtual
+          : null;
+      const rotaOrig =
+        state.rotaPlanejadaOriginal?.rota &&
+        state.rotaPlanejadaOriginal.rota.ok !== false &&
+        !state.rotaPlanejadaOriginal.rota.parcial
+          ? state.rotaPlanejadaOriginal.rota
+          : null;
+      const temGpsSessao = !!campoWeb.obterUltimaExecucaoGpsSessao();
+      if (!rotaCalc && !rotaOrig && !temGpsSessao) return;
+
+      els.saveRouteOffline.disabled = true;
+      limparFeedbackSaveOffline();
+      try {
+        const pontos =
+          state.rotaPlanejadaOriginal?.pontos?.length
+            ? state.rotaPlanejadaOriginal.pontos
+            : state.lista.pontos;
+        const res = await campoWeb.salvarRotasOffline({
+          rotaCalculada: rotaCalc,
+          rotaCalculadaOriginal: rotaOrig,
+          pontos,
+          modo: state.modo,
+          circular: state.circuito,
+        });
+        if (res?.rotaCalculada) {
+          if (state.rotaAtual) state.rotaAtual.idCliente = res.rotaCalculada.idCliente;
+          if (state.rotaPlanejadaOriginal?.rota) {
+            state.rotaPlanejadaOriginal.rota.idCliente = res.rotaCalculada.idCliente;
+          }
+        }
+        if (res?.rotaGps) {
+          state.idRotaGpsAtual = res.rotaGps.idCliente;
+        }
+        await renderizarRotasSalvasCampo();
+        await atualizarObservacoesDaRotaAtiva();
+        const msg = res?.jaExistia
+          ? 'As rotas atuais já estão salvas offline no dispositivo (nenhuma duplicação criada).'
+          : res?.rotaCalculada && res?.rotaGps
+            ? 'Rota calculada e trajeto GPS salvos no dispositivo para uso offline.'
+            : 'Rota salva no dispositivo (disponível offline).';
+        mostrarFeedbackSaveOffline(msg, 'ok');
+        setStatus(msg, 'ok');
+      } catch (err) {
+        const msg = err?.message || 'Não foi possível salvar as rotas offline.';
+        mostrarFeedbackSaveOffline(msg, 'err');
+        setStatus(msg, 'err');
+      } finally {
+        els.saveRouteOffline.disabled = false;
+      }
     });
   }
 
@@ -3502,6 +3762,22 @@ import {
         await campoWeb.alterarStatusObservacao({ idCliente: obs.idCliente, novoStatus });
         await renderizarObservacoesDaRotaCampo(obs.idRotaCliente);
         setStatus('Status da observação atualizado no dispositivo.', 'ok');
+      } else if (btn.dataset.obsAcao === 'excluir') {
+        const tipoLbl = campoWeb.rotuloTipoObservacao(obs.tipoObservacao);
+        const confirmado = await pedirConfirmacaoCampo({
+          titulo: 'Excluir observação',
+          mensagem: `Deseja excluir localmente a observação "${tipoLbl}" (${obs.descricao || ''})?`,
+          alerta: 'A observação e seu histórico local serão removidos sem afetar a rota nem outras observações.',
+          rotuloConfirmar: 'Excluir observação',
+        });
+        if (!confirmado) return;
+        try {
+          await campoWeb.excluirObservacao(obs.idCliente);
+          await renderizarObservacoesDaRotaCampo(obs.idRotaCliente);
+          setStatus('Observação excluída do dispositivo.', 'ok');
+        } catch (err) {
+          setStatus(err?.message || 'Não foi possível excluir a observação.', 'err');
+        }
       }
     });
   }
@@ -3597,9 +3873,33 @@ import {
               state.idRotaGpsAtual = null;
             }
           }
+          const temCalc = !!(state.rotaPlanejadaOriginal?.rota || (state.rotaAtual?.ok !== false && !state.rotaAtual?.parcial));
+          const temGps = !!(state.idRotaGpsAtual && res?.rota?.geometry && !res.rota.simulado);
+          if (temGps && !temCalc && (!state.rotaAtual || els.resultBlock?.hidden)) {
+            if (els.resultBlock) els.resultBlock.hidden = false;
+            const d = formatDistance(res.rota.distanciaMetros || 0);
+            if (els.distanceValue) {
+              els.distanceValue.className = 'distance__value';
+              els.distanceValue.textContent = d.v;
+            }
+            if (els.distanceUnit) els.distanceUnit.textContent = d.u;
+            if (els.routeNote) {
+              els.routeNote.hidden = false;
+              els.routeNote.textContent =
+                'Trajeto GPS real registrado (sem rota calculada vinculada).';
+            }
+            if (els.legs) els.legs.innerHTML = '';
+            if (els.streets) els.streets.innerHTML = '';
+            if (els.streetsCount) els.streetsCount.textContent = '0';
+            atualizarLegenda([]);
+            if (els.startNav) els.startNav.hidden = true;
+            if (els.addRouteObs) els.addRouteObs.hidden = true;
+          }
           if (els.exportGpx) {
-            const temCalc = !!(state.rotaPlanejadaOriginal?.rota || (state.rotaAtual?.ok !== false && !state.rotaAtual?.parcial));
             els.exportGpx.hidden = !(temCalc || state.idRotaGpsAtual);
+          }
+          if (els.saveRouteOffline) {
+            els.saveRouteOffline.hidden = !(temCalc || temGps || campoWeb.obterUltimaExecucaoGpsSessao());
           }
           await atualizarObservacoesDaRotaAtiva();
           return res;

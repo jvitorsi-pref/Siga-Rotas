@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { gerarGpxRota, nomeArquivoGpx } from '../src/utils/gpx.js';
+import {
+  gerarGpxRota,
+  nomeArquivoGpx,
+  nomeArquivoRotaCalculada,
+  nomeArquivoRotaPercorrida,
+  nomeArquivoExportacaoZip,
+} from '../src/utils/gpx.js';
 import {
   exportarRotaGpxMobileCore as exportarRotaGpxMobile,
   descreverPastaSaf,
@@ -68,12 +74,15 @@ test('APK GPX: SAF solicita pasta, cria .gpx e grava conteúdo UTF-8 real', asyn
     },
   };
 
-  const res = await exportarRotaGpxMobile(rotaExemplo(), { fileSystem });
+  const agoraSaf = new Date(2026, 10, 17, 14, 30, 45);
+  const nomeEsperadoSaf = nomeArquivoRotaCalculada(agoraSaf);
+  const res = await exportarRotaGpxMobile(rotaExemplo(), { fileSystem, agora: agoraSaf });
   assert.equal(res.ok, true);
   assert.equal(res.modo, 'saf');
   assert.equal(res.cenario, 'CALCULADA');
   assert.equal(res.pasta, 'Download/Rotas');
-  assert.equal(res.arquivo, 'rota_calculada.gpx');
+  assert.equal(res.arquivo, nomeEsperadoSaf);
+  assert.match(res.arquivo, /^rota_calculada_\d{8}_\d{6}\.gpx$/);
   assert.equal(chamadas[0].mime, 'application/gpx+xml');
   assert.deepEqual(chamadas[1].opts, { encoding: 'utf8' });
   assert.match(chamadas[1].conteudo, /<gpx version="1\.1"/);
@@ -122,10 +131,11 @@ test('APK GPX: falha ao gravar remove arquivo vazio criado no SAF e reporta erro
     },
   };
 
-  const res = await exportarRotaGpxMobile(rotaExemplo(), { fileSystem });
+  const agoraErro = new Date(2026, 10, 17, 14, 31, 0);
+  const res = await exportarRotaGpxMobile(rotaExemplo(), { fileSystem, agora: agoraErro });
   assert.equal(res.ok, false);
   assert.equal(res.motivo, 'ERRO_GRAVACAO');
-  assert.equal(removido.uri, 'content://doc/rota_calculada.gpx');
+  assert.equal(removido.uri, `content://doc/${nomeArquivoRotaCalculada(agoraErro)}`);
   assert.deepEqual(removido.opts, { idempotent: true });
 });
 
@@ -193,25 +203,33 @@ test('APK GPX Cenário B (ZIP em Base64), Cenário C (somente GPS), simulação 
     },
   };
 
+  const agoraZip = new Date(2026, 10, 17, 15, 0, 12);
+  const nomeCalcZip = nomeArquivoRotaCalculada(agoraZip);
+  const nomeGpsZip = nomeArquivoRotaPercorrida(agoraZip);
+  const nomeArqZip = nomeArquivoExportacaoZip(agoraZip);
+
   const resB = await exportarRotaGpxMobile(rotaExemplo(), {
     fileSystem: fsZip,
     pontosGps,
+    agora: agoraZip,
   });
   assert.equal(resB.ok, true);
   assert.equal(resB.cenario, 'AMBAS');
-  assert.equal(resB.arquivo, 'exportacao_rotas.zip');
+  assert.equal(resB.arquivo, nomeArqZip);
+  assert.match(resB.arquivo, /^exportacao_rotas_\d{8}_\d{6}\.zip$/);
   assert.equal(chamadasZip[0].mime, 'application/zip');
   assert.deepEqual(chamadasZip[1].opts, { encoding: 'base64' });
 
   const zipBuffer = new Uint8Array(Buffer.from(chamadasZip[1].conteudo, 'base64'));
   const arquivos = lerZipStore(zipBuffer);
-  assert.ok(arquivos['rota_calculada.gpx']);
-  assert.ok(arquivos['rota_percorrida.gpx']);
-  assert.match(decodificarUtf8(arquivos['rota_percorrida.gpx']), /<time>2023-11-14T22:13:20\.000Z<\/time>/);
+  assert.ok(arquivos[nomeCalcZip]);
+  assert.ok(arquivos[nomeGpsZip]);
+  assert.match(decodificarUtf8(arquivos[nomeGpsZip]), /<time>2023-11-14T22:13:20\.000Z<\/time>/);
 
   // Cenário C no SAF: somente GPS real sem rota calculada
   const chamadasC = [];
   const resC = await exportarRotaGpxMobile(null, {
+    agora: agoraZip,
     fileSystem: {
       EncodingType: { UTF8: 'utf8', Base64: 'base64' },
       StorageAccessFramework: {
@@ -232,7 +250,8 @@ test('APK GPX Cenário B (ZIP em Base64), Cenário C (somente GPS), simulação 
   });
   assert.equal(resC.ok, true);
   assert.equal(resC.cenario, 'PERCORRIDA');
-  assert.equal(resC.arquivo, 'rota_percorrida.gpx');
+  assert.equal(resC.arquivo, nomeGpsZip);
+  assert.match(resC.arquivo, /^rota_percorrida_\d{8}_\d{6}\.gpx$/);
   assert.equal(chamadasC[0].mime, 'application/gpx+xml');
   assert.deepEqual(chamadasC[1].opts, { encoding: 'utf8' });
 

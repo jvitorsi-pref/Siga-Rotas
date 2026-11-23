@@ -1,6 +1,6 @@
 # Inventário técnico — unificação
 
-Gerado por `node tools/inventario-unificacao.mjs`. Base: `fcf90c46e911314ae4486458765729a8789107cb`.
+Gerado por `node tools/inventario-unificacao.mjs`. Base: `01de96845fcfe33d90c7f48c6f5bc6fea989b1c7`.
 
 Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não afirma validação visual nem execução Android. Vendor OpenLayers, snapshots e arquivos Android gerados são dependências/recursos, não incluídos na tabela de exports. Pacotes em `updates/` são históricos e não entram no grafo de imports ativo.
 
@@ -12,7 +12,7 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 
 | Arquivo | Linhas | Situação | Exports / reexports |
 |---|---:|---|---|
-| `APK/App.js` | 2045 | Alterado | — |
+| `APK/App.js` | 2275 | Alterado | — |
 | `APK/android/app/src/main/AndroidManifest.xml` | 34 | Igual à base | — |
 | `APK/app.json` | 46 | Igual à base | — |
 | `APK/eas.json` | 27 | Igual à base | — |
@@ -23,16 +23,17 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `APK/src/campo/modeloCampo.js` | 2 | Igual à base | → ../../../campo/modeloCampo.js |
 | `APK/src/campo/repositorioCampo.js` | 2 | Igual à base | → ../../../campo/repositorioCampo.js |
 | `APK/src/campo/syncEngine.js` | 2 | Igual à base | → ../../../campo/syncEngine.js |
+| `APK/src/components/ConfirmActionModal.js` | 189 | Novo | ConfirmActionModal |
 | `APK/src/components/NavigationPanel.js` | 89 | Igual à base | NavigationPanel |
 | `APK/src/components/NetworkDiagnosticsPanel.js` | 402 | Igual à base | NetworkDiagnosticsPanel |
 | `APK/src/components/OccurrenceModal.js` | 603 | Igual à base | OccurrenceModal |
 | `APK/src/components/PointCard.js` | 339 | Igual à base | PointCard |
 | `APK/src/components/RoadNetworkMap.js` | 560 | Igual à base | RoadNetworkMap |
-| `APK/src/components/RouteObservationModal.js` | 406 | Igual à base | RouteObservationModal |
-| `APK/src/components/RouteObservationsSection.js` | 180 | Igual à base | RouteObservationsSection |
+| `APK/src/components/RouteObservationModal.js` | 430 | Alterado | RouteObservationModal |
+| `APK/src/components/RouteObservationsSection.js` | 227 | Alterado | RouteObservationsSection |
 | `APK/src/components/RoutePreferencesSection.js` | 191 | Igual à base | RoutePreferencesSection |
-| `APK/src/components/RouteResultPanel.js` | 711 | Alterado | RouteResultPanel |
-| `APK/src/components/SavedRoutesSection.js` | 239 | Alterado | SavedRoutesSection |
+| `APK/src/components/RouteResultPanel.js` | 711 | Igual à base | RouteResultPanel |
+| `APK/src/components/SavedRoutesSection.js` | 329 | Alterado | SavedRoutesSection |
 | `APK/src/config/apiConfig.js` | 68 | Igual à base | STORAGE_KEY_API_URL, STORAGE_KEY_PENDING_SYNC, LOCAL_MODE_SENTINEL, normalizarApiUrl, resolverTipoTransporteApi, montarUrlEndpointApi, resolverApiUrlInicial |
 | `APK/src/core/config.js` | 3 | Igual à base | → ../../../core/config.js |
 | `APK/src/core/enderecoDigital.js` | 3 | Igual à base | → ../../../core/enderecoDigital.js |
@@ -54,12 +55,12 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `APK/src/ocorrencias/regras.js` | 2 | Igual à base | → ../../../ocorrencias/regras.js |
 | `APK/src/ocorrencias/roteamentoAlternativo.js` | 2 | Igual à base | → ../../../ocorrencias/roteamentoAlternativo.js |
 | `APK/src/services/armazenamentoSqlite.js` | 12 | Igual à base | criarDriverSqlite |
-| `APK/src/services/armazenamentoSqliteCore.js` | 686 | Igual à base | NOME_BANCO_SQLITE, criarDriverSqliteCore |
+| `APK/src/services/armazenamentoSqliteCore.js` | 799 | Alterado | NOME_BANCO_SQLITE, criarDriverSqliteCore |
 | `APK/src/services/basemapPreference.js` | 15 | Igual à base | carregarCamadaBaseMobile, salvarCamadaBaseMobile |
 | `APK/src/services/campoMobileService.js` | 11 | Igual à base | criarServicoCampoMobile |
-| `APK/src/services/campoMobileServiceCore.js` | 333 | Igual à base | criarServicoCampoMobileCore |
+| `APK/src/services/campoMobileServiceCore.js` | 585 | Alterado | criarServicoCampoMobileCore |
 | `APK/src/services/mobileGpxExport.js` | 13 | Igual à base | exportarRotaGpxMobile |
-| `APK/src/services/mobileGpxExportCore.js` | 133 | Alterado | descreverPastaSaf, exportarRotaGpxMobileCore |
+| `APK/src/services/mobileGpxExportCore.js` | 133 | Igual à base | descreverPastaSaf, exportarRotaGpxMobileCore |
 | `APK/src/services/mobileNavigationService.js` | 183 | Igual à base | criarNavegacaoMobile |
 | `APK/src/services/mobileNetworkService.js` | 13 | Igual à base | MobileNetworkService, mobileNetworkService |
 | `APK/src/services/mobileNetworkServiceCore.js` | 1001 | Igual à base | STORAGE_KEY_SNAPSHOT, fingerprintOf, MobileNetworkServiceCore |
@@ -76,15 +77,15 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `APK/src/utils/resumoRota.js` | 2 | Igual à base | — |
 | `APK/src/utils/revisoesEndereco.js` | 2 | Igual à base | — |
 | `APK/src/utils/trechoNoMapa.js` | 99 | Igual à base | metrosPorPixel, toleranciaDoClique, distanciaPontoSegmentoMetros, trechoSobClique |
-| `APK/src/utils/zip.js` | 2 | Novo | → ../../../public/zip.js |
+| `APK/src/utils/zip.js` | 2 | Igual à base | → ../../../public/zip.js |
 | `APK/test/basemapPreference.test.js` | 41 | Igual à base | — |
-| `APK/test/campoMobileSqlite.test.js` | 388 | Igual à base | — |
+| `APK/test/campoMobileSqlite.test.js` | 506 | Alterado | — |
 | `APK/test/circuitoUI.test.js` | 24 | Igual à base | — |
 | `APK/test/controlesTrajeto.test.js` | 33 | Igual à base | — |
 | `APK/test/enderecoDigital.test.js` | 514 | Igual à base | — |
 | `APK/test/enderecoUI.test.js` | 4 | Igual à base | — |
 | `APK/test/fidelity.test.js` | 416 | Igual à base | — |
-| `APK/test/gpxMobile.test.js` | 255 | Alterado | — |
+| `APK/test/gpxMobile.test.js` | 274 | Alterado | — |
 | `APK/test/gradleLauncher.test.js` | 54 | Igual à base | — |
 | `APK/test/graph.test.js` | 280 | Igual à base | — |
 | `APK/test/helpers.js` | 91 | Igual à base | ROOT, loadRealFeatures, feature, official, unofficial, road, offset |
@@ -98,14 +99,14 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `APK/test/networkPanelRender.test.js` | 81 | Igual à base | — |
 | `APK/test/ocorrenciasApk.test.js` | 455 | Igual à base | — |
 | `APK/test/resumoRota.test.js` | 4 | Igual à base | — |
-| `APK/test/routeResultRender.test.js` | 48 | Alterado | — |
+| `APK/test/routeResultRender.test.js` | 48 | Igual à base | — |
 | `APK/test/router.test.js` | 509 | Igual à base | — |
 | `APK/test/trechoNoMapa.test.js` | 84 | Igual à base | — |
 | `APK/test/wfs.test.js` | 295 | Igual à base | — |
 | `campo/contratosBackend.js` | 336 | Igual à base | resolverUrlBackendCampo, montarUrlAcaoCampo, serializarRotaParaEnvio, serializarObservacaoParaEnvio, serializarEventoParaEnvio, deserializarRotaDoServidor, criarClienteBackendCampo |
 | `campo/filtroGps.js` | 211 | Igual à base | CONFIG_FILTRO_GPS, distanciaMetrosEntre, filtrarPontoGps, consolidarPontosEmGeometria |
 | `campo/modeloCampo.js` | 675 | Igual à base | SYNC_STATUS, SYNC_UI_LABEL, TIPO_ROTA, STATUS_ROTA, STATUS_OBSERVACAO, TIPO_EVENTO, ENTIDADE_SYNC, TIPO_OBSERVACAO_CATALOGO, gerarUuid, ehUuidValido, coordenadaValida, normalizarIso, extrairGeometriaRotaCalculada, normalizarGeometriaRota, geojsonParaWkt, wktParaGeojson, formatarDistanciaCurtaCampo, construirTituloRota, calcularAssinaturaRota, sanitizarPontosRota, resumirLegsParaPersistencia, reconstruirRespostaRotaDeRegistro, criarRegistroRotaCalculada, criarRegistroExecucaoGps, validarDadosObservacao, criarRegistroObservacao, aplicarEdicaoObservacao, aplicarStatusObservacao, rotuloTipoObservacao, rotuloStatusObservacaoCampo, rotuloSyncStatus, rotuloIndicadorSync |
-| `campo/repositorioCampo.js` | 751 | Igual à base | criarDriverMemoria, criarRepositorioCampo, resolverRotaAtivaParaObservacao |
+| `campo/repositorioCampo.js` | 952 | Alterado | criarDriverMemoria, criarRepositorioCampo, resolverRotaAtivaParaObservacao |
 | `campo/syncEngine.js` | 401 | Igual à base | BACKOFF_SEGUNDOS, calcularProximaTentativaIso, criarMotorSincronizacao |
 | `core/config.js` | 202 | Igual à base | WFS_BASE_URL, LAYER_NAME, KNOWN_ATTRIBUTES, METRIC_CRS, GRAPH_DEFAULTS, WFS_DEFAULTS, UPDATE_DEFAULTS, MAP_VIEW |
 | `core/coresTrechos.js` | 105 | Igual à base | PALETA_TRECHOS, TOTAL_CORES, corPorIndice, coresDosTrechos, colorirTrechos |
@@ -128,32 +129,32 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `ocorrencias/regras.js` | 515 | Igual à base | associarSegmentoDaRede, localizarArestasDaOcorrencia, reavaliarStatus, atualizarExpiracoes, criarOcorrencia, aplicarInteracao, ocorrenciaInfluenciaCalculo |
 | `ocorrencias/roteamentoAlternativo.js` | 531 | Igual à base | extrairArestasDaRota, resumirOcorrencia, construirGrafoDerivado, inspecionarOcorrenciasNaRota, calcularRotaComAlternativas |
 | `package.json` | 49 | Igual à base | — |
-| `public/app.js` | 3656 | Alterado | — |
-| `public/armazenamentoIndexedDB.js` | 288 | Igual à base | NOME_BANCO_INDEXEDDB, VERSAO_BANCO_INDEXEDDB, criarDriverIndexedDB |
+| `public/app.js` | 3956 | Alterado | — |
+| `public/armazenamentoIndexedDB.js` | 428 | Alterado | NOME_BANCO_INDEXEDDB, VERSAO_BANCO_INDEXEDDB, criarDriverIndexedDB |
 | `public/camadaBase.js` | 203 | Igual à base | CAMADA_PADRAO, CAMADA_SATELITE, CHAVE_CAMADA_BASE, CAMADAS_BASE, normalizarCamadaBase, opcoesCamadasBase, lerPreferenciaCamadaSync, salvarPreferenciaCamadaSync, lerPreferenciaCamadaAsync, salvarPreferenciaCamadaAsync, criarMonitorSatelite |
-| `public/campoWebService.js` | 296 | Igual à base | criarServicoCampoWeb |
+| `public/campoWebService.js` | 552 | Alterado | criarServicoCampoWeb |
 | `public/clienteRede.js` | 772 | Igual à base | detectarConfiguracaoAmbiente, criarClienteRede |
 | `public/config.js` | 23 | Igual à base | — |
-| `public/exportarGpxWeb.js` | 88 | Alterado | exportarRotaGpxWeb |
-| `public/gpx.js` | 851 | Alterado | NOME_ARQUIVO_ROTA_CALCULADA, NOME_ARQUIVO_ROTA_PERCORRIDA, NOME_ARQUIVO_EXPORTACAO_ZIP, nomeArquivoGpx, gerarGpxRota, gerarGpxRotaCalculada, extrairSegmentosGpsReais, gerarGpxRotaPercorrida, prepararPacoteExportacaoGpx |
-| `public/index.html` | 436 | Igual à base | — |
+| `public/exportarGpxWeb.js` | 88 | Igual à base | exportarRotaGpxWeb |
+| `public/gpx.js` | 950 | Alterado | NOME_ARQUIVO_ROTA_CALCULADA, NOME_ARQUIVO_ROTA_PERCORRIDA, NOME_ARQUIVO_EXPORTACAO_ZIP, formatarCarimboArquivo, nomeArquivoRotaCalculada, nomeArquivoRotaPercorrida, nomeArquivoExportacaoZip, validarXmlGpxExportado, nomeArquivoGpx, gerarGpxRota, gerarGpxRotaCalculada, extrairSegmentosGpsReais, gerarGpxRotaPercorrida, prepararPacoteExportacaoGpx |
+| `public/index.html` | 461 | Alterado | — |
 | `public/manifest.webmanifest` | 39 | Igual à base | — |
-| `public/navegacaoUI.js` | 693 | Alterado | criarInterfaceNavegacao |
+| `public/navegacaoUI.js` | 693 | Igual à base | criarInterfaceNavegacao |
 | `public/network.snapshot.js` | 3 | Novo | — |
 | `public/ocorrenciasUI.js` | 167 | Igual à base | obterOuCriarUsuarioIdWeb, lerPreferenciasWeb, salvarPreferenciasWeb, formatarDataHoraPtBr, resumoPreferenciasTexto, estiloClassificacao, simboloCategoria, rotuloStatusOcorrencia, rotuloTemporalidade, formatarDistanciaCurta, gerarHtmlOpcoesCategoriasEvitar, obterDetalhesCategoria |
 | `public/planejamentoCircuito.js` | 107 | Igual à base | criarListaCircuito, opcoesCalculoCircuito, papelPontoCircuito, assinaturaPlanejador, resolverPontoNoMapa |
 | `public/resumoRota.js` | 41 | Igual à base | rotuloModo, resumoRota |
 | `public/revisoesEndereco.js` | 11 | Igual à base | criarRevisoesEndereco |
-| `public/styles.css` | 1816 | Igual à base | — |
+| `public/styles.css` | 1879 | Alterado | — |
 | `public/sw.js` | 128 | Alterado | — |
-| `public/zip.js` | 305 | Novo | codificarUtf8, decodificarUtf8, calcularCrc32, bytesParaBase64, criarZip, lerZipStore |
+| `public/zip.js` | 305 | Igual à base | codificarUtf8, decodificarUtf8, calcularCrc32, bytesParaBase64, criarZip, lerZipStore |
 | `server/index.js` | 727 | Igual à base | parsePoint, createServer |
 | `server/networkService.js` | 704 | Igual à base | SNAPSHOT_PATH, NetworkService |
 | `server/ocorrenciasService.js` | 156 | Igual à base | OCORRENCIAS_PATH, OcorrenciasService |
 | `test/api.test.js` | 251 | Igual à base | — |
 | `test/camadaBase.test.js` | 140 | Igual à base | — |
 | `test/caminhoMinimo.test.js` | 376 | Igual à base | — |
-| `test/campoOffline.test.js` | 799 | Igual à base | — |
+| `test/campoOffline.test.js` | 915 | Alterado | — |
 | `test/cenariosCircuito.js` | 45 | Igual à base | testarCircuitos |
 | `test/cenariosEnderecoUI.js` | 66 | Igual à base | testarEnderecos |
 | `test/cenariosResumoRota.js` | 27 | Igual à base | testarResumo |
@@ -164,7 +165,7 @@ Inventário mecânico de arquivos próprios ativos, testes e ferramentas; não a
 | `test/enderecoDigital.test.js` | 513 | Igual à base | — |
 | `test/enderecoUI.test.js` | 4 | Igual à base | — |
 | `test/fidelity.test.js` | 415 | Igual à base | — |
-| `test/gpx.test.js` | 547 | Alterado | — |
+| `test/gpx.test.js` | 593 | Alterado | — |
 | `test/graph.test.js` | 279 | Igual à base | — |
 | `test/helpers.js` | 90 | Igual à base | ROOT, loadRealFeatures, feature, official, unofficial, road, offset |
 | `test/integracao-arquitetura.test.js` | 448 | Igual à base | — |

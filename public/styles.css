@@ -1812,4 +1812,67 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   background: #ffffff;
 }
 
+.saved-routes-box__foot {
+  border-top: 1px solid var(--border);
+  padding: 7px 8px 8px;
+}
+.btn--danger-outline {
+  background: #ffffff;
+  border: 1px solid rgba(207, 34, 46, .45);
+  color: var(--dest);
+  font-weight: 600;
+  font-size: 12px;
+}
+.btn--danger-outline:hover:not(:disabled) {
+  background: rgba(207, 34, 46, .08);
+  border-color: var(--dest);
+}
+.btn--danger {
+  background: var(--dest);
+  border-color: var(--dest);
+  color: #ffffff;
+  font-weight: 700;
+}
+.btn--danger:hover:not(:disabled) {
+  background: #a40e26;
+  border-color: #a40e26;
+}
+.route-campo-obs__acoes .mini--danger,
+.saved-route-item__acoes .mini--danger {
+  color: var(--dest);
+  border-color: rgba(207, 34, 46, .35);
+  background: #fff5f5;
+}
+.route-campo-obs__acoes .mini--danger:hover:not(:disabled),
+.saved-route-item__acoes .mini--danger:hover:not(:disabled) {
+  color: #ffffff;
+  background: var(--dest);
+  border-color: var(--dest);
+}
+.confirm-msg {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.confirm-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  display: grid;
+  gap: 3px;
+}
+.confirm-alert {
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(207, 34, 46, .4);
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
 

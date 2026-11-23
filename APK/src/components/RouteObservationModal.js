@@ -29,6 +29,7 @@ export function RouteObservationModal({
   onSubmitCreate,
   onSubmitEdit,
   onChangeStatus,
+  onDeleteObservation,
   onFocusCoordinate,
 }) {
   const [tipoObservacao, setTipoObservacao] = useState(TIPO_OBSERVACAO_CATALOGO[0].id);
@@ -192,6 +193,16 @@ export function RouteObservationModal({
                       onPress={() => onFocusCoordinate?.({ latitude: lat, longitude: lon })}
                     >
                       <Text style={styles.statusBtnText}>Focar no mapa</Text>
+                    </TouchableOpacity>
+                  )}
+                  {typeof onDeleteObservation === 'function' && observacao && (
+                    <TouchableOpacity
+                      style={styles.deleteBtn}
+                      disabled={submitting}
+                      accessibilityRole="button"
+                      onPress={() => onDeleteObservation(observacao)}
+                    >
+                      <Text style={styles.deleteBtnText}>Excluir observação</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -376,6 +387,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: COLORS.text,
+  },
+  deleteBtn: {
+    borderWidth: 1,
+    borderColor: COLORS.errBorder,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: COLORS.errBg,
+  },
+  deleteBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.err,
   },
   emptyHist: {
     fontSize: 12,

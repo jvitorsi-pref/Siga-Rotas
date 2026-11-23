@@ -6,6 +6,11 @@ import {
   gerarGpxRotaPercorrida,
   prepararPacoteExportacaoGpx,
   nomeArquivoGpx,
+  formatarCarimboArquivo,
+  nomeArquivoRotaCalculada,
+  nomeArquivoRotaPercorrida,
+  nomeArquivoExportacaoZip,
+  validarXmlGpxExportado,
   NOME_ARQUIVO_ROTA_CALCULADA,
   NOME_ARQUIVO_ROTA_PERCORRIDA,
   NOME_ARQUIVO_EXPORTACAO_ZIP,
@@ -195,9 +200,39 @@ test('GPX: recusa rota inexistente, parcial, com falha ou sem geometria', () => 
   assert.throws(() => gerarGpxRota({ ok: true, legs: [] }), /não possui geometria válida/);
 });
 
-test('GPX: nomeArquivoGpx gera nome .gpx seguro e determinístico', () => {
-  const nome = nomeArquivoGpx(rotaExemplo(), new Date(2026, 10, 16, 9, 5));
+test('GPX: nomeArquivoGpx e geradores com carimbo local formatam nomes .gpx e .zip com timestamp', () => {
+  const dataTeste = new Date(2026, 10, 16, 9, 5, 7);
+  const nome = nomeArquivoGpx(rotaExemplo(), dataTeste);
   assert.equal(nome, 'siga-rota-A-C-B-A-2026-11-16_09-05.gpx');
+  assert.equal(formatarCarimboArquivo(dataTeste), '20261116_090507');
+  assert.equal(nomeArquivoRotaCalculada(dataTeste), 'rota_calculada_20261116_090507.gpx');
+  assert.equal(nomeArquivoRotaPercorrida(dataTeste), 'rota_percorrida_20261116_090507.gpx');
+  assert.equal(nomeArquivoExportacaoZip(dataTeste), 'exportacao_rotas_20261116_090507.zip');
+  assert.equal(NOME_ARQUIVO_ROTA_CALCULADA, 'rota_calculada.gpx');
+  assert.equal(NOME_ARQUIVO_ROTA_PERCORRIDA, 'rota_percorrida.gpx');
+  assert.equal(NOME_ARQUIVO_EXPORTACAO_ZIP, 'exportacao_rotas.zip');
+  assert.doesNotThrow(() => validarXmlGpxExportado(gerarGpxRota(rotaExemplo(), { agora: dataTeste })));
+  assert.throws(() => validarXmlGpxExportado('<gpx></gpx>'), /não atende à estrutura GPX 1\.1 válida/);
+});
+
+test('GPX: fallback para geometry global quando algum trecho não possui geometry própria', () => {
+  const xml = gerarGpxRota({
+    ok: true,
+    circular: false,
+    modo: 'usuario',
+    distance: 350,
+    pontos: [
+      { rotulo: 'A', latitude: -23.663, longitude: -46.532 },
+      { rotulo: 'B', latitude: -23.664, longitude: -46.531 },
+    ],
+    legs: [{ de: 'A', para: 'B', distance: 350 }],
+    geometry: {
+      type: 'LineString',
+      coordinates: [[-46.532, -23.663], [-46.5315, -23.6635], [-46.531, -23.664]],
+    },
+  });
+  validarEstruturaGpx11(xml);
+  assert.equal((xml.match(/<trkpt /g) || []).length, 3);
 });
 
 test('GPX Web: download direto via Blob+<a download> sem abrir seletor de pastas mesmo se showDirectoryPicker/showSaveFilePicker existirem', async () => {
@@ -213,9 +248,11 @@ test('GPX Web: download direto via Blob+<a download> sem abrir seletor de pastas
     click() { clicado = true; },
     remove() { removido = true; },
   };
+  const agoraFixo = new Date(2026, 10, 17, 10, 15, 0);
+  const nomeEsperado = 'rota_calculada_20261117_101500.gpx';
 
   const res = await exportarRotaGpxWeb(rotaExemplo(), {
-    agora: new Date(2026, 10, 17, 10, 15),
+    agora: agoraFixo,
     env: {
       showDirectoryPicker: async () => { abriuSeletorPasta = true; return {}; },
       showSaveFilePicker: async () => { abriuSeletorArquivo = true; return {}; },
@@ -248,9 +285,9 @@ test('GPX Web: download direto via Blob+<a download> sem abrir seletor de pastas
   assert.equal(res.ok, true);
   assert.equal(res.modo, 'download');
   assert.equal(res.cenario, 'CALCULADA');
-  assert.equal(res.arquivo, 'rota_calculada.gpx');
+  assert.equal(res.arquivo, nomeEsperado);
   assert.equal(fakeLink.href, 'blob:gpx-direto');
-  assert.equal(fakeLink.download, 'rota_calculada.gpx');
+  assert.equal(fakeLink.download, nomeEsperado);
   assert.equal(clicado, true);
   assert.equal(removido, true);
   assert.equal(urlRevogada, 'blob:gpx-direto');
@@ -368,26 +405,31 @@ test('GPX Cenário B (calculada + GPS real), desvio com recálculo, pausas/retom
     { latitude: -23.6660, longitude: -46.5290, timestampMs: 1700000090000, ordem: 4, segmentoIndice: 1, simulado: false },
   ];
 
-  // Cenário B (com rota original preservada após recálculo de desvio) → ZIP
+  // Cenário B (com rota original preservada após recálculo de desvio) → ZIP com carimbo timestamp
+  const agoraCenB = new Date(2026, 10, 16, 18, 30, 0);
+  const nomeCalcCenB = nomeArquivoRotaCalculada(agoraCenB);
+  const nomeGpsCenB = nomeArquivoRotaPercorrida(agoraCenB);
+  const nomeZipCenB = nomeArquivoExportacaoZip(agoraCenB);
   const pacoteB = prepararPacoteExportacaoGpx({
     rotaCalculada: rotaRecalculadaPosDesvio,
     rotaCalculadaOriginal: rotaOriginal,
     pontosGps,
-    agora: new Date('2026-11-16T18:30:00.000Z'),
+    agora: agoraCenB,
   });
   assert.equal(pacoteB.ok, true);
   assert.equal(pacoteB.cenario, 'AMBAS');
   assert.equal(pacoteB.tipoArquivo, 'zip');
-  assert.equal(pacoteB.nomeArquivo, NOME_ARQUIVO_EXPORTACAO_ZIP);
+  assert.equal(pacoteB.nomeArquivo, nomeZipCenB);
+  assert.match(pacoteB.nomeArquivo, /^exportacao_rotas_\d{8}_\d{6}\.zip$/);
 
   const entradas = lerZipStore(pacoteB.zipBytes);
   assert.deepEqual(Object.keys(entradas).sort(), [
-    NOME_ARQUIVO_ROTA_CALCULADA,
-    NOME_ARQUIVO_ROTA_PERCORRIDA,
+    nomeCalcCenB,
+    nomeGpsCenB,
   ].sort());
 
-  const xmlCalc = decodificarUtf8(entradas[NOME_ARQUIVO_ROTA_CALCULADA]);
-  const xmlGps = decodificarUtf8(entradas[NOME_ARQUIVO_ROTA_PERCORRIDA]);
+  const xmlCalc = decodificarUtf8(entradas[nomeCalcCenB]);
+  const xmlGps = decodificarUtf8(entradas[nomeGpsCenB]);
 
   // Calcula preservou as 3 paradas originais e geometria original (9 trkpts), NÃO a rota recalculada
   assert.equal((xmlCalc.match(/<wpt /g) || []).length, 3);
@@ -401,13 +443,14 @@ test('GPX Cenário B (calculada + GPS real), desvio com recálculo, pausas/retom
   assert.match(xmlGps, /<time>2023-11-14T22:13:20\.000Z<\/time>/);
   assert.equal((xmlGps.match(/<wpt /g) || []).length, 3);
 
-  // Download Web no Cenário B envia Uint8Array como application/zip
+  // Download Web no Cenário B envia Uint8Array como application/zip com carimbo único
   let parteRecebida = null;
   let mimeRecebido = '';
   const fakeLink = { style: {}, click() {}, remove() {} };
   const webB = await exportarRotaGpxWeb(rotaRecalculadaPosDesvio, {
     rotaCalculadaOriginal: rotaOriginal,
     pontosGps,
+    agora: agoraCenB,
     env: {
       Blob: class {
         constructor(parts, opts) {
@@ -422,30 +465,33 @@ test('GPX Cenário B (calculada + GPS real), desvio com recálculo, pausas/retom
   });
   assert.equal(webB.ok, true);
   assert.equal(webB.cenario, 'AMBAS');
-  assert.equal(webB.arquivo, 'exportacao_rotas.zip');
+  assert.equal(webB.arquivo, nomeZipCenB);
   assert.equal(mimeRecebido, 'application/zip');
   assert.ok(parteRecebida instanceof Uint8Array);
-  assert.ok(lerZipStore(parteRecebida)['rota_percorrida.gpx']);
+  assert.ok(lerZipStore(parteRecebida)[nomeGpsCenB]);
 
   // Modo simulação NUNCA vira rota_percorrida.gpx (cai para Cenário A)
   const pacoteSim = prepararPacoteExportacaoGpx({
     rotaCalculada: rotaOriginal,
     rotaPercorrida: { tipoRota: 'GPS', simulado: true, geometry: { type: 'LineString', coordinates: [[-46.53, -23.66], [-46.529, -23.661]] } },
     pontosGps: pontosGps.map((p) => ({ ...p, simulado: true })),
+    agora: agoraCenB,
   });
   assert.equal(pacoteSim.ok, true);
   assert.equal(pacoteSim.cenario, 'CALCULADA');
-  assert.equal(pacoteSim.nomeArquivo, NOME_ARQUIVO_ROTA_CALCULADA);
+  assert.equal(pacoteSim.nomeArquivo, nomeCalcCenB);
 
-  // Cenário C: rota GPS salva sem rota calculada vinculada → exporta somente rota_percorrida.gpx
+  // Cenário C: rota GPS salva sem rota calculada vinculada → exporta somente rota_percorrida_<timestamp>.gpx
   const pacoteC = prepararPacoteExportacaoGpx({
     rotaCalculada: null,
     rotaPercorrida: { tipoRota: 'GPS', idCliente: 'gps-only-1', simulado: false, titulo: 'Campo Centro' },
     pontosGps,
+    agora: agoraCenB,
   });
   assert.equal(pacoteC.ok, true);
   assert.equal(pacoteC.cenario, 'PERCORRIDA');
-  assert.equal(pacoteC.nomeArquivo, NOME_ARQUIVO_ROTA_PERCORRIDA);
+  assert.equal(pacoteC.nomeArquivo, nomeGpsCenB);
+  assert.match(pacoteC.nomeArquivo, /^rota_percorrida_\d{8}_\d{6}\.gpx$/);
   assert.equal((pacoteC.gpxXml.match(/<wpt /g) || []).length, 0);
   assert.equal((pacoteC.gpxXml.match(/<trkseg>/g) || []).length, 2);
   assert.equal((pacoteC.gpxXml.match(/<trkpt /g) || []).length, 4);

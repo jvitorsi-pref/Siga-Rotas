@@ -12,7 +12,7 @@
    esqueleto salvo é usado.
    ========================================================================== */
 
-const CACHE = 'siga-rotas-v16';
+const CACHE = 'siga-rotas-v17';
 
 /** Arquivos do esqueleto do aplicativo. */
 const ESQUELETO = [

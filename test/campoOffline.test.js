@@ -182,6 +182,20 @@ function criarFakeIndexedDB() {
                       if (r.onsuccess) r.onsuccess({ target: r });
                     });
                   },
+                  delete(key) {
+                    storeMeta.records.delete(key);
+                    return makeReq((r) => {
+                      r.result = undefined;
+                      if (r.onsuccess) r.onsuccess({ target: r });
+                    });
+                  },
+                  clear() {
+                    storeMeta.records.clear();
+                    return makeReq((r) => {
+                      r.result = undefined;
+                      if (r.onsuccess) r.onsuccess({ target: r });
+                    });
+                  },
                   index(idxName) {
                     const kp = storeMeta.indexes.get(idxName);
                     return {
@@ -190,6 +204,14 @@ function criarFakeIndexedDB() {
                           const all = Array.from(storeMeta.records.values());
                           const filt = val === undefined ? all : all.filter((item) => item[kp] === val);
                           r.result = filt.map((v) => JSON.parse(JSON.stringify(v)));
+                          if (r.onsuccess) r.onsuccess({ target: r });
+                        });
+                      },
+                      getAllKeys(val) {
+                        return makeReq((r) => {
+                          const all = Array.from(storeMeta.records.values());
+                          const filt = val === undefined ? all : all.filter((item) => item[kp] === val);
+                          r.result = filt.map((v) => v[keyPath]);
                           if (r.onsuccess) r.onsuccess({ target: r });
                         });
                       },
@@ -709,6 +731,100 @@ test('Serviço Web serializa ciclo GPS (FIFO) mesmo se pontos chegarem durante i
   assert.equal(rFim.rota.status, STATUS_ROTA.CONCLUIDA);
   assert.equal(rFim.rota.geometry.type, 'LineString');
   assert.equal(rFim.rota.geometry.coordinates.length, 2);
+
+  // Enquanto usuário não clicar em "Salvar rotas offline", nada entra no banco nem aceita observação órfã
+  assert.equal((await svc.listarRotasSalvas()).length, 0);
+  assert.equal(svc.obterRotaParaObservacao(), null);
+  assert.ok(svc.obterUltimaExecucaoGpsSessao());
+
+  // Ao clicar em "Salvar rotas offline", persiste rota calculada + GPS vinculado (Cenário B), sem duplicar depois
+  const s1 = await svc.salvarRotasOffline({ rotaCalculada: rota, pontos: rota.pontos });
+  assert.equal(s1.ok, true);
+  assert.ok(s1.rotaCalculada?.idCliente);
+  assert.ok(s1.rotaGps?.idCliente);
+  assert.equal(s1.rotaGps.idRotaOrigemCliente, s1.rotaCalculada.idCliente);
+  assert.equal((await svc.listarRotasSalvas()).length, 2);
+
+  const sDup = await svc.salvarRotasOffline({ rotaCalculada: rota, pontos: rota.pontos });
+  assert.equal(sDup.jaExistia, true);
+  assert.equal((await svc.listarRotasSalvas()).length, 2);
+});
+
+test('Web (IndexedDB + serviço): exclusão individual de observação/rota e limpeza total preservando cache_rede', async () => {
+  const fakeIdb = criarFakeIndexedDB();
+  const driver = criarDriverIndexedDB({ indexedDB: fakeIdb, nomeBanco: 'siga-rotas-del-limpar' });
+  const svc = criarServicoCampoWeb({
+    driver,
+    obterUsuarioId: () => 'agente-web',
+    estaOnline: () => false,
+  });
+  await svc.inicializar();
+
+  const rotaA = criarRotaExemplo(300);
+  const rotaB = criarRotaExemplo(550);
+  rotaB.pontos = [
+    { rotulo: 'A', latitude: -23.671, longitude: -46.541 },
+    { rotulo: 'B', latitude: -23.673, longitude: -46.539 },
+  ];
+
+  // Roda GPS sem salvar e depois salva tudo em "Salvar rotas offline"
+  await svc.iniciarNavegacaoGps(rotaA, { modo: 'gps' });
+  await svc.registrarPontoGps({ latitude: -23.6639, longitude: -46.5318, precisao: 5, timestampMs: 1000 });
+  await svc.registrarPontoGps({ latitude: -23.6646, longitude: -46.531, precisao: 5, timestampMs: 10000 });
+  await svc.finalizarNavegacaoGps({ concluida: true });
+  const resA = await svc.salvarRotasOffline({ rotaCalculada: rotaA, pontos: rotaA.pontos });
+  const resB = await svc.salvarRotasOffline({ rotaCalculada: rotaB, pontos: rotaB.pontos });
+  await svc.repositorio.salvarCacheRede({ type: 'FeatureCollection', features: [{ id: 1, geometry: rotaA.geometry }] });
+
+  const obsA1 = await svc.criarObservacao({
+    idRotaCliente: resA.rotaCalculada.idCliente,
+    latitude: -23.664,
+    longitude: -46.531,
+    tipoObservacao: 'VISITA_REALIZADA',
+    descricao: 'Primeira obs',
+  });
+  const obsA2 = await svc.criarObservacao({
+    idRotaCliente: resA.rotaCalculada.idCliente,
+    latitude: -23.6642,
+    longitude: -46.5312,
+    tipoObservacao: 'OUTRO',
+    descricao: 'Segunda obs',
+  });
+
+  // Excluir observação individual preserva a rota e a outra observação
+  await svc.excluirObservacao(obsA1.observacao.idCliente);
+  const obsRest = await svc.listarObservacoes({ idRotaCliente: resA.rotaCalculada.idCliente });
+  assert.equal(obsRest.length, 1);
+  assert.equal(obsRest[0].idCliente, obsA2.observacao.idCliente);
+
+  // Excluir rotaA desvincula GPS e remove obsA2 sem afetar rotaB
+  await svc.excluirRotaSalva(resA.rotaCalculada.idCliente);
+  assert.equal(await svc.obterRota(resA.rotaCalculada.idCliente), null);
+  assert.equal((await svc.listarObservacoes({ idRotaCliente: resA.rotaCalculada.idCliente })).length, 0);
+  const gpsDesv = await svc.obterRota(resA.rotaGps.idCliente);
+  assert.equal(gpsDesv.idRotaOrigemCliente, null);
+  assert.ok(await svc.obterRota(resB.rotaCalculada.idCliente));
+
+  // Limpar dados locais bloqueia com navegação ativa e limpa tudo com interrupção preservando cache_rede
+  await svc.iniciarNavegacaoGps(rotaB, { modo: 'gps' });
+  const bloqueado = await svc.limparDadosLocais();
+  assert.equal(bloqueado.ok, false);
+  assert.equal(bloqueado.motivo, 'NAVEGACAO_EM_ANDAMENTO');
+  const limpoWeb = await svc.limparDadosLocais({ forcarInterrupcaoNavegacao: true });
+  assert.equal(limpoWeb.ok, true);
+
+  assert.equal((await svc.listarRotasSalvas()).length, 0);
+  assert.equal((await svc.listarObservacoes()).length, 0);
+  assert.equal((await driver.listSyncItens()).length, 0);
+  assert.equal(svc.obterUltimaExecucaoGpsSessao(), null);
+  assert.equal((await svc.repositorio.carregarCacheRede()).featureCount, 1);
+
+  const html = await fs.readFile(path.join(ROOT_DIR, 'public/index.html'), 'utf8');
+  const appJs = await fs.readFile(path.join(ROOT_DIR, 'public/app.js'), 'utf8');
+  assert.match(html, /Salvar rotas offline/);
+  assert.match(html, /Limpar dados locais/);
+  assert.match(html, /id="campo-confirm-modal"/);
+  assert.doesNotMatch(appJs, /origemSalvamento:\s*'auto'/);
 });
 
 test('Servidor estático serve /campo/*.js, armazenamentoIndexedDB.js, campoWebService.js e sw.js atualizado', async () => {
