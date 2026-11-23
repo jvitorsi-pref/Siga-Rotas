@@ -19,6 +19,7 @@ export function SavedRoutesSection({
   saving = false,
   onSaveCurrent,
   onOpenRoute,
+  onExportRoute,
   onRefresh,
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -79,7 +80,21 @@ export function SavedRoutesSection({
                 <Text style={styles.cardMeta}>
                   {rota.tipoRota === TIPO_ROTA.GPS ? 'GPS real' : 'Calculada'} · {formatarDistanciaCurta(rota.distanciaMetros)} · {rota.pontosJson?.length || 0} parada(s)
                 </Text>
-                <Text style={styles.cardAction}>Toque para abrir offline e ver observações</Text>
+                <View style={styles.cardFooter}>
+                  <Text style={styles.cardAction}>Toque para abrir offline e ver observações</Text>
+                  {typeof onExportRoute === 'function' && !rota.simulado && (
+                    <TouchableOpacity
+                      style={styles.exportSavedBtn}
+                      accessibilityRole="button"
+                      onPress={(e) => {
+                        e?.stopPropagation?.();
+                        onExportRoute(rota.idCliente);
+                      }}
+                    >
+                      <Text style={styles.exportSavedBtnText}>Exportar GPX</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </TouchableOpacity>
             ))
           )}
@@ -185,9 +200,30 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: COLORS.muted,
   },
+  cardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginTop: 2,
+  },
   cardAction: {
+    flex: 1,
     fontSize: 10.5,
     fontWeight: '600',
+    color: COLORS.accentStrong,
+  },
+  exportSavedBtn: {
+    borderWidth: 1,
+    borderColor: COLORS.accentStrong,
+    borderRadius: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: COLORS.panel2,
+  },
+  exportSavedBtnText: {
+    fontSize: 10.5,
+    fontWeight: '700',
     color: COLORS.accentStrong,
   },
   refreshBtn: {

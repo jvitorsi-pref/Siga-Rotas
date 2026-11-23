@@ -19,6 +19,7 @@ import { COLORS } from '../theme/colors';
 export function RouteResultPanel({
   routeResult,
   routeError,
+  gpsRouteInfo = null,
   routeSegments = [],
   onToggleSegment,
   onRestoreSegments,
@@ -34,7 +35,60 @@ export function RouteResultPanel({
 }) {
   const [streetsOpen, setStreetsOpen] = useState(true);
 
-  if (!routeResult && !routeError) return null;
+  if (!routeResult && !routeError && !gpsRouteInfo) return null;
+
+  if (!routeResult && !routeError && gpsRouteInfo) {
+    const distGps = formatDistanceParts(gpsRouteInfo.distanciaMetros || 0);
+    return (
+      <View style={styles.block}>
+        <Text style={styles.blockTitle}>Resultado (GPS Real)</Text>
+        <View style={styles.distanceRow}>
+          <Text style={styles.distanceValue}>{distGps.v}</Text>
+          <Text style={styles.distanceUnit}>{distGps.u}</Text>
+        </View>
+        <Text style={styles.routeNote}>
+          Trajeto GPS real registrado (sem rota calculada vinculada).
+        </Text>
+        {typeof onExportGpx === 'function' && (
+          <View style={styles.gpxSection}>
+            <TouchableOpacity
+              style={[styles.exportGpxBtn, exportingGpx && styles.exportGpxBtnDisabled]}
+              disabled={exportingGpx}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !!exportingGpx, busy: !!exportingGpx }}
+              onPress={onExportGpx}
+            >
+              <Text style={styles.exportGpxBtnText}>
+                {exportingGpx ? 'Salvando GPX…' : 'Exportar GPX'}
+              </Text>
+            </TouchableOpacity>
+            {!!gpxFeedback?.text && (
+              <View
+                style={[
+                  styles.gpxFeedbackBox,
+                  gpxFeedback.kind === 'err' && styles.gpxFeedbackErr,
+                  gpxFeedback.kind === 'warn' && styles.gpxFeedbackWarn,
+                  gpxFeedback.kind === 'ok' && styles.gpxFeedbackOk,
+                ]}
+              >
+                <Text
+                  accessibilityRole={gpxFeedback.kind === 'err' ? 'alert' : undefined}
+                  style={[
+                    styles.gpxFeedbackText,
+                    gpxFeedback.kind === 'err' && styles.gpxFeedbackTextErr,
+                    gpxFeedback.kind === 'warn' && styles.gpxFeedbackTextWarn,
+                    gpxFeedback.kind === 'ok' && styles.gpxFeedbackTextOk,
+                  ]}
+                >
+                  {gpxFeedback.text}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+      </View>
+    );
+  }
 
   if (routeError) {
     return (

@@ -105,6 +105,10 @@ import {
     // última rota calculada (resposta da API) — é o que a navegação
     // ativa usa como plano; null quando não há rota
     rotaAtual: null,
+    // planejamento original preservado mesmo após recálculo de desvio na navegação
+    rotaPlanejadaOriginal: null,
+    // idCliente da execução GPS real ativa ou recém-encerrada para exportação
+    idRotaGpsAtual: null,
     // lista de pontos do trajeto (origem, paradas, destino)
     lista: criarListaCircuito(),
     // modo da rota: 'otimizada' (menor rota) | 'usuario' (ordem definida)
@@ -2206,13 +2210,54 @@ import {
   }
 
   async function exportarGpx() {
-    const rotaValida =
+    if (navUI?.estado?.ativo) {
+      const msg = 'Encerre ou finalize a navegação em andamento antes de exportar o GPX. Os dados da navegação permanecem preservados.';
+      mostrarFeedbackGpx(msg, 'err');
+      setStatus(msg, 'err');
+      return { ok: false, motivo: 'NAVEGACAO_EM_ANDAMENTO', mensagem: msg };
+    }
+
+    const rotaAtualValida =
       state.rotaAtual &&
       assinaturaRota === assinaturaPlanejador(state) &&
       state.rotaAtual.ok !== false &&
       !state.rotaAtual.parcial;
-    if (!rotaValida) {
-      const msg = 'Calcule uma rota completa antes de exportar em GPX.';
+
+    const rotaCalcOriginal =
+      state.rotaPlanejadaOriginal?.rota &&
+      state.rotaPlanejadaOriginal.rota.ok !== false &&
+      !state.rotaPlanejadaOriginal.rota.parcial
+        ? state.rotaPlanejadaOriginal.rota
+        : (rotaAtualValida ? state.rotaAtual : null);
+
+    let rotaPercorrida = null;
+    let pontosGps = [];
+    let idGps = state.idRotaGpsAtual;
+    try {
+      if (!idGps && rotaCalcOriginal?.idCliente && typeof campoWeb !== 'undefined') {
+        const execsGps = await campoWeb.listarRotasSalvas({
+          tipoRota: 'GPS',
+          incluirSimuladas: false,
+          limit: 40,
+        });
+        const vinculada = execsGps.find(
+          (g) => !g.simulado && g.idRotaOrigemCliente === rotaCalcOriginal.idCliente && g.geometry,
+        );
+        if (vinculada) idGps = vinculada.idCliente;
+      }
+      if (idGps && typeof campoWeb !== 'undefined') {
+        const regGps = await campoWeb.obterRota(idGps);
+        if (regGps && !regGps.simulado) {
+          rotaPercorrida = regGps;
+          pontosGps = await campoWeb.listarPontosGps(idGps);
+        }
+      }
+    } catch {
+      /* mantém apenas os dados disponíveis em memória se leitura local falhar */
+    }
+
+    if (!rotaAtualValida && !rotaCalcOriginal && !rotaPercorrida && pontosGps.length < 2) {
+      const msg = 'Calcule uma rota completa ou registre um percurso GPS real antes de exportar em GPX.';
       mostrarFeedbackGpx(msg, 'err');
       setStatus(msg, 'err');
       return { ok: false, motivo: 'SEM_ROTA', mensagem: msg };
@@ -2222,7 +2267,18 @@ import {
     limparFeedbackGpx();
     setStatus('Preparando exportação GPX…', 'busy');
     try {
-      const res = await exportarRotaGpxWeb(state.rotaAtual, { pontos: state.lista.pontos });
+      const rotaParaExportar = rotaAtualValida ? state.rotaAtual : null;
+      const pontosExportar =
+        state.rotaPlanejadaOriginal?.pontos?.length
+          ? state.rotaPlanejadaOriginal.pontos
+          : state.lista.pontos;
+      const res = await exportarRotaGpxWeb(state.rotaAtual && rotaAtualValida ? state.rotaAtual : rotaParaExportar, {
+        pontos: pontosExportar,
+        rotaCalculadaOriginal: rotaCalcOriginal,
+        rotaPercorrida,
+        pontosGps,
+        navegacaoEmAndamento: false,
+      });
       if (res.ok) {
         mostrarFeedbackGpx(res.mensagem, 'ok');
         setStatus(res.mensagem, 'ok');
@@ -2495,9 +2551,20 @@ import {
 
     // a rota atual é o PLANO da navegação ativa
     state.rotaAtual = data;
+    if (!opcoes.manterNavegacao) {
+      state.rotaPlanejadaOriginal = {
+        rota: data,
+        pontos: state.lista.pontos.map((p) => ({ ...p })),
+      };
+      if (!opcoes.preservarGps) {
+        state.idRotaGpsAtual = null;
+      }
+    }
     assinaturaRota = assinaturaPlanejador(state);
     limparFeedbackGpx();
-    if (els.exportGpx) els.exportGpx.hidden = !!(data.ok === false || data.parcial);
+    if (els.exportGpx) {
+      els.exportGpx.hidden = !!((data.ok === false || data.parcial) && !state.idRotaGpsAtual);
+    }
     if (els.startNav) els.startNav.hidden = false;
     // se havia navegação em curso, ela é encerrada: o trajeto planejado
     // mudou e a navegação antiga não valeria mais
@@ -2563,10 +2630,11 @@ import {
     // desenha a rota (no circuito, o retorno à origem vai tracejado)
     desenharRota(data, opcoes);
 
-    // Persistência offline-first automática da rota calculada (sem sobrescrever GPS)
+    // Persistência offline-first automática da rota calculada (sem sobrescrever rota original em desvio nem GPS)
     if (els.saveRouteOffline) els.saveRouteOffline.hidden = !!(data.ok === false || data.parcial);
     if (els.addRouteObs) els.addRouteObs.hidden = !!(data.ok === false || data.parcial);
-    if (!opcoes.naoSalvarLocal && data.ok !== false && !data.parcial && typeof campoWeb !== 'undefined') {
+    const deveSalvarLocal = !opcoes.naoSalvarLocal && !opcoes.manterNavegacao;
+    if (deveSalvarLocal && data.ok !== false && !data.parcial && typeof campoWeb !== 'undefined') {
       void campoWeb.salvarRotaCalculada(data, {
         pontos: state.lista.pontos,
         modo: state.modo,
@@ -2575,6 +2643,9 @@ import {
       }).then((res) => {
         if (res?.rota) {
           state.rotaAtual.idCliente = res.rota.idCliente;
+          if (state.rotaPlanejadaOriginal?.rota === data) {
+            state.rotaPlanejadaOriginal.rota.idCliente = res.rota.idCliente;
+          }
           void atualizarObservacoesDaRotaAtiva();
         }
       }).catch(() => {});
@@ -2845,6 +2916,8 @@ import {
     inicializarPontos();
     atualizarLegenda();
     state.rotaAtual = null;
+    state.rotaPlanejadaOriginal = null;
+    state.idRotaGpsAtual = null;
     state.rotasDisponiveis = [];
     state.rotaSelecionadaId = null;
     state.comparacaoAlternativas = null;
@@ -2924,6 +2997,7 @@ import {
           '</div>' +
           '<div class="saved-route-item__acoes">' +
           '<button type="button" class="mini" data-acao-rota="abrir">Abrir no mapa</button>' +
+          '<button type="button" class="mini" data-acao-rota="gpx">Exportar GPX</button>' +
           '<button type="button" class="mini" data-acao-rota="obs">Observações</button>' +
           '</div>' +
           '</div>'
@@ -2934,10 +3008,82 @@ import {
     }
   }
 
-  async function reabrirRotaSalvaCampo(idCliente) {
+  async function exportarRotaSalvaCampo(idCliente) {
+    if (navUI?.estado?.ativo) {
+      const msg = 'Encerre ou finalize a navegação em andamento antes de exportar o GPX. Os dados da navegação permanecem preservados.';
+      mostrarFeedbackGpx(msg, 'err');
+      setStatus(msg, 'err');
+      return { ok: false, motivo: 'NAVEGACAO_EM_ANDAMENTO', mensagem: msg };
+    }
+    const reg = await campoWeb.obterRota(idCliente);
+    if (!reg) {
+      const msg = 'Rota salva não encontrada para exportação GPX.';
+      mostrarFeedbackGpx(msg, 'err');
+      setStatus(msg, 'err');
+      return { ok: false, motivo: 'SEM_ROTA', mensagem: msg };
+    }
+    if (reg.tipoRota === 'GPS' && reg.simulado) {
+      const msg = 'Execuções simuladas não representam percurso real de GPS para exportação.';
+      mostrarFeedbackGpx(msg, 'err');
+      setStatus(msg, 'err');
+      return { ok: false, motivo: 'SIMULACAO_NAO_EXPORTAVEL', mensagem: msg };
+    }
+
+    let rotaCalculada = null;
+    let rotaPercorrida = null;
+    let pontosGps = [];
+    let pontos = [];
+
+    if (reg.tipoRota === 'GPS') {
+      rotaPercorrida = reg;
+      pontosGps = await campoWeb.listarPontosGps(reg.idCliente);
+      if (reg.idRotaOrigemCliente) {
+        const orig = await campoWeb.obterRota(reg.idRotaOrigemCliente);
+        if (orig && orig.tipoRota !== 'GPS' && orig.geometry) {
+          rotaCalculada = campoWeb.reconstruirRespostaRotaDeRegistro(orig) || orig;
+          pontos = Array.isArray(orig.pontosJson) ? orig.pontosJson : [];
+        }
+      }
+    } else {
+      rotaCalculada = campoWeb.reconstruirRespostaRotaDeRegistro(reg) || reg;
+      pontos = Array.isArray(reg.pontosJson) ? reg.pontosJson : [];
+      const execsGps = await campoWeb.listarRotasSalvas({
+        tipoRota: 'GPS',
+        incluirSimuladas: false,
+        limit: 40,
+      });
+      const vinculada = execsGps.find(
+        (g) => !g.simulado && g.idRotaOrigemCliente === reg.idCliente && g.geometry,
+      );
+      if (vinculada) {
+        rotaPercorrida = vinculada;
+        pontosGps = await campoWeb.listarPontosGps(vinculada.idCliente);
+      }
+    }
+
+    const res = await exportarRotaGpxWeb(rotaCalculada, {
+      pontos,
+      rotaCalculadaOriginal: rotaCalculada,
+      rotaPercorrida,
+      pontosGps,
+      navegacaoEmAndamento: false,
+    });
+    if (res.ok) {
+      mostrarFeedbackGpx(res.mensagem, 'ok');
+      setStatus(res.mensagem, 'ok');
+    } else {
+      mostrarFeedbackGpx(res.mensagem, 'err');
+      setStatus(res.mensagem, 'err');
+    }
+    return res;
+  }
+
+  async function reabrirRotaSalvaCampo(idCliente, opcoes = {}) {
     const reg = await campoWeb.obterRota(idCliente);
     if (!reg) return;
     if (reg.tipoRota === 'GPS') {
+      if (reg.simulado) return;
+      state.idRotaGpsAtual = reg.idCliente;
       gpsTrailSource.clear();
       if (reg.geometry) {
         const feat = toOlFeature({
@@ -2951,10 +3097,13 @@ import {
           map.getView().fit(ext, { padding: [70, 70, 70, 70], duration: 450, maxZoom: 18 });
         }
       }
+      let temOrigem = false;
       if (reg.idRotaOrigemCliente) {
         const orig = await campoWeb.obterRota(reg.idRotaOrigemCliente);
-        if (orig) {
-          await reabrirRotaSalvaCampo(orig.idCliente);
+        if (orig && orig.geometry) {
+          temOrigem = true;
+          await reabrirRotaSalvaCampo(orig.idCliente, { preservarGps: true });
+          state.idRotaGpsAtual = reg.idCliente;
           // reaplica a trilha GPS sobre a rota original sem substituí-la
           if (reg.geometry) {
             gpsTrailSource.clear();
@@ -2965,6 +3114,32 @@ import {
             }));
           }
         }
+      }
+      if (!temOrigem) {
+        state.rotaAtual = null;
+        state.rotaPlanejadaOriginal = null;
+        routeSource.clear();
+        altRouteSource.clear();
+        limparFeedbackGpx();
+        if (els.resultBlock) els.resultBlock.hidden = false;
+        const d = formatDistance(reg.distanciaMetros || 0);
+        if (els.distanceValue) {
+          els.distanceValue.className = 'distance__value';
+          els.distanceValue.textContent = d.v;
+        }
+        if (els.distanceUnit) els.distanceUnit.textContent = d.u;
+        if (els.routeNote) {
+          els.routeNote.hidden = false;
+          els.routeNote.textContent =
+            'Trajeto GPS real registrado (sem rota calculada vinculada).';
+        }
+        if (els.legs) els.legs.innerHTML = '';
+        if (els.streets) els.streets.innerHTML = '';
+        if (els.streetsCount) els.streetsCount.textContent = '0';
+        atualizarLegenda([]);
+        if (els.startNav) els.startNav.hidden = true;
+        if (els.saveRouteOffline) els.saveRouteOffline.hidden = true;
+        if (els.exportGpx) els.exportGpx.hidden = !reg.geometry;
       }
       await renderizarObservacoesDaRotaCampo(reg.idCliente);
       setStatus('Execução GPS restaurada do armazenamento local (' + reg.status + ').', 'ok');
@@ -2992,10 +3167,35 @@ import {
       renderizarPontos();
     }
 
+    if (!opcoes.preservarGps) {
+      gpsTrailSource.clear();
+      state.idRotaGpsAtual = null;
+      try {
+        const execsGps = await campoWeb.listarRotasSalvas({
+          tipoRota: 'GPS',
+          incluirSimuladas: false,
+          limit: 40,
+        });
+        const vinculada = execsGps.find(
+          (g) => !g.simulado && g.idRotaOrigemCliente === reg.idCliente && g.geometry,
+        );
+        if (vinculada) {
+          state.idRotaGpsAtual = vinculada.idCliente;
+          gpsTrailSource.addFeature(toOlFeature({
+            type: 'Feature',
+            properties: { idCliente: vinculada.idCliente, tipoRota: 'GPS' },
+            geometry: vinculada.geometry,
+          }));
+        }
+      } catch {
+        /* segue apenas com rota calculada */
+      }
+    }
+
     campoWeb.definirRotaCalculadaAtiva(reg);
     const reconstruida = campoWeb.reconstruirRespostaRotaDeRegistro(reg);
     if (reconstruida) {
-      showRoute(reconstruida, { naoSalvarLocal: true });
+      showRoute(reconstruida, { naoSalvarLocal: true, preservarGps: true });
       setStatus('Rota salva aberta offline (' + (reg.titulo || reg.idCliente) + ').', 'ok');
     }
     await renderizarObservacoesDaRotaCampo(reg.idCliente);
@@ -3170,8 +3370,12 @@ import {
     els.campoGpsFinalizar.addEventListener('click', () => {
       const id = els.campoGpsRecovery?.dataset?.rotaCliente;
       if (!id) return;
-      void campoWeb.recuperarExecucaoPendente(id, 'finalizar').then(() => {
+      void campoWeb.recuperarExecucaoPendente(id, 'finalizar').then((res) => {
         if (els.campoGpsRecovery) els.campoGpsRecovery.hidden = true;
+        if (res?.rota?.geometry && !res.rota.simulado) {
+          state.idRotaGpsAtual = res.rota.idCliente;
+          void reabrirRotaSalvaCampo(res.rota.idCliente);
+        }
         setStatus('Trilha GPS recuperada e salva localmente.', 'ok');
       });
     });
@@ -3195,6 +3399,8 @@ import {
       const id = card.dataset.rotaId;
       if (btn.dataset.acaoRota === 'abrir') {
         void reabrirRotaSalvaCampo(id);
+      } else if (btn.dataset.acaoRota === 'gpx') {
+        void exportarRotaSalvaCampo(id);
       } else if (btn.dataset.acaoRota === 'obs') {
         void reabrirRotaSalvaCampo(id).then(() => {
           if (els.routeCampoObs) els.routeCampoObs.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
@@ -3334,10 +3540,24 @@ import {
     loadOcorrencias,
         fetchApi: fetch,
         clienteRede,
-        aoIniciarNavegacaoCampo: (rota, opts) => {
+        aoIniciarNavegacaoCampo: async (rota, opts) => {
           pontosTrilhaAoVivo = [];
           gpsTrailSource.clear();
-          return campoWeb.iniciarNavegacaoGps(rota, opts);
+          if (!state.rotaPlanejadaOriginal && rota && rota.ok !== false && !rota.parcial) {
+            state.rotaPlanejadaOriginal = {
+              rota,
+              pontos: state.lista.pontos.map((p) => ({ ...p })),
+            };
+          }
+          if (opts?.modo !== 'simulacao') {
+            state.idRotaGpsAtual = null;
+          }
+          const rotaPlano = state.rotaPlanejadaOriginal?.rota || rota;
+          const exec = await campoWeb.iniciarNavegacaoGps(rotaPlano, opts);
+          if (opts?.modo !== 'simulacao' && exec?.idCliente) {
+            state.idRotaGpsAtual = exec.idCliente;
+          }
+          return exec;
         },
         aoPontoGpsNavegacaoCampo: async (p) => {
           const res = await campoWeb.registrarPontoGps(p);
@@ -3370,9 +3590,21 @@ import {
         aoRetomarNavegacaoCampo: () => campoWeb.retomarNavegacaoGps(),
         aoEncerrarNavegacaoCampo: async (opts) => {
           const res = await campoWeb.finalizarNavegacaoGps(opts);
+          if (res?.rota && !res.rota.simulado) {
+            if (res.rota.geometry) {
+              state.idRotaGpsAtual = res.rota.idCliente;
+            } else if (state.idRotaGpsAtual === res.rota.idCliente) {
+              state.idRotaGpsAtual = null;
+            }
+          }
+          if (els.exportGpx) {
+            const temCalc = !!(state.rotaPlanejadaOriginal?.rota || (state.rotaAtual?.ok !== false && !state.rotaAtual?.parcial));
+            els.exportGpx.hidden = !(temCalc || state.idRotaGpsAtual);
+          }
           await atualizarObservacoesDaRotaAtiva();
           return res;
         },
+        exportarRotaSalvaCampo,
         exportarGpx,
       };
   // a rota atual é lida sempre do estado (nunca fica desatualizada)

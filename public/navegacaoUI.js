@@ -431,6 +431,7 @@ export function criarInterfaceNavegacao(app) {
         plano: nav.plano,
         velocidadeMultiplicador: nav.velocidadeSim,
         aoAtualizar: (p) => {
+          if (!nav.ativo || !nav.controlador || nav.controlador.estado.execucao !== EXECUCAO.ATIVO) return;
           nav.ultimaAtualizacao = Date.now();
           nav.controlador.atualizarPosicao(p);
           if (typeof app.aoPontoGpsNavegacaoCampo === 'function') {
@@ -447,6 +448,7 @@ export function criarInterfaceNavegacao(app) {
     } else {
       nav.fonte = criarFonteGPS({
         aoAtualizar: (p) => {
+          if (!nav.ativo || !nav.controlador || nav.controlador.estado.execucao !== EXECUCAO.ATIVO) return;
           nav.ultimaAtualizacao = Date.now();
           nav.controlador.atualizarPosicao(p);
           if (typeof app.aoPontoGpsNavegacaoCampo === 'function') {

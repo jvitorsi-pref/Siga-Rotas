@@ -12,7 +12,7 @@
    esqueleto salvo é usado.
    ========================================================================== */
 
-const CACHE = 'siga-rotas-v15';
+const CACHE = 'siga-rotas-v16';
 
 /** Arquivos do esqueleto do aplicativo. */
 const ESQUELETO = [
@@ -26,6 +26,7 @@ const ESQUELETO = [
   '/armazenamentoIndexedDB.js',
   '/campoWebService.js',
   '/camadaBase.js',
+  '/zip.js',
   '/gpx.js',
   '/exportarGpxWeb.js',
   '/planejamentoCircuito.js',
