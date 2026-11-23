@@ -6,11 +6,35 @@
  * Compartilhado entre Web e APK; não altera o cálculo de rotas.
  */
 
-import { criarZip } from './zip.js';
+import { criarZip, lerZipStore, decodificarUtf8 } from './zip.js';
 
 export const NOME_ARQUIVO_ROTA_CALCULADA = 'rota_calculada.gpx';
 export const NOME_ARQUIVO_ROTA_PERCORRIDA = 'rota_percorrida.gpx';
 export const NOME_ARQUIVO_EXPORTACAO_ZIP = 'exportacao_rotas.zip';
+
+/**
+ * Formata data/hora local no padrão `YYYYMMDD_HHMMSS` para nomes de exportação.
+ */
+export function formatarCarimboArquivo(data = new Date()) {
+  const d = data instanceof Date && !Number.isNaN(data.getTime()) ? data : new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_` +
+    `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+  );
+}
+
+export function nomeArquivoRotaCalculada(data = new Date()) {
+  return `rota_calculada_${formatarCarimboArquivo(data)}.gpx`;
+}
+
+export function nomeArquivoRotaPercorrida(data = new Date()) {
+  return `rota_percorrida_${formatarCarimboArquivo(data)}.gpx`;
+}
+
+export function nomeArquivoExportacaoZip(data = new Date()) {
+  return `exportacao_rotas_${formatarCarimboArquivo(data)}.zip`;
+}
 
 function escapeXml(valor) {
   return String(valor == null ? '' : valor)
@@ -132,10 +156,12 @@ function extrairSegmentos(route) {
   const legs = Array.isArray(route?.legs) ? route.legs : [];
   const segmentos = [];
   let totalInvalidas = 0;
+  let algumLegSemGeometria = false;
 
   for (const leg of legs) {
     const { linhas, invalidas } = extrairLinhasGeometria(leg?.geometry);
     totalInvalidas += invalidas;
+    if (!linhas.length) algumLegSemGeometria = true;
     for (const pontos of linhas) {
       segmentos.push({
         de: leg.de || '',
@@ -160,11 +186,16 @@ function extrairSegmentos(route) {
     }
   }
 
-  if (segmentos.length === 0 && route?.geometry) {
+  if (route?.geometry && (segmentos.length === 0 || algumLegSemGeometria)) {
     const { linhas, invalidas } = extrairLinhasGeometria(route.geometry);
     totalInvalidas += invalidas;
-    for (const pontos of linhas) {
-      segmentos.push({ de: '', para: '', retorno: false, pontos });
+    const pontosLegs = segmentos.reduce((s, seg) => s + seg.pontos.length, 0);
+    const pontosGeom = linhas.reduce((s, l) => s + l.length, 0);
+    if (segmentos.length === 0 || pontosGeom > pontosLegs) {
+      segmentos.length = 0;
+      for (const pontos of linhas) {
+        segmentos.push({ de: '', para: '', retorno: false, pontos });
+      }
     }
   }
 
@@ -264,10 +295,64 @@ function formatarWaypointsXml(waypoints, { circular = false } = {}) {
   return linhas;
 }
 
-function validarXmlGpxNaoVazio(xml, contexto = 'GPX') {
-  if (typeof xml !== 'string' || !xml.trim() || !xml.includes('<trkpt ') || !xml.includes('</gpx>')) {
-    throw new Error(`Arquivo ${contexto} gerado está vazio ou sem pontos de trilha válidos.`);
+export function validarXmlGpxExportado(xml, { segmentosEsperados = null, contexto = 'GPX' } = {}) {
+  if (
+    typeof xml !== 'string' ||
+    !xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>') ||
+    !xml.includes('<gpx version="1.1"') ||
+    !xml.includes('xmlns="http://www.topografix.com/GPX/1/1"') ||
+    !xml.includes('<metadata>') ||
+    !xml.includes('<bounds ') ||
+    !xml.includes('<trk>') ||
+    !xml.includes('<trkseg>') ||
+    !xml.includes('</gpx>')
+  ) {
+    throw new Error(`Arquivo ${contexto} gerado não atende à estrutura GPX 1.1 válida.`);
   }
+
+  const wptMatches = [...xml.matchAll(/<wpt lat="([^"]+)" lon="([^"]+)"/g)];
+  for (const m of wptMatches) {
+    const lat = Number(m[1]);
+    const lon = Number(m[2]);
+    if (!coordValida(lon, lat)) {
+      throw new Error(`Waypoint com coordenada WGS84 inválida no arquivo ${contexto}.`);
+    }
+  }
+
+  const trksegMatches = xml.match(/<trkseg>/g) || [];
+  const trkptMatches = [...xml.matchAll(/<trkpt lat="([^"]+)" lon="([^"]+)"/g)];
+  if (trkptMatches.length < 2) {
+    throw new Error(`Arquivo ${contexto} gerado não possui pontos de trilha suficientes.`);
+  }
+  for (const m of trkptMatches) {
+    const lat = Number(m[1]);
+    const lon = Number(m[2]);
+    if (!coordValida(lon, lat)) {
+      throw new Error(`Ponto de trilha com coordenada WGS84 inválida no arquivo ${contexto}.`);
+    }
+  }
+
+  if (Array.isArray(segmentosEsperados)) {
+    if (trksegMatches.length !== segmentosEsperados.length) {
+      throw new Error(
+        `Divergência nos segmentos GPX (${trksegMatches.length} gerados vs ${segmentosEsperados.length} esperados).`,
+      );
+    }
+    const totalEsperado = segmentosEsperados.reduce((acc, s) => {
+      const lista = Array.isArray(s) ? s : (Array.isArray(s?.pontos) ? s.pontos : []);
+      return acc + lista.length;
+    }, 0);
+    if (trkptMatches.length !== totalEsperado) {
+      throw new Error(
+        `Divergência na geometria GPX (${trkptMatches.length} vértices gravados vs ${totalEsperado} esperados).`,
+      );
+    }
+  }
+  return true;
+}
+
+function validarXmlGpxNaoVazio(xml, contexto = 'GPX', segmentosEsperados = null) {
+  return validarXmlGpxExportado(xml, { segmentosEsperados, contexto });
 }
 
 /**
@@ -386,7 +471,7 @@ export function gerarGpxRota(route, opcoes = {}) {
 
   linhas.push('  </trk>', '</gpx>', '');
   const xml = linhas.join('\n');
-  validarXmlGpxNaoVazio(xml, NOME_ARQUIVO_ROTA_CALCULADA);
+  validarXmlGpxNaoVazio(xml, nomeArquivoRotaCalculada(agora), segmentos);
   return xml;
 }
 
@@ -657,7 +742,7 @@ export function gerarGpxRotaPercorrida({
 
   linhas.push('  </trk>', '</gpx>', '');
   const xml = linhas.join('\n');
-  validarXmlGpxNaoVazio(xml, NOME_ARQUIVO_ROTA_PERCORRIDA);
+  validarXmlGpxNaoVazio(xml, nomeArquivoRotaPercorrida(agoraDate), extraido.segmentos);
   return xml;
 }
 
@@ -677,8 +762,9 @@ function escolherRotaCalculadaCandidata(rotaCalculadaOriginal, rotaCalculada) {
 
 /**
  * Orquestra automaticamente os cenários A (somente calculada), B (calculada +
- * percorrida em `exportacao_rotas.zip`) e C (somente percorrida), aplicando todas
- * as validações de segurança, coordenadas e navegação em andamento.
+ * percorrida em `exportacao_rotas_YYYYMMDD_HHMMSS.zip`) e C (somente percorrida),
+ * aplicando carimbo temporal local (`YYYYMMDD_HHMMSS`) e validações de segurança,
+ * integridade GPX/ZIP, coordenadas WGS84 e navegação em andamento.
  */
 export function prepararPacoteExportacaoGpx({
   rotaCalculada = null,
@@ -699,13 +785,18 @@ export function prepararPacoteExportacaoGpx({
     };
   }
 
+  const agoraData = agora instanceof Date && !Number.isNaN(agora.getTime()) ? agora : new Date();
+  const nomeCalc = nomeArquivoRotaCalculada(agoraData);
+  const nomeGps = nomeArquivoRotaPercorrida(agoraData);
+  const nomeZip = nomeArquivoExportacaoZip(agoraData);
+
   const rotaCalcCandidata = escolherRotaCalculadaCandidata(rotaCalculadaOriginal, rotaCalculada);
   let xmlCalculada = null;
   let erroCalculada = null;
 
   if (rotaCalcCandidata) {
     try {
-      xmlCalculada = gerarGpxRota(rotaCalcCandidata, { pontos, agora });
+      xmlCalculada = gerarGpxRota(rotaCalcCandidata, { pontos, agora: agoraData });
     } catch (err) {
       erroCalculada = err;
     }
@@ -728,7 +819,7 @@ export function prepararPacoteExportacaoGpx({
         rotaPercorrida: gpsNaoSimulado,
         pontos,
         rotaOrigem: rotaCalcCandidata,
-        agora,
+        agora: agoraData,
       });
     } catch (err) {
       erroGps = err;
@@ -737,29 +828,37 @@ export function prepararPacoteExportacaoGpx({
     erroGps = new Error('Os registros GPS contêm coordenadas inválidas (WGS84 fora da faixa).');
   }
 
-  // Cenário B: rota calculada + rota percorrida → exportacao_rotas.zip
+  // Cenário B: rota calculada + rota percorrida → exportacao_rotas_YYYYMMDD_HHMMSS.zip
   if (xmlCalculada && xmlPercorrida) {
     try {
       const zipBytes = criarZipFn(
         [
-          { nome: NOME_ARQUIVO_ROTA_CALCULADA, conteudo: xmlCalculada },
-          { nome: NOME_ARQUIVO_ROTA_PERCORRIDA, conteudo: xmlPercorrida },
+          { nome: nomeCalc, conteudo: xmlCalculada },
+          { nome: nomeGps, conteudo: xmlPercorrida },
         ],
-        { agora },
+        { agora: agoraData },
       );
       if (!(zipBytes instanceof Uint8Array) || zipBytes.byteLength < 22) {
         throw new Error('Pacote ZIP vazio ou inválido.');
+      }
+      if (criarZipFn === criarZip) {
+        const lido = lerZipStore(zipBytes);
+        if (!lido[nomeCalc] || !lido[nomeGps]) {
+          throw new Error('Falha na verificação de integridade das entradas do pacote ZIP.');
+        }
+        validarXmlGpxExportado(decodificarUtf8(lido[nomeCalc]), { contexto: nomeCalc });
+        validarXmlGpxExportado(decodificarUtf8(lido[nomeGps]), { contexto: nomeGps });
       }
       return {
         ok: true,
         cenario: 'AMBAS',
         tipoArquivo: 'zip',
-        nomeArquivo: NOME_ARQUIVO_EXPORTACAO_ZIP,
+        nomeArquivo: nomeZip,
         mimeType: 'application/zip',
         zipBytes,
         arquivos: [
-          { nome: NOME_ARQUIVO_ROTA_CALCULADA, conteudo: xmlCalculada },
-          { nome: NOME_ARQUIVO_ROTA_PERCORRIDA, conteudo: xmlPercorrida },
+          { nome: nomeCalc, conteudo: xmlCalculada },
+          { nome: nomeGps, conteudo: xmlPercorrida },
         ],
       };
     } catch (err) {
@@ -771,29 +870,29 @@ export function prepararPacoteExportacaoGpx({
     }
   }
 
-  // Cenário A: somente rota calculada → rota_calculada.gpx
+  // Cenário A: somente rota calculada → rota_calculada_YYYYMMDD_HHMMSS.gpx
   if (xmlCalculada) {
     return {
       ok: true,
       cenario: 'CALCULADA',
       tipoArquivo: 'gpx',
-      nomeArquivo: NOME_ARQUIVO_ROTA_CALCULADA,
+      nomeArquivo: nomeCalc,
       mimeType: 'application/gpx+xml',
       gpxXml: xmlCalculada,
-      arquivos: [{ nome: NOME_ARQUIVO_ROTA_CALCULADA, conteudo: xmlCalculada }],
+      arquivos: [{ nome: nomeCalc, conteudo: xmlCalculada }],
     };
   }
 
-  // Cenário C: somente rota percorrida → rota_percorrida.gpx
+  // Cenário C: somente rota percorrida → rota_percorrida_YYYYMMDD_HHMMSS.gpx
   if (xmlPercorrida) {
     return {
       ok: true,
       cenario: 'PERCORRIDA',
       tipoArquivo: 'gpx',
-      nomeArquivo: NOME_ARQUIVO_ROTA_PERCORRIDA,
+      nomeArquivo: nomeGps,
       mimeType: 'application/gpx+xml',
       gpxXml: xmlPercorrida,
-      arquivos: [{ nome: NOME_ARQUIVO_ROTA_PERCORRIDA, conteudo: xmlPercorrida }],
+      arquivos: [{ nome: nomeGps, conteudo: xmlPercorrida }],
     };
   }
 

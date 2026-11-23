@@ -69,6 +69,7 @@ import { rotuloIndicadorSync, SYNC_STATUS, TIPO_ROTA, reconstruirRespostaRotaDeR
 import { SavedRoutesSection } from './src/components/SavedRoutesSection.js';
 import { RouteObservationsSection } from './src/components/RouteObservationsSection.js';
 import { RouteObservationModal } from './src/components/RouteObservationModal.js';
+import { ConfirmActionModal } from './src/components/ConfirmActionModal.js';
 import { COLORS } from './src/theme/colors.js';
 
 export default function App() {
@@ -114,6 +115,7 @@ export default function App() {
   // Estado offline-first de campo (SQLite + Sync WebForms)
   const [savedRoutes, setSavedRoutes] = useState([]);
   const [savingRoute, setSavingRoute] = useState(false);
+  const [saveOfflineFeedback, setSaveOfflineFeedback] = useState(null);
   const [gpsTrailGeometry, setGpsTrailGeometry] = useState(null);
   const [gpsRecordForExport, setGpsRecordForExport] = useState(null);
   const [routeObservations, setRouteObservations] = useState([]);
@@ -128,6 +130,16 @@ export default function App() {
     eventos: [],
     submitting: false,
     errorText: null,
+  });
+  const [confirmModal, setConfirmModal] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    items: [],
+    alertText: null,
+    confirmLabel: 'Confirmar',
+    submitting: false,
+    onConfirm: null,
   });
 
   const campoServiceRef = useRef(null);
@@ -321,9 +333,11 @@ export default function App() {
     plannedRouteOriginalRef.current = null;
     lastGpsExecutionIdRef.current = null;
     setGpsRecordForExport(null);
+    setSaveOfflineFeedback(null);
     setRouteResult(null); setRouteError(null); setPartialGeometry(null); setCalculating(false); setNavigationCenter(null);
     setRouteAlternatives(null); setSelectedRouteId(null); setComparacaoAlternativas(null);
     setGpsTrailGeometry(null);
+    campoServiceRef.current?.limparSessaoGpsEmMemoria();
     campoServiceRef.current?.definirRotaCalculadaAtiva(null);
   }, [lista]);
   useEffect(() => () => { revisoesEndereco.current.limpar(); calculoRef.current++; navigationRef.current.descartar(); }, []);
@@ -671,7 +685,9 @@ export default function App() {
     setRouteError(null);
     setPartialGeometry(null);
     setGpxFeedback(null);
+    setSaveOfflineFeedback(null);
     setGpsTrailGeometry(null);
+    campoServiceRef.current?.limparSessaoGpsEmMemoria();
     campoServiceRef.current?.definirRotaCalculadaAtiva(null);
     setStatus('Pronto', 'idle');
   };
@@ -707,6 +723,12 @@ export default function App() {
       let idGps = lastGpsExecutionIdRef.current || rotaPercorrida?.idCliente || null;
 
       if (svc) {
+        const sessaoGps = svc.obterUltimaExecucaoGpsSessao?.();
+        if (sessaoGps?.rota && !sessaoGps.rota.simulado && (!idGps || sessaoGps.rota.idCliente === idGps)) {
+          rotaPercorrida = sessaoGps.rota;
+          pontosGps = Array.isArray(sessaoGps.pontosGps) ? sessaoGps.pontosGps : [];
+          if (!idGps) idGps = sessaoGps.rota.idCliente;
+        }
         if (!idGps && rotaCalcOriginal?.idCliente) {
           const execs = await svc.listarRotasSalvas({
             tipoRota: TIPO_ROTA.GPS,
@@ -721,7 +743,7 @@ export default function App() {
             rotaPercorrida = vinc;
           }
         }
-        if (idGps) {
+        if (idGps && pontosGps.length < 2) {
           const regGps = await svc.obterRota(idGps);
           if (regGps && !regGps.simulado) {
             rotaPercorrida = regGps;
@@ -851,6 +873,13 @@ export default function App() {
     setRouteAlternatives(null);
     setSelectedRouteId(null);
     setComparacaoAlternativas(null);
+    setSaveOfflineFeedback(null);
+    setGpsRecordForExport(null);
+    setGpsTrailGeometry(null);
+    lastGpsExecutionIdRef.current = null;
+    plannedRouteOriginalRef.current = null;
+    campoServiceRef.current?.limparSessaoGpsEmMemoria();
+    campoServiceRef.current?.definirRotaCalculadaAtiva(null);
   };
 
   const selecionarAlternativa = (altId, listaAlts = routeAlternatives) => {
@@ -865,21 +894,21 @@ export default function App() {
     };
     lastGpsExecutionIdRef.current = null;
     setGpsRecordForExport(null);
+    setSaveOfflineFeedback(null);
+    campoServiceRef.current?.limparSessaoGpsEmMemoria();
     setRouteResult(novaRota);
     const d = formatDistanceParts(escolhida.distance ?? escolhida.rota?.distance);
     setStatus(`Rota selecionada (${escolhida.rotulo || escolhida.id}): ${d.v} ${d.u}.`, 'ok');
     if (novaRota?.ok) {
-      void campoServiceRef.current?.salvarRotaCalculada(novaRota, {
-        pontos: lista.pontos,
-        modo: lastCalcModeRef.current || 'usuario',
-        circular: true,
-        origemSalvamento: 'auto',
-      }).then((saved) => {
-        if (saved?.rota?.idCliente && plannedRouteOriginalRef.current?.rota === novaRota) {
-          plannedRouteOriginalRef.current.rota.idCliente = saved.rota.idCliente;
-        }
-        return refreshCampoUi();
-      }).catch(() => {});
+      void campoServiceRef.current?.buscarRotaSalvaPorAssinatura(novaRota, lista.pontos)
+        .then((jaSalva) => {
+          campoServiceRef.current?.definirRotaCalculadaAtiva(jaSalva || null);
+          if (jaSalva && plannedRouteOriginalRef.current?.rota === novaRota) {
+            plannedRouteOriginalRef.current.rota.idCliente = jaSalva.idCliente;
+          }
+          return refreshCampoUi();
+        })
+        .catch(() => {});
     }
   };
 
@@ -1116,23 +1145,26 @@ export default function App() {
       const rotaPersistir = Array.isArray(data.rotas) && data.rotas.length
         ? (data.rotas.find((r) => r.id === (data.rotaSelecionadaId || data.rotas[0].id))?.rota || data)
         : data;
-      plannedRouteOriginalRef.current = {
-        rota: rotaPersistir,
-        pontos: lista.pontos.map((p) => ({ ...p })),
-      };
-      lastGpsExecutionIdRef.current = null;
-      setGpsRecordForExport(null);
-      void campoServiceRef.current?.salvarRotaCalculada(rotaPersistir, {
-        pontos: lista.pontos,
-        modo,
-        circular: true,
-        origemSalvamento: 'auto',
-      }).then((saved) => {
-        if (saved?.rota?.idCliente && plannedRouteOriginalRef.current?.rota === rotaPersistir) {
-          plannedRouteOriginalRef.current.rota.idCliente = saved.rota.idCliente;
-        }
-        return refreshCampoUi();
-      }).catch(() => {});
+      if (typeof plannedRouteOriginalRef !== 'undefined') {
+        plannedRouteOriginalRef.current = {
+          rota: rotaPersistir,
+          pontos: lista.pontos.map((p) => ({ ...p })),
+        };
+      }
+      if (typeof lastGpsExecutionIdRef !== 'undefined') lastGpsExecutionIdRef.current = null;
+      if (typeof setGpsRecordForExport === 'function') setGpsRecordForExport(null);
+      // Salvamento offline acontece EXCLUSIVAMENTE ao clicar em "Salvar rotas offline"
+      if (typeof campoServiceRef !== 'undefined') {
+        void campoServiceRef.current?.buscarRotaSalvaPorAssinatura(rotaPersistir, lista.pontos)
+          .then((jaSalva) => {
+            campoServiceRef.current?.definirRotaCalculadaAtiva(jaSalva || null);
+            if (jaSalva && plannedRouteOriginalRef.current?.rota === rotaPersistir) {
+              plannedRouteOriginalRef.current.rota.idCliente = jaSalva.idCliente;
+            }
+            return refreshCampoUi();
+          })
+          .catch(() => {});
+      }
     } catch (err) {
       if (requestId !== calculoRef.current) return;
       setRouteError({
@@ -1184,22 +1216,202 @@ export default function App() {
   // ─────────────── Persistência offline de rotas e observações ───────────────
 
   const handleSaveCurrentRoute = async () => {
-    if (!routeResult?.ok || savingRoute) return;
+    const svc = campoServiceRef.current;
+    if (!svc || savingRoute) return;
+    const rotaCalc = routeResult?.ok && !routeResult?.parcial ? routeResult : null;
+    const rotaOrig =
+      plannedRouteOriginalRef.current?.rota?.ok && !plannedRouteOriginalRef.current?.rota?.parcial
+        ? plannedRouteOriginalRef.current.rota
+        : null;
+    const temGpsSessao = !!svc.obterUltimaExecucaoGpsSessao?.();
+    if (!rotaCalc && !rotaOrig && !temGpsSessao) return;
+
     setSavingRoute(true);
+    setSaveOfflineFeedback(null);
     try {
-      await campoServiceRef.current.salvarRotaCalculada(routeResult, {
-        pontos: lista.pontos,
+      const pontos = plannedRouteOriginalRef.current?.pontos?.length
+        ? plannedRouteOriginalRef.current.pontos
+        : lista.pontos;
+      const res = await svc.salvarRotasOffline({
+        rotaCalculada: rotaCalc,
+        rotaCalculadaOriginal: rotaOrig,
+        pontos,
         modo: lastCalcModeRef.current || 'usuario',
         circular: true,
-        origemSalvamento: 'manual',
       });
+      if (res?.rotaCalculada && plannedRouteOriginalRef.current?.rota) {
+        plannedRouteOriginalRef.current.rota.idCliente = res.rotaCalculada.idCliente;
+      }
+      if (res?.rotaGps) {
+        lastGpsExecutionIdRef.current = res.rotaGps.idCliente;
+        setGpsRecordForExport(res.rotaGps);
+      }
       await refreshCampoUi();
-      setStatus('Rota salva no dispositivo.', 'ok');
+      const msg = res?.jaExistia
+        ? 'As rotas atuais já estão salvas offline (nenhuma duplicação criada).'
+        : res?.rotaCalculada && res?.rotaGps
+          ? 'Rota calculada e trajeto GPS salvos no dispositivo para uso offline.'
+          : 'Rota salva no dispositivo (disponível offline).';
+      setSaveOfflineFeedback({ kind: 'ok', text: msg });
+      setStatus(msg, 'ok');
     } catch (err) {
-      setStatus(err?.message || 'Não foi possível salvar a rota.', 'err');
+      const msg = err?.message || 'Não foi possível salvar a rota offline.';
+      setSaveOfflineFeedback({ kind: 'err', text: msg });
+      setStatus(msg, 'err');
     } finally {
       setSavingRoute(false);
     }
+  };
+
+  const handleDeleteSavedRoute = async (rota) => {
+    const svc = campoServiceRef.current;
+    if (!svc || !rota?.idCliente) return;
+    const navEstado = navigationRef.current?.estado;
+    const navAtiva = !!navEstado && (navEstado.execucao === 'ativo' || navEstado.execucao === 'pausado');
+    if (navAtiva && svc.execucaoGpsAtiva?.idCliente === rota.idCliente) {
+      setStatus('Encerre a navegação em andamento antes de excluir esta rota.', 'err');
+      return;
+    }
+
+    const titulo = rota.titulo || (rota.tipoRota === TIPO_ROTA.GPS ? 'Trajeto GPS real' : 'Rota calculada');
+    setConfirmModal({
+      visible: true,
+      title: 'Excluir rota salva',
+      message: `Deseja excluir localmente a rota "${titulo}"?`,
+      items: [
+        'A rota salva será removida do armazenamento local do dispositivo.',
+        'Observações, eventos e pontos GPS vinculados exclusivamente a esta rota também serão excluídos localmente.',
+        'Outras rotas salvas, preferências do aplicativo e registros já sincronizados no servidor permanecem preservados.',
+      ],
+      alertText: 'Esta exclusão local não pode ser desfeita neste dispositivo.',
+      confirmLabel: 'Excluir rota',
+      submitting: false,
+      onConfirm: async () => {
+        setConfirmModal((prev) => ({ ...prev, submitting: true }));
+        try {
+          const id = rota.idCliente;
+          const estavaNoGps = lastGpsExecutionIdRef.current === id || gpsRecordForExport?.idCliente === id;
+          await svc.excluirRotaSalva(id);
+          if (estavaNoGps) {
+            lastGpsExecutionIdRef.current = null;
+            setGpsRecordForExport(null);
+            setGpsTrailGeometry(null);
+          }
+          if (plannedRouteOriginalRef.current?.rota?.idCliente === id) {
+            delete plannedRouteOriginalRef.current.rota.idCliente;
+          }
+          setConfirmModal((prev) => ({ ...prev, visible: false, submitting: false, onConfirm: null }));
+          await refreshCampoUi();
+          setStatus('Rota salva excluída do dispositivo.', 'ok');
+        } catch (err) {
+          setConfirmModal((prev) => ({ ...prev, visible: false, submitting: false, onConfirm: null }));
+          setStatus(err?.message || 'Não foi possível excluir a rota salva.', 'err');
+        }
+      },
+    });
+  };
+
+  const handleDeleteRouteObservation = (obs) => {
+    const svc = campoServiceRef.current;
+    if (!svc || !obs?.idCliente) return;
+    setConfirmModal({
+      visible: true,
+      title: 'Excluir observação',
+      message: `Deseja excluir localmente esta observação (${obs.descricao || obs.tipoObservacao})?`,
+      items: [
+        'A observação e seu histórico de eventos local serão removidos do dispositivo.',
+        'A rota vinculada, outras observações e dados já enviados ao servidor não serão afetados.',
+      ],
+      alertText: 'Esta exclusão local não pode ser desfeita neste dispositivo.',
+      confirmLabel: 'Excluir observação',
+      submitting: false,
+      onConfirm: async () => {
+        setConfirmModal((prev) => ({ ...prev, submitting: true }));
+        try {
+          await svc.excluirObservacao(obs.idCliente);
+          setRouteObsModal((prev) =>
+            prev.observacao?.idCliente === obs.idCliente
+              ? { ...prev, visible: false, observacao: null }
+              : prev,
+          );
+          setConfirmModal((prev) => ({ ...prev, visible: false, submitting: false, onConfirm: null }));
+          await refreshCampoUi();
+          setStatus('Observação excluída do dispositivo.', 'ok');
+        } catch (err) {
+          setConfirmModal((prev) => ({ ...prev, visible: false, submitting: false, onConfirm: null }));
+          setStatus(err?.message || 'Não foi possível excluir a observação.', 'err');
+        }
+      },
+    });
+  };
+
+  const abrirConfirmacaoFinalLimpezaDados = (navAtiva) => {
+    setConfirmModal({
+      visible: true,
+      title: 'Limpar dados locais',
+      message: 'Esta ação removerá permanentemente do armazenamento local deste dispositivo:',
+      items: [
+        'Todas as rotas salvas offline;',
+        'Todos os percursos GPS gravados e pontos de trilha locais;',
+        'Todas as observações de campo e históricos locais;',
+        'Registros temporários e fila pendente de sincronização local.',
+      ],
+      alertText:
+        'Ação irreversível nos dados locais deste dispositivo. Suas preferências do trajeto, configurações do servidor, identificação do usuário e dados já existentes no servidor remoto serão preservados.',
+      confirmLabel: navAtiva ? 'Interromper navegação e limpar tudo' : 'Limpar dados locais',
+      submitting: false,
+      onConfirm: async () => {
+        setConfirmModal((prev) => ({ ...prev, submitting: true }));
+        try {
+          if (navAtiva) {
+            navigationRef.current.encerrar();
+          }
+          await campoServiceRef.current.limparDadosLocais({ forcarInterrupcaoNavegacao: true });
+          plannedRouteOriginalRef.current = null;
+          lastGpsExecutionIdRef.current = null;
+          setGpsRecordForExport(null);
+          setGpsTrailGeometry(null);
+          setRouteResult(null);
+          setRouteAlternatives(null);
+          setSelectedRouteId(null);
+          setComparacaoAlternativas(null);
+          setRouteError(null);
+          setPartialGeometry(null);
+          setGpxFeedback(null);
+          setSaveOfflineFeedback(null);
+          setRouteObservations([]);
+          setSavedRoutes([]);
+          setPendingRecovery([]);
+          setRouteObsModal((prev) => ({ ...prev, visible: false, observacao: null }));
+          setConfirmModal((prev) => ({ ...prev, visible: false, submitting: false, onConfirm: null }));
+          await refreshCampoUi();
+          setStatus('Dados locais limpos (preferências e configurações preservadas).', 'ok');
+        } catch (err) {
+          setConfirmModal((prev) => ({ ...prev, visible: false, submitting: false, onConfirm: null }));
+          setStatus(err?.message || 'Não foi possível limpar os dados locais.', 'err');
+        }
+      },
+    });
+  };
+
+  const handleClearLocalData = () => {
+    Keyboard.dismiss();
+    const navEstado = navigationRef.current?.estado;
+    const navAtiva = !!navEstado && (navEstado.execucao === 'ativo' || navEstado.execucao === 'pausado');
+    if (navAtiva) {
+      setConfirmModal({
+        visible: true,
+        title: 'Navegação em andamento',
+        message: 'Existe uma navegação em andamento neste momento. Limpar os dados locais agora irá interromper e descartar a navegação atual.',
+        items: [],
+        alertText: 'Confirme primeiro se deseja interromper a navegação em andamento para prosseguir com a limpeza.',
+        confirmLabel: 'Interromper navegação e continuar',
+        submitting: false,
+        onConfirm: () => abrirConfirmacaoFinalLimpezaDados(true),
+      });
+      return;
+    }
+    abrirConfirmacaoFinalLimpezaDados(false);
   };
 
   const handleOpenSavedRoute = async (idCliente) => {
@@ -1266,7 +1478,7 @@ export default function App() {
         setRouteResult(reconstruida);
       } else {
         // Cenário C: execução GPS real sem rota calculada vinculada
-        svc.definirRotaCalculadaAtiva(null);
+        svc.definirRotaCalculadaAtiva(registro);
         plannedRouteOriginalRef.current = null;
         setRouteResult(null);
       }
@@ -1304,7 +1516,7 @@ export default function App() {
   const handleStartPickRouteObs = () => {
     Keyboard.dismiss();
     if (!campoServiceRef.current?.obterRotaParaObservacao()) {
-      setStatus('Calcule ou abra uma rota salva antes de registrar uma observação.', 'err');
+      setStatus('Salve a rota em "Salvar rotas offline" ou abra uma rota salva antes de registrar observações.', 'err');
       return;
     }
     setPickingId(null);
@@ -1667,11 +1879,14 @@ export default function App() {
 
               <SavedRoutesSection
                 rotas={savedRoutes}
-                canSaveCurrent={!!routeResult?.ok}
+                canSaveCurrent={!!routeResult?.ok || !!(gpsRecordForExport && !gpsRecordForExport.simulado)}
                 saving={savingRoute}
+                saveFeedback={saveOfflineFeedback}
                 onSaveCurrent={handleSaveCurrentRoute}
                 onOpenRoute={handleOpenSavedRoute}
                 onExportRoute={handleExportSavedRoute}
+                onDeleteRoute={handleDeleteSavedRoute}
+                onClearLocalData={handleClearLocalData}
                 onRefresh={refreshCampoUi}
               />
             </View>
@@ -1687,6 +1902,7 @@ export default function App() {
 
             <RouteObservationsSection
               rotaAlvo={campoServiceRef.current?.obterRotaParaObservacao()}
+              hasRouteOnScreen={!!routeResult?.ok || !!(gpsRecordForExport && !gpsRecordForExport.simulado)}
               observacoes={routeObservations}
               hasActiveGpsPosition={!!navigation?.posicao}
               pickingObservation={pickingRouteObs}
@@ -1697,6 +1913,7 @@ export default function App() {
               }}
               onCreateAtGpsPosition={handleCreateRouteObsAtGps}
               onOpenObservation={handleOpenRouteObservationDetail}
+              onDeleteObservation={handleDeleteRouteObservation}
             />
 
             {/* Bloco de Resultado da Rota */}
@@ -1764,6 +1981,7 @@ export default function App() {
               onSubmitCreate={handleSubmitCreateRouteObs}
               onSubmitEdit={handleSubmitEditRouteObs}
               onChangeStatus={handleChangeStatusRouteObs}
+              onDeleteObservation={handleDeleteRouteObservation}
               onFocusCoordinate={(coord) => {
                 setRouteObsModal((prev) => ({ ...prev, visible: false }));
                 if (layoutMode === 'panel') setLayoutMode('split');
@@ -1819,6 +2037,18 @@ export default function App() {
             </Text>
           </TouchableOpacity>
         </View>
+
+        <ConfirmActionModal
+          visible={confirmModal.visible}
+          title={confirmModal.title}
+          message={confirmModal.message}
+          items={confirmModal.items}
+          alertText={confirmModal.alertText}
+          confirmLabel={confirmModal.confirmLabel}
+          submitting={confirmModal.submitting}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={() => setConfirmModal((prev) => ({ ...prev, visible: false, submitting: false, onConfirm: null }))}
+        />
       </View>
     </SafeAreaView>
   );

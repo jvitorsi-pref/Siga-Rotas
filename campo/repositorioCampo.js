@@ -20,6 +20,7 @@ import {
   TIPO_ROTA,
   aplicarEdicaoObservacao,
   aplicarStatusObservacao,
+  calcularAssinaturaRota,
   criarRegistroExecucaoGps,
   criarRegistroObservacao,
   criarRegistroRotaCalculada,
@@ -167,6 +168,113 @@ export function criarDriverMemoria() {
 
     async getCacheRede(chave) {
       return clonar(cacheRede.get(chave) || null);
+    },
+
+    async deleteObservacao(idCliente) {
+      const atual = observacoes.get(idCliente);
+      if (!atual) {
+        return { removida: false, idRotaCliente: null, eventosRemovidos: 0, syncRemovidos: 0 };
+      }
+      const evtIds = new Set();
+      for (const [eid, evt] of eventos.entries()) {
+        if (evt.idObservacaoCliente === idCliente) {
+          evtIds.add(eid);
+          eventos.delete(eid);
+        }
+      }
+      observacoes.delete(idCliente);
+      let syncRemovidos = 0;
+      for (const [sid, item] of syncFila.entries()) {
+        if (
+          item.entidadeId === idCliente ||
+          evtIds.has(item.entidadeId) ||
+          item.dependeDe === idCliente
+        ) {
+          syncFila.delete(sid);
+          syncRemovidos += 1;
+        }
+      }
+      return {
+        removida: true,
+        idRotaCliente: atual.idRotaCliente,
+        eventosRemovidos: evtIds.size,
+        syncRemovidos,
+      };
+    },
+
+    async deleteRotaLocal(idCliente) {
+      const rota = rotas.get(idCliente);
+      if (!rota) {
+        return { removida: false, tipoRota: null, observacoesRemovidas: 0, pontosRemovidos: 0 };
+      }
+      // Desvincula execuções GPS independentes que apontavam para esta rota calculada
+      // para nunca corromper nem excluir outros registros salvos.
+      for (const [rid, outra] of rotas.entries()) {
+        if (rid !== idCliente && outra.idRotaOrigemCliente === idCliente) {
+          rotas.set(rid, {
+            ...outra,
+            idRotaOrigemCliente: null,
+            idRotaOrigemServidor: null,
+          });
+        }
+      }
+      for (const [sid, item] of syncFila.entries()) {
+        if (item.entidadeTipo === ENTIDADE_SYNC.ROTA && item.dependeDe === idCliente) {
+          syncFila.set(sid, { ...item, dependeDe: null });
+        }
+      }
+
+      const obsIds = new Set();
+      for (const [oid, obs] of observacoes.entries()) {
+        if (obs.idRotaCliente === idCliente) {
+          obsIds.add(oid);
+          observacoes.delete(oid);
+        }
+      }
+      const evtIds = new Set();
+      for (const [eid, evt] of eventos.entries()) {
+        if (obsIds.has(evt.idObservacaoCliente)) {
+          evtIds.add(eid);
+          eventos.delete(eid);
+        }
+      }
+      const pts = pontosGps.get(idCliente) || [];
+      pontosGps.delete(idCliente);
+      rotas.delete(idCliente);
+
+      for (const [sid, item] of syncFila.entries()) {
+        if (
+          item.entidadeId === idCliente ||
+          obsIds.has(item.entidadeId) ||
+          evtIds.has(item.entidadeId) ||
+          obsIds.has(item.dependeDe)
+        ) {
+          syncFila.delete(sid);
+        }
+      }
+
+      return {
+        removida: true,
+        tipoRota: rota.tipoRota,
+        observacoesRemovidas: obsIds.size,
+        pontosRemovidos: pts.length,
+      };
+    },
+
+    async clearDadosLocaisCampo() {
+      const contagens = {
+        rotas: rotas.size,
+        pontosGps: Array.from(pontosGps.values()).reduce((s, arr) => s + arr.length, 0),
+        observacoes: observacoes.size,
+        eventos: eventos.size,
+        syncFila: syncFila.size,
+      };
+      rotas.clear();
+      pontosGps.clear();
+      observacoes.clear();
+      eventos.clear();
+      syncFila.clear();
+      return { ok: true, removidos: contagens };
     },
   };
 }
@@ -703,6 +811,94 @@ export function criarRepositorioCampo({
     return true;
   }
 
+  async function buscarRotaSalvaPorAssinatura(rota, pontos = []) {
+    await inicializar();
+    if (!rota || rota.ok === false || rota.parcial) return null;
+    const assinatura = calcularAssinaturaRota(rota, pontos);
+    return driver.findRotaPorAssinatura(assinatura);
+  }
+
+  /**
+   * Salva uma execução GPS já capturada em sessão (com seus pontos) somente quando
+   * acionado pelo usuário em "Salvar rotas offline", evitando duplicações.
+   */
+  async function salvarExecucaoGpsCompleta({ execucao, pontosGps = [] } = {}) {
+    await inicializar();
+    if (!execucao || execucao.simulado || execucao.tipoRota !== TIPO_ROTA.GPS) {
+      return { rota: null, criada: false, atualizada: false };
+    }
+    const existente = await driver.getRota(execucao.idCliente);
+    if (existente) {
+      const mesmosDados =
+        existente.status === execucao.status &&
+        Math.round(Number(existente.distanciaMetros || 0)) === Math.round(Number(execucao.distanciaMetros || 0)) &&
+        existente.idRotaOrigemCliente === (execucao.idRotaOrigemCliente ?? null);
+      if (mesmosDados) {
+        return { rota: existente, criada: false, atualizada: false };
+      }
+      const atualizada = {
+        ...existente,
+        ...clonar(execucao),
+        origemSalvamento: 'manual',
+        dataAtualizacao: normalizarIso(null, agora),
+      };
+      await driver.putRota(atualizada);
+      return { rota: atualizada, criada: false, atualizada: true };
+    }
+
+    const registro = {
+      ...clonar(execucao),
+      origemSalvamento: 'manual',
+      syncStatus: execucao.geometry ? SYNC_STATUS.PENDING : SYNC_STATUS.SYNCED,
+    };
+
+    const syncItem = registro.geometry
+      ? criarItemSync({
+          entidadeTipo: ENTIDADE_SYNC.ROTA,
+          entidadeId: registro.idCliente,
+          operacao: 'CRIAR',
+          dependeDe: registro.idRotaOrigemCliente ?? null,
+          prioridade: 2,
+        })
+      : null;
+
+    await driver.putRotaComSync(registro, syncItem);
+
+    for (const pt of Array.isArray(pontosGps) ? pontosGps : []) {
+      await driver.appendPontoGps({
+        ...clonar(pt),
+        idRotaCliente: registro.idCliente,
+      });
+    }
+    return { rota: registro, criada: true, atualizada: false };
+  }
+
+  async function excluirObservacaoRota(idCliente) {
+    await inicializar();
+    if (!idCliente) throw new Error('Observação inválida para exclusão.');
+    const atual = await driver.getObservacao(idCliente);
+    if (!atual) throw new Error('Observação não encontrada no armazenamento local.');
+    const res = await driver.deleteObservacao(idCliente);
+    return { ok: true, idCliente, ...res };
+  }
+
+  async function excluirRotaSalva(idCliente) {
+    await inicializar();
+    if (!idCliente) throw new Error('Rota inválida para exclusão.');
+    const atual = await driver.getRota(idCliente);
+    if (!atual) throw new Error('Rota salva não encontrada no armazenamento local.');
+    sessoesGps.delete(idCliente);
+    const res = await driver.deleteRotaLocal(idCliente);
+    return { ok: true, idCliente, ...res };
+  }
+
+  async function limparDadosLocais() {
+    await inicializar();
+    sessoesGps.clear();
+    seqOrdemFila = 0;
+    return driver.clearDadosLocaisCampo();
+  }
+
   async function carregarCacheRede() {
     await inicializar();
     return driver.getCacheRede('siga_rede_oficial');
@@ -712,8 +908,11 @@ export function criarRepositorioCampo({
     driver,
     inicializar,
     salvarRotaCalculada,
+    buscarRotaSalvaPorAssinatura,
+    salvarExecucaoGpsCompleta,
     listarRotasSalvas,
     obterRota,
+    excluirRotaSalva,
     iniciarExecucaoGps,
     registrarPontoGps,
     pausarExecucaoGps,
@@ -724,8 +923,10 @@ export function criarRepositorioCampo({
     criarObservacaoRota,
     editarObservacaoRota,
     alterarStatusObservacao,
+    excluirObservacaoRota,
     listarObservacoes,
     obterResumoSincronizacao,
+    limparDadosLocais,
     salvarCacheRede,
     carregarCacheRede,
   };

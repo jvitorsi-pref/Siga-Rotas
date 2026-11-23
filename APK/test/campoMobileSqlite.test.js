@@ -305,17 +305,31 @@ test('campoMobileServiceCore + criarNavegacaoMobile integram GPS real vs simula�
   assert.equal(ultimoRes?.aceito, true);
   assert.equal(ultimoRes?.geometria?.type, 'LineString');
 
-  // Observação criada durante GPS real vincula à execução GPS em andamento
+  // Enquanto não clicar em "Salvar rotas offline", GPS não cria registro automático no SQLite
+  const rotasDuranteGps = await svc.listarRotasSalvas();
+  assert.equal(rotasDuranteGps.length, 1);
+
+  nav.encerrar();
+  await new Promise((r) => setTimeout(r, 20));
+
+  // Continua sem duplicar nem auto-salvar após encerrar; sessão finalizada fica disponível em memória
+  assert.equal((await svc.listarRotasSalvas()).length, 1);
+  assert.ok(svc.obterUltimaExecucaoGpsSessao()?.rota);
+
+  // Ao clicar em "Salvar rotas offline", persiste GPS vinculado à rota calculada
+  const salvoOffline = await svc.salvarRotasOffline({ rotaCalculada: rota, pontos: rota.pontos });
+  assert.equal(salvoOffline.ok, true);
+  assert.ok(salvoOffline.rotaGps?.idCliente);
+  assert.equal((await svc.listarRotasSalvas()).length, 2);
+
+  // Observação criada após salvar offline vincula à rota salva ativa
   const obs = await svc.criarObservacao({
     latitude: -23.6645,
     longitude: -46.5311,
     tipoObservacao: 'ACESSO_DIFICIL',
     descricao: 'Escadaria interditada',
   });
-  assert.notEqual(obs.observacao.idRotaCliente, salva.rota.idCliente);
-
-  nav.encerrar();
-  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(obs.observacao.idRotaCliente, salva.rota.idCliente);
 
   // Volta online e sincroniza lote completo em ordem CALCULADA -> GPS -> OBSERVACAO -> EVENTO
   online = true;
@@ -324,6 +338,110 @@ test('campoMobileServiceCore + criarNavegacaoMobile integram GPS real vs simula�
   assert.ok(lotes.length >= 1);
   const resumo = await svc.obterResumoSincronizacao();
   assert.equal(resumo.estado, SYNC_STATUS.SYNCED);
+  await driver.close();
+});
+
+test('APK SQLite real (PRAGMA foreign_keys = ON): exclusão individual de observação/rota e limpeza de dados locais preservando cache_rede', async () => {
+  const driver = criarDriverSqliteCore({
+    sqlite: criarAdaptadorNodeSqlite(),
+    nomeBanco: ':memory:',
+  });
+  const svc = criarServicoCampoMobileCore({
+    driver,
+    obterApiUrl: () => 'https://portal.exemplo/SigaRotas/ApiProxy.ashx',
+    obterUsuarioId: () => 'agente-apk',
+    estaOnline: () => false,
+  });
+  await svc.inicializar();
+
+  const rota1 = criarRotaMobileExemplo();
+  const rota2 = {
+    ...criarRotaMobileExemplo(),
+    distance: 780,
+    pontos: [
+      { rotulo: 'A', latitude: -23.67, longitude: -46.54, enderecoDigital: '8M4W+X2' },
+      { rotulo: 'B', latitude: -23.672, longitude: -46.538, enderecoDigital: '8M4X+3C' },
+    ],
+  };
+
+  // Salva rota1 + GPS real manualmente via salvarRotasOffline
+  const s1 = await svc.salvarRotasOffline({ rotaCalculada: rota1, pontos: rota1.pontos });
+  await svc.iniciarNavegacaoGps(rota1, { modo: 'gps' });
+  await svc.registrarPontoGps({ latitude: -23.6639, longitude: -46.5318, precisao: 5, timestampMs: 1_700_000_000_000 });
+  await svc.registrarPontoGps({ latitude: -23.6648, longitude: -46.5309, precisao: 5, timestampMs: 1_700_000_010_000 });
+  await svc.finalizarNavegacaoGps({ concluida: true });
+  const s1ComGps = await svc.salvarRotasOffline({ rotaCalculada: rota1, pontos: rota1.pontos });
+  assert.equal(s1ComGps.jaExistia, false);
+  assert.ok(s1ComGps.rotaGps?.idCliente);
+
+  // Salva rota2 separadamente
+  const s2 = await svc.salvarRotasOffline({ rotaCalculada: rota2, pontos: rota2.pontos });
+  await svc.repositorio.salvarCacheRede({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: { ID: 99 }, geometry: rota1.geometry }] });
+
+  // Cria 2 observações na rota1 e 1 na rota2
+  const obs1 = await svc.criarObservacao({
+    idRotaCliente: s1.rotaCalculada.idCliente,
+    latitude: -23.664,
+    longitude: -46.531,
+    tipoObservacao: 'VISITA_REALIZADA',
+    descricao: 'Obs 1',
+  });
+  const obs2 = await svc.criarObservacao({
+    idRotaCliente: s1.rotaCalculada.idCliente,
+    latitude: -23.6641,
+    longitude: -46.5312,
+    tipoObservacao: 'PENDENCIA_CAMPO',
+    descricao: 'Obs 2',
+  });
+  await svc.criarObservacao({
+    idRotaCliente: s2.rotaCalculada.idCliente,
+    latitude: -23.671,
+    longitude: -46.539,
+    tipoObservacao: 'OUTRO',
+    descricao: 'Obs rota 2',
+  });
+
+  // 1) Excluir observação individual remove apenas obs1 e seus eventos, preservando obs2 e a rota
+  const delObs = await svc.excluirObservacao(obs1.observacao.idCliente);
+  assert.equal(delObs.ok, true);
+  const obsRestR1 = await svc.listarObservacoes({ idRotaCliente: s1.rotaCalculada.idCliente });
+  assert.equal(obsRestR1.length, 1);
+  assert.equal(obsRestR1[0].idCliente, obs2.observacao.idCliente);
+
+  // 2) Excluir rota1 calculada remove rota1, obs2 e desvincula s1ComGps sem erro de FK, preservando rota2
+  const delRota = await svc.excluirRotaSalva(s1.rotaCalculada.idCliente);
+  assert.equal(delRota.ok, true);
+  assert.equal(await svc.obterRota(s1.rotaCalculada.idCliente), null);
+  const gpsDesvinculado = await svc.obterRota(s1ComGps.rotaGps.idCliente);
+  assert.ok(gpsDesvinculado);
+  assert.equal(gpsDesvinculado.idRotaOrigemCliente, null);
+  assert.ok(await svc.obterRota(s2.rotaCalculada.idCliente));
+
+  // 3) Limpar dados locais bloqueia se navegação ativa, e funciona ao forçar interrupção preservando cache_rede
+  await svc.iniciarNavegacaoGps(rota2, { modo: 'gps' });
+  const bloqueado = await svc.limparDadosLocais();
+  assert.equal(bloqueado.ok, false);
+  assert.equal(bloqueado.motivo, 'NAVEGACAO_EM_ANDAMENTO');
+  const limpo = await svc.limparDadosLocais({ forcarInterrupcaoNavegacao: true });
+  assert.equal(limpo.ok, true);
+  assert.equal((await svc.listarRotasSalvas()).length, 0);
+  assert.equal((await svc.listarObservacoes()).length, 0);
+  assert.equal((await driver.listSyncItens()).length, 0);
+  assert.equal(svc.obterUltimaExecucaoGpsSessao(), null);
+  const cachePreservado = await svc.repositorio.carregarCacheRede();
+  assert.equal(cachePreservado.featureCount, 1);
+
+  // Verifica contrato de UI mobile e Web (botões explícitos e modal de confirmação)
+  const appMobileSrc = await fs.readFile(path.join(APK_DIR, 'App.js'), 'utf8');
+  const savedSecSrc = await fs.readFile(path.join(APK_DIR, 'src/components/SavedRoutesSection.js'), 'utf8');
+  const obsSecSrc = await fs.readFile(path.join(APK_DIR, 'src/components/RouteObservationsSection.js'), 'utf8');
+  assert.match(savedSecSrc, /Salvar rotas offline/);
+  assert.match(savedSecSrc, /Limpar dados locais/);
+  assert.match(savedSecSrc, /Excluir/);
+  assert.match(obsSecSrc, /Salvar rotas offline/);
+  assert.match(appMobileSrc, /ConfirmActionModal/);
+  assert.doesNotMatch(appMobileSrc, /origemSalvamento:\s*'auto'/);
+
   await driver.close();
 });
 

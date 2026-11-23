@@ -17,9 +17,12 @@ export function SavedRoutesSection({
   rotas = [],
   canSaveCurrent = false,
   saving = false,
+  saveFeedback = null,
   onSaveCurrent,
   onOpenRoute,
   onExportRoute,
+  onDeleteRoute,
+  onClearLocalData,
   onRefresh,
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -46,18 +49,30 @@ export function SavedRoutesSection({
               }}
             >
               <Text style={styles.saveBtnText}>
-                {saving ? 'Salvando…' : 'Salvar atual'}
+                {saving ? 'Salvando…' : 'Salvar rotas offline'}
               </Text>
             </TouchableOpacity>
           )}
         </View>
       </TouchableOpacity>
 
+      {!!saveFeedback?.text && (
+        <Text
+          accessibilityRole="alert"
+          style={[
+            styles.feedbackText,
+            saveFeedback.kind === 'err' ? styles.feedbackErr : styles.feedbackOk,
+          ]}
+        >
+          {saveFeedback.text}
+        </Text>
+      )}
+
       {expanded && (
         <View style={styles.body}>
           {rotas.length === 0 ? (
             <Text style={styles.empty}>
-              Nenhuma rota salva no dispositivo ainda. Ao calcular ou percorrer uma rota, ela ficará disponível aqui mesmo offline.
+              Nenhuma rota salva no dispositivo ainda. Use o botão "Salvar rotas offline" quando desejar disponibilizar rotas para uso offline.
             </Text>
           ) : (
             rotas.map((rota) => (
@@ -81,28 +96,53 @@ export function SavedRoutesSection({
                   {rota.tipoRota === TIPO_ROTA.GPS ? 'GPS real' : 'Calculada'} · {formatarDistanciaCurta(rota.distanciaMetros)} · {rota.pontosJson?.length || 0} parada(s)
                 </Text>
                 <View style={styles.cardFooter}>
-                  <Text style={styles.cardAction}>Toque para abrir offline e ver observações</Text>
-                  {typeof onExportRoute === 'function' && !rota.simulado && (
-                    <TouchableOpacity
-                      style={styles.exportSavedBtn}
-                      accessibilityRole="button"
-                      onPress={(e) => {
-                        e?.stopPropagation?.();
-                        onExportRoute(rota.idCliente);
-                      }}
-                    >
-                      <Text style={styles.exportSavedBtnText}>Exportar GPX</Text>
-                    </TouchableOpacity>
-                  )}
+                  <Text style={styles.cardAction}>Toque para abrir offline</Text>
+                  <View style={styles.cardActionsGroup}>
+                    {typeof onExportRoute === 'function' && !rota.simulado && (
+                      <TouchableOpacity
+                        style={styles.exportSavedBtn}
+                        accessibilityRole="button"
+                        onPress={(e) => {
+                          e?.stopPropagation?.();
+                          onExportRoute(rota.idCliente);
+                        }}
+                      >
+                        <Text style={styles.exportSavedBtnText}>Exportar GPX</Text>
+                      </TouchableOpacity>
+                    )}
+                    {typeof onDeleteRoute === 'function' && (
+                      <TouchableOpacity
+                        style={styles.deleteSavedBtn}
+                        accessibilityRole="button"
+                        onPress={(e) => {
+                          e?.stopPropagation?.();
+                          onDeleteRoute(rota);
+                        }}
+                      >
+                        <Text style={styles.deleteSavedBtnText}>Excluir</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
               </TouchableOpacity>
             ))
           )}
-          {typeof onRefresh === 'function' && (
-            <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
-              <Text style={styles.refreshBtnText}>Atualizar lista</Text>
-            </TouchableOpacity>
-          )}
+          <View style={styles.footerActions}>
+            {typeof onRefresh === 'function' && (
+              <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
+                <Text style={styles.refreshBtnText}>Atualizar lista</Text>
+              </TouchableOpacity>
+            )}
+            {typeof onClearLocalData === 'function' && (
+              <TouchableOpacity
+                style={styles.clearLocalBtn}
+                accessibilityRole="button"
+                onPress={onClearLocalData}
+              >
+                <Text style={styles.clearLocalBtnText}>Limpar dados locais</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       )}
     </View>
@@ -225,6 +265,56 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     fontWeight: '700',
     color: COLORS.accentStrong,
+  },
+  cardActionsGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  deleteSavedBtn: {
+    borderWidth: 1,
+    borderColor: COLORS.errBorder,
+    borderRadius: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: COLORS.errBg,
+  },
+  deleteSavedBtnText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: COLORS.err,
+  },
+  footerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingTop: 4,
+  },
+  clearLocalBtn: {
+    borderWidth: 1,
+    borderColor: COLORS.errBorder,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: COLORS.panel,
+  },
+  clearLocalBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.err,
+  },
+  feedbackText: {
+    paddingHorizontal: 11,
+    paddingBottom: 7,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  feedbackOk: {
+    color: COLORS.ok,
+  },
+  feedbackErr: {
+    color: COLORS.err,
   },
   refreshBtn: {
     alignSelf: 'flex-start',

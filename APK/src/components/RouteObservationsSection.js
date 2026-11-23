@@ -9,6 +9,7 @@ import { COLORS } from '../theme/colors.js';
 
 export function RouteObservationsSection({
   rotaAlvo,
+  hasRouteOnScreen = false,
   observacoes = [],
   hasActiveGpsPosition = false,
   pickingObservation = false,
@@ -16,8 +17,19 @@ export function RouteObservationsSection({
   onCancelPickMap,
   onCreateAtGpsPosition,
   onOpenObservation,
+  onDeleteObservation,
 }) {
-  if (!rotaAlvo) return null;
+  if (!rotaAlvo) {
+    if (!hasRouteOnScreen) return null;
+    return (
+      <View style={styles.block}>
+        <Text style={styles.blockTitle}>Observações desta rota</Text>
+        <Text style={styles.empty}>
+          Salve a rota usando o botão "Salvar rotas offline" para registrar e gerenciar observações vinculadas a ela.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.block}>
@@ -74,9 +86,23 @@ export function RouteObservationsSection({
               <Text style={styles.cardDesc} numberOfLines={2}>
                 {obs.descricao}
               </Text>
-              <Text style={styles.cardMeta}>
-                {Number(obs.latitude).toFixed(5)}, {Number(obs.longitude).toFixed(5)} · Toque para editar, alterar status ou ver histórico
-              </Text>
+              <View style={styles.cardFooterRow}>
+                <Text style={styles.cardMeta} numberOfLines={1}>
+                  {Number(obs.latitude).toFixed(5)}, {Number(obs.longitude).toFixed(5)} · Toque para editar
+                </Text>
+                {typeof onDeleteObservation === 'function' && (
+                  <TouchableOpacity
+                    style={styles.deleteBtn}
+                    accessibilityRole="button"
+                    onPress={(e) => {
+                      e?.stopPropagation?.();
+                      onDeleteObservation(obs);
+                    }}
+                  >
+                    <Text style={styles.deleteBtnText}>Excluir</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </TouchableOpacity>
           ))}
         </View>
@@ -173,7 +199,28 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   cardMeta: {
+    flex: 1,
     fontSize: 10.5,
     color: COLORS.muted,
+  },
+  cardFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginTop: 2,
+  },
+  deleteBtn: {
+    borderWidth: 1,
+    borderColor: COLORS.errBorder,
+    borderRadius: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: COLORS.errBg,
+  },
+  deleteBtnText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: COLORS.err,
   },
 });

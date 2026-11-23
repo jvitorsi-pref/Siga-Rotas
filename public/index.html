@@ -103,6 +103,11 @@
         <div class="saved-routes-box__body" id="campo-rotas-lista">
           <p class="campo-vazio">Nenhuma rota salva no dispositivo.</p>
         </div>
+        <div class="saved-routes-box__foot">
+          <button id="campo-limpar-dados-locais" class="btn btn--danger-outline btn--block" type="button">
+            Limpar dados locais
+          </button>
+        </div>
       </details>
     </section>
 
@@ -160,8 +165,9 @@
       <p id="export-gpx-feedback" class="gpx-feedback" role="status" hidden></p>
 
       <button id="save-route-offline" class="btn btn--ghost btn--block" type="button" hidden>
-        Salvar rota offline
+        Salvar rotas offline
       </button>
+      <p id="save-route-offline-feedback" class="gpx-feedback" role="status" hidden></p>
       <button id="add-route-obs" class="btn btn--ghost btn--block" type="button" hidden>
         + Observação nesta rota
       </button>
@@ -423,6 +429,25 @@
             <button type="submit" class="btn btn--primary" id="campo-obs-salvar">Salvar no dispositivo</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Modal de confirmação para exclusões locais e limpeza de dados locais -->
+    <div class="occ-modal" id="campo-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="campo-confirm-titulo" hidden>
+      <div class="occ-modal__card">
+        <div class="occ-modal__head">
+          <strong id="campo-confirm-titulo">Confirmar ação</strong>
+          <button type="button" class="occ-modal__close" id="campo-confirm-fechar" aria-label="Fechar">&#10005;</button>
+        </div>
+        <div class="occ-form">
+          <p class="confirm-msg" id="campo-confirm-mensagem"></p>
+          <ul class="confirm-list" id="campo-confirm-lista" hidden></ul>
+          <div class="confirm-alert" id="campo-confirm-alerta" hidden></div>
+          <div class="occ-modal__actions">
+            <button type="button" class="btn btn--ghost" id="campo-confirm-cancelar">Cancelar</button>
+            <button type="button" class="btn btn--danger" id="campo-confirm-ok">Confirmar</button>
+          </div>
+        </div>
       </div>
     </div>
   </main>

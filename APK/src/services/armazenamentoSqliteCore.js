@@ -13,7 +13,7 @@
  *   • cache_rede          (cache vetorial separado das tabelas operacionais)
  */
 
-import { SYNC_STATUS, TIPO_ROTA } from '../campo/modeloCampo.js';
+import { ENTIDADE_SYNC, SYNC_STATUS, TIPO_ROTA } from '../campo/modeloCampo.js';
 
 export const NOME_BANCO_SQLITE = 'siga_rotas_campo.db';
 
@@ -680,6 +680,119 @@ export function criarDriverSqliteCore({ sqlite, nomeBanco = NOME_BANCO_SQLITE } 
         chave,
       ]);
       return row ? safeParse(row.payload_json, null) : null;
+    },
+
+    async deleteObservacao(idCliente) {
+      const db = await abrirBanco();
+      return executarTransacao(db, async (txn) => {
+        const obsRow = await txn.getFirstAsync(
+          'SELECT id_cliente, id_rota_cliente FROM observacoes_rota WHERE id_cliente = ?',
+          [idCliente],
+        );
+        if (!obsRow) {
+          return { removida: false, idRotaCliente: null, eventosRemovidos: 0, syncRemovidos: 0 };
+        }
+        const evtRows = (await txn.getAllAsync(
+          'SELECT id_cliente FROM observacoes_eventos WHERE id_observacao_cliente = ?',
+          [idCliente],
+        )) || [];
+
+        let syncRemovidos = 0;
+        const r1 = await txn.runAsync(
+          'DELETE FROM sync_fila WHERE entidade_id = ? OR depende_de = ?',
+          [idCliente, idCliente],
+        );
+        syncRemovidos += Number(r1?.changes || 0);
+        for (const evt of evtRows) {
+          const re = await txn.runAsync('DELETE FROM sync_fila WHERE entidade_id = ?', [
+            evt.id_cliente,
+          ]);
+          syncRemovidos += Number(re?.changes || 0);
+        }
+
+        await txn.runAsync('DELETE FROM observacoes_eventos WHERE id_observacao_cliente = ?', [
+          idCliente,
+        ]);
+        await txn.runAsync('DELETE FROM observacoes_rota WHERE id_cliente = ?', [idCliente]);
+
+        return {
+          removida: true,
+          idRotaCliente: obsRow.id_rota_cliente,
+          eventosRemovidos: evtRows.length,
+          syncRemovidos,
+        };
+      });
+    },
+
+    async deleteRotaLocal(idCliente) {
+      const db = await abrirBanco();
+      return executarTransacao(db, async (txn) => {
+        const rotaRow = await txn.getFirstAsync(
+          'SELECT id_cliente, tipo_rota FROM rotas_campo WHERE id_cliente = ?',
+          [idCliente],
+        );
+        if (!rotaRow) {
+          return { removida: false, tipoRota: null, observacoesRemovidas: 0, pontosRemovidos: 0 };
+        }
+
+        // Preserva execuções GPS independentes que apontavam para a rota excluída
+        await txn.runAsync(
+          'UPDATE rotas_campo SET id_rota_origem_cliente = NULL, id_rota_origem_servidor = NULL WHERE id_rota_origem_cliente = ? AND id_cliente <> ?',
+          [idCliente, idCliente],
+        );
+        await txn.runAsync(
+          'UPDATE sync_fila SET depende_de = NULL WHERE entidade_tipo = ? AND depende_de = ?',
+          [ENTIDADE_SYNC.ROTA, idCliente],
+        );
+
+        const obsRows = (await txn.getAllAsync(
+          'SELECT id_cliente FROM observacoes_rota WHERE id_rota_cliente = ?',
+          [idCliente],
+        )) || [];
+
+        for (const obs of obsRows) {
+          const evtRows = (await txn.getAllAsync(
+            'SELECT id_cliente FROM observacoes_eventos WHERE id_observacao_cliente = ?',
+            [obs.id_cliente],
+          )) || [];
+          for (const evt of evtRows) {
+            await txn.runAsync('DELETE FROM sync_fila WHERE entidade_id = ?', [evt.id_cliente]);
+          }
+          await txn.runAsync(
+            'DELETE FROM sync_fila WHERE entidade_id = ? OR depende_de = ?',
+            [obs.id_cliente, obs.id_cliente],
+          );
+          await txn.runAsync('DELETE FROM observacoes_eventos WHERE id_observacao_cliente = ?', [
+            obs.id_cliente,
+          ]);
+        }
+
+        await txn.runAsync('DELETE FROM observacoes_rota WHERE id_rota_cliente = ?', [idCliente]);
+        const ptsRes = await txn.runAsync('DELETE FROM pontos_gps WHERE id_rota_cliente = ?', [
+          idCliente,
+        ]);
+        await txn.runAsync('DELETE FROM sync_fila WHERE entidade_id = ?', [idCliente]);
+        await txn.runAsync('DELETE FROM rotas_campo WHERE id_cliente = ?', [idCliente]);
+
+        return {
+          removida: true,
+          tipoRota: rotaRow.tipo_rota,
+          observacoesRemovidas: obsRows.length,
+          pontosRemovidos: Number(ptsRes?.changes || 0),
+        };
+      });
+    },
+
+    async clearDadosLocaisCampo() {
+      const db = await abrirBanco();
+      return executarTransacao(db, async (txn) => {
+        await txn.runAsync('DELETE FROM observacoes_eventos');
+        await txn.runAsync('DELETE FROM observacoes_rota');
+        await txn.runAsync('DELETE FROM pontos_gps');
+        await txn.runAsync('DELETE FROM rotas_campo');
+        await txn.runAsync('DELETE FROM sync_fila');
+        return { ok: true };
+      });
     },
   };
 }
