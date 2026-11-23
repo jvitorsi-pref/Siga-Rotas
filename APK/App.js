@@ -25,8 +25,10 @@ import {
   StatusBar,
   SafeAreaView,
   Keyboard,
+  AppState,
 } from 'react-native';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   adicionarPonto,
   removerPonto,
@@ -42,6 +44,8 @@ import { NavigationPanel } from './src/components/NavigationPanel.js';
 import { criarFonteGPSReal } from './src/services/nativeLocation.js';
 import { criarNavegacaoMobile } from './src/services/mobileNavigationService.js';
 import { mobileNetworkService } from './src/services/mobileNetworkService.js';
+import { OcorrenciasMobileService } from './src/services/ocorrenciasMobileService.js';
+import { MODOS_PREFERENCIA, preferenciasPadrao } from './src/ocorrencias/preferencias.js';
 import {
   parseCoords,
   formatDistanceParts,
@@ -49,6 +53,8 @@ import {
   TEXTO_ESTADO,
 } from './src/utils/formatters.js';
 import { PointCard } from './src/components/PointCard.js';
+import { RoutePreferencesSection } from './src/components/RoutePreferencesSection.js';
+import { OccurrenceModal } from './src/components/OccurrenceModal.js';
 import { RouteResultPanel } from './src/components/RouteResultPanel.js';
 import { RoadNetworkMap } from './src/components/RoadNetworkMap.js';
 import { trechosParaMapa } from './src/map/routePresentation.js';
@@ -58,6 +64,11 @@ import { criarListaCircuito, opcoesCalculoCircuito, resolverPontoNoMapa } from '
 import { exportarRotaGpxMobile } from './src/services/mobileGpxExport.js';
 import { CAMADA_PADRAO, CAMADAS_BASE, normalizarCamadaBase } from './src/map/camadaBase.js';
 import { carregarCamadaBaseMobile, salvarCamadaBaseMobile } from './src/services/basemapPreference.js';
+import { criarServicoCampoMobile } from './src/services/campoMobileService.js';
+import { rotuloIndicadorSync, SYNC_STATUS, TIPO_ROTA, reconstruirRespostaRotaDeRegistro } from './src/campo/modeloCampo.js';
+import { SavedRoutesSection } from './src/components/SavedRoutesSection.js';
+import { RouteObservationsSection } from './src/components/RouteObservationsSection.js';
+import { RouteObservationModal } from './src/components/RouteObservationModal.js';
 import { COLORS } from './src/theme/colors.js';
 
 export default function App() {
@@ -67,7 +78,86 @@ export default function App() {
 
   // Estado da lista de pontos (A, B, C, D…)
   const [lista, setLista] = useState(criarListaCircuito);
+  const listaRef = useRef(lista);
+  listaRef.current = lista;
   const [pickingId, setPickingId] = useState(null);
+  const [pickingOccurrence, setPickingOccurrence] = useState(false);
+
+  // Estado colaborativo de ocorrências e preferências de trajeto
+  const ocorrenciasServiceRef = useRef(null);
+  if (!ocorrenciasServiceRef.current) {
+    ocorrenciasServiceRef.current = new OcorrenciasMobileService({
+      storage: AsyncStorage,
+      networkService: mobileNetworkService,
+    });
+  }
+  const [usuarioId, setUsuarioId] = useState(null);
+  const usuarioIdRef = useRef(null);
+  usuarioIdRef.current = usuarioId;
+  const [preferencias, setPreferencias] = useState(preferenciasPadrao);
+  const preferenciasRef = useRef(preferencias);
+  preferenciasRef.current = preferencias;
+  const [ocorrencias, setOcorrencias] = useState([]);
+  const ocorrenciasRef = useRef(ocorrencias);
+  ocorrenciasRef.current = ocorrencias;
+  const [showOccurrences, setShowOccurrences] = useState(true);
+  const [occModal, setOccModal] = useState({
+    visible: false,
+    mode: 'create',
+    segmentoPreview: null,
+    coordinate: null,
+    ocorrencia: null,
+    submitting: false,
+    errorText: null,
+  });
+
+  // Estado offline-first de campo (SQLite + Sync WebForms)
+  const [savedRoutes, setSavedRoutes] = useState([]);
+  const [savingRoute, setSavingRoute] = useState(false);
+  const [gpsTrailGeometry, setGpsTrailGeometry] = useState(null);
+  const [gpsRecordForExport, setGpsRecordForExport] = useState(null);
+  const [routeObservations, setRouteObservations] = useState([]);
+  const [pendingRecovery, setPendingRecovery] = useState([]);
+  const [pickingRouteObs, setPickingRouteObs] = useState(false);
+  const [syncSummary, setSyncSummary] = useState({ estado: 'IDLE', texto: 'Salvo no dispositivo', pendentes: 0, erros: 0 });
+  const [routeObsModal, setRouteObsModal] = useState({
+    visible: false,
+    mode: 'create',
+    coordinate: null,
+    observacao: null,
+    eventos: [],
+    submitting: false,
+    errorText: null,
+  });
+
+  const campoServiceRef = useRef(null);
+  const refreshCampoUiRef = useRef(null);
+  if (!campoServiceRef.current) {
+    campoServiceRef.current = criarServicoCampoMobile({
+      obterApiUrl: () => mobileNetworkService.options.remoteApiUrl,
+      obterUsuarioId: () => usuarioIdRef.current || 'agente-mobile',
+      obterDispositivoId: () => usuarioIdRef.current || 'apk-siga-rotas',
+      estaOnline: () => !!mobileNetworkService.options.remoteApiUrl && mobileNetworkService.remote.lastError == null,
+      aoMudar: () => {
+        void refreshCampoUiRef.current?.();
+      },
+      aoMudarSync: (resumo) => {
+        if (!resumo) return;
+        const ind = typeof resumo.texto === 'string' ? resumo : rotuloIndicadorSync(resumo);
+        setSyncSummary({
+          ...resumo,
+          estado: ind.estado || resumo.estado || 'IDLE',
+          texto: typeof ind.texto === 'string' ? ind.texto : 'Salvo no dispositivo',
+        });
+      },
+    });
+  }
+
+  // Estado das alternativas de rota
+  const [routeAlternatives, setRouteAlternatives] = useState(null);
+  const [selectedRouteId, setSelectedRouteId] = useState(null);
+  const [comparacaoAlternativas, setComparacaoAlternativas] = useState(null);
+  const lastCalcModeRef = useRef('usuario');
 
   // Estado da rede viária
   const [networkFeatures, setNetworkFeatures] = useState([]);
@@ -82,11 +172,73 @@ export default function App() {
   const [navigationCenter, setNavigationCenter] = useState(null);
   const navigationRef = useRef(null);
   const calculoRef = useRef(0);
+  const restoringSavedRouteRef = useRef(false);
+  const plannedRouteOriginalRef = useRef(null);
+  const lastGpsExecutionIdRef = useRef(null);
+  const gpsExecQueueRef = useRef(Promise.resolve());
   if (!navigationRef.current) navigationRef.current = criarNavegacaoMobile({
-    calcularRotaParadas: (pontos, options) => mobileNetworkService.calcularRotaParadas(pontos, options),
+    calcularRotaParadas: (pontos, options) => mobileNetworkService.calcularRotaParadas(pontos, {
+      ...options,
+      preferencias: preferenciasRef.current,
+      ocorrencias: ocorrenciasRef.current,
+    }),
     criarFonteGPS: criarFonteGPSReal,
     aoMudar: setNavigation,
     aoRecalcular: setRouteResult,
+    aoIniciarExecucao: (rota, opts) => {
+      if (!plannedRouteOriginalRef.current && rota?.ok !== false && !rota?.parcial) {
+        plannedRouteOriginalRef.current = {
+          rota,
+          pontos: (listaRef.current?.pontos || []).map((p) => ({ ...p })),
+        };
+      }
+      if (opts?.modo !== 'simulacao') {
+        lastGpsExecutionIdRef.current = null;
+        setGpsRecordForExport(null);
+      }
+      const rotaPlano = plannedRouteOriginalRef.current?.rota || rota;
+      const prom = campoServiceRef.current?.iniciarNavegacaoGps(rotaPlano, opts);
+      if (prom) {
+        gpsExecQueueRef.current = prom.then((exec) => {
+          if (opts?.modo !== 'simulacao' && exec?.idCliente) {
+            lastGpsExecutionIdRef.current = exec.idCliente;
+          }
+          return exec;
+        }).catch(() => {});
+      }
+    },
+    aoAtualizarPontoExecucao: (ponto) => {
+      const prom = campoServiceRef.current?.registrarPontoGps(ponto).then((res) => {
+        if (res?.aceito && res?.geometria) {
+          setGpsTrailGeometry(res.geometria);
+        }
+      });
+      if (prom) gpsExecQueueRef.current = prom.catch(() => {});
+    },
+    aoPausarExecucao: () => {
+      const prom = campoServiceRef.current?.pausarNavegacaoGps();
+      if (prom) gpsExecQueueRef.current = prom.catch(() => {});
+    },
+    aoRetomarExecucao: () => {
+      const prom = campoServiceRef.current?.retomarNavegacaoGps();
+      if (prom) gpsExecQueueRef.current = prom.catch(() => {});
+    },
+    aoEncerrarExecucao: (info) => {
+      const prom = campoServiceRef.current?.finalizarNavegacaoGps(info).then((res) => {
+        if (res?.rota && !res.rota.simulado) {
+          if (res.rota.geometry) {
+            lastGpsExecutionIdRef.current = res.rota.idCliente;
+            setGpsRecordForExport(res.rota);
+          } else if (lastGpsExecutionIdRef.current === res.rota.idCliente) {
+            lastGpsExecutionIdRef.current = null;
+            setGpsRecordForExport(null);
+          }
+        }
+        void refreshCampoUiRef.current?.();
+        return res;
+      });
+      if (prom) gpsExecQueueRef.current = prom.catch(() => {});
+    },
   });
   const [visibilidade, setVisibilidade] = useState({ rota: null, ocultos: [] });
   const ocultos = useMemo(() => visibilidade.rota === routeResult ? visibilidade.ocultos : [], [visibilidade, routeResult]);
@@ -122,7 +274,7 @@ export default function App() {
 
   useEffect(() => {
     setGpxFeedback(null);
-  }, [routeResult, routeError, lista]);
+  }, [routeResult, routeError, lista, gpsRecordForExport]);
 
   // Barra de status inferior (idle | busy | ok | err)
   const [statusInfo, setStatusInfo] = useState({
@@ -160,18 +312,75 @@ export default function App() {
 
   // Edição invalida navegação/plano e respostas de cálculo anteriores.
   useEffect(() => {
+    if (restoringSavedRouteRef.current) {
+      restoringSavedRouteRef.current = false;
+      return;
+    }
     calculoRef.current++;
     navigationRef.current.encerrar();
+    plannedRouteOriginalRef.current = null;
+    lastGpsExecutionIdRef.current = null;
+    setGpsRecordForExport(null);
     setRouteResult(null); setRouteError(null); setPartialGeometry(null); setCalculating(false); setNavigationCenter(null);
+    setRouteAlternatives(null); setSelectedRouteId(null); setComparacaoAlternativas(null);
+    setGpsTrailGeometry(null);
+    campoServiceRef.current?.definirRotaCalculadaAtiva(null);
   }, [lista]);
   useEffect(() => () => { revisoesEndereco.current.limpar(); calculoRef.current++; navigationRef.current.descartar(); }, []);
+
+  const refreshCampoUi = useCallback(async () => {
+    const svc = campoServiceRef.current;
+    if (!svc) return;
+    try {
+      const [rotas, pendentesRec, resumo] = await Promise.all([
+        svc.listarRotasSalvas({ limit: 40 }),
+        svc.listarExecucoesGpsEmAndamento(),
+        svc.obterResumoSincronizacao(),
+      ]);
+      setSavedRoutes(rotas || []);
+      setPendingRecovery(pendentesRec || []);
+      const ind = typeof resumo?.texto === 'string' ? resumo : rotuloIndicadorSync(resumo || {});
+      setSyncSummary({
+        ...(resumo || {}),
+        estado: ind.estado || resumo?.estado || 'IDLE',
+        texto: typeof ind.texto === 'string' ? ind.texto : 'Salvo no dispositivo',
+      });
+      const rotaObsAlvo = svc.obterRotaParaObservacao();
+      if (rotaObsAlvo?.idCliente) {
+        const obs = await svc.listarObservacoes({ idRotaCliente: rotaObsAlvo.idCliente });
+        setRouteObservations(obs || []);
+      } else {
+        setRouteObservations([]);
+      }
+    } catch {
+      /* mantém estado anterior se o banco ainda estiver inicializando */
+    }
+  }, []);
+  refreshCampoUiRef.current = refreshCampoUi;
 
   // O painel é dono da assinatura/comandos; não atualiza a UI após descarte.
   useEffect(() => {
     let ultimoFeedback = null;
+    const svcOcc = ocorrenciasServiceRef.current;
+    const svcCampo = campoServiceRef.current;
+    void svcOcc.obterOuCriarUsuarioId().then((uid) => {
+      usuarioIdRef.current = uid;
+      setUsuarioId(uid);
+    });
+    void svcOcc.carregarPreferencias().then((pref) => setPreferencias(pref));
+    void svcOcc.listarAtivas().then((ativas) => setOcorrencias(ativas)).catch(() => {});
+    void svcCampo.inicializar().then(() => refreshCampoUi());
+
     const painel = criarPainelRede({ service: mobileNetworkService, aoMudar: (estado) => {
       setNetworkPanel(estado);
       setNetworkFeatures(estado.features);
+      if (Array.isArray(estado.features) && estado.features.length > 0 && estado.meta?.fingerprint) {
+        void svcCampo.repositorio.salvarCacheRede({
+          type: 'FeatureCollection',
+          features: estado.features,
+          meta: estado.meta,
+        }).catch(() => {});
+      }
       setNetworkCacheWarning(estado.meta?.cache?.error || null);
       if (estado.feedback && estado.feedback !== ultimoFeedback) {
         ultimoFeedback = estado.feedback;
@@ -179,9 +388,36 @@ export default function App() {
       }
     } });
     networkPanelRef.current = painel;
-    void painel.abrir();
-    return () => { painel.descartar(); networkPanelRef.current = null; };
-  }, [setStatus]);
+    void painel.abrir().then(() => {
+      void svcOcc.listarAtivas().then((ativas) => setOcorrencias(ativas)).catch(() => {});
+      void svcCampo.sincronizarPendentes().catch(() => {});
+    });
+    const appStateSub = AppState?.addEventListener?.('change', (nextState) => {
+      if (nextState === 'active') {
+        void mobileNetworkService.syncWithServer().then(() => {
+          void svcOcc.listarAtivas().then((ativas) => setOcorrencias(ativas)).catch(() => {});
+          void svcCampo.sincronizarPendentes().catch(() => {});
+        }).catch(() => {});
+      }
+    });
+    return () => {
+      appStateSub?.remove?.();
+      painel.descartar();
+      networkPanelRef.current = null;
+    };
+  }, [setStatus, refreshCampoUi]);
+
+  const handleSaveApiUrl = async (rawUrl) => {
+    const res = await networkPanelRef.current?.configurarServidor(rawUrl);
+    if (res?.ok && res.mode === 'remote') {
+      await ocorrenciasServiceRef.current
+        ?.listarAtivas()
+        .then((ativas) => setOcorrencias(ativas))
+        .catch(() => {});
+      void campoServiceRef.current?.sincronizarPendentes().catch(() => {});
+    }
+    return res;
+  };
 
   // ─────────────── Manipulação dos pontos do trajeto ───────────────
 
@@ -422,28 +658,168 @@ export default function App() {
     revisoesEndereco.current.limpar();
     Keyboard.dismiss();
     setPickingId(null);
+    setPickingOccurrence(false);
+    setPickingRouteObs(false);
+    plannedRouteOriginalRef.current = null;
+    lastGpsExecutionIdRef.current = null;
+    setGpsRecordForExport(null);
     setLista(criarListaCircuito());
     setRouteResult(null);
+    setRouteAlternatives(null);
+    setSelectedRouteId(null);
+    setComparacaoAlternativas(null);
     setRouteError(null);
     setPartialGeometry(null);
     setGpxFeedback(null);
+    setGpsTrailGeometry(null);
+    campoServiceRef.current?.definirRotaCalculadaAtiva(null);
     setStatus('Pronto', 'idle');
   };
 
   const handleExportGpx = async () => {
     if (exportingGpx) return;
     Keyboard.dismiss();
-    if (!routeResult || routeResult.ok === false || routeResult.parcial) {
-      const msg = 'Calcule uma rota completa antes de exportar em GPX.';
+
+    const navEstado = navigationRef.current?.estado;
+    const navEmAndamento =
+      !!navEstado && (navEstado.execucao === 'ativo' || navEstado.execucao === 'pausado');
+    if (navEmAndamento) {
+      const msg = 'Encerre ou finalize a navegação em andamento antes de exportar o GPX. Os dados da navegação permanecem preservados.';
       setGpxFeedback({ kind: 'err', text: msg });
       setStatus(msg, 'err');
       return;
     }
+
     setExportingGpx(true);
     setGpxFeedback(null);
     setStatus('Preparando exportação GPX…', 'busy');
     try {
-      const res = await exportarRotaGpxMobile(routeResult, { pontos: lista.pontos });
+      await gpsExecQueueRef.current;
+
+      const svc = campoServiceRef.current;
+      const rotaCalcOriginal = plannedRouteOriginalRef.current?.rota || null;
+      const pontosCalc = plannedRouteOriginalRef.current?.pontos?.length
+        ? plannedRouteOriginalRef.current.pontos
+        : lista.pontos;
+
+      let rotaPercorrida = gpsRecordForExport && !gpsRecordForExport.simulado ? gpsRecordForExport : null;
+      let pontosGps = [];
+      let idGps = lastGpsExecutionIdRef.current || rotaPercorrida?.idCliente || null;
+
+      if (svc) {
+        if (!idGps && rotaCalcOriginal?.idCliente) {
+          const execs = await svc.listarRotasSalvas({
+            tipoRota: TIPO_ROTA.GPS,
+            incluirSimuladas: false,
+            limit: 40,
+          });
+          const vinc = execs.find(
+            (g) => !g.simulado && g.idRotaOrigemCliente === rotaCalcOriginal.idCliente && g.geometry,
+          );
+          if (vinc) {
+            idGps = vinc.idCliente;
+            rotaPercorrida = vinc;
+          }
+        }
+        if (idGps) {
+          const regGps = await svc.obterRota(idGps);
+          if (regGps && !regGps.simulado) {
+            rotaPercorrida = regGps;
+            pontosGps = await svc.listarPontosGps(idGps);
+          }
+        }
+      }
+
+      const res = await exportarRotaGpxMobile(routeResult, {
+        pontos: pontosCalc,
+        rotaCalculadaOriginal: rotaCalcOriginal,
+        rotaPercorrida,
+        pontosGps,
+        navegacaoEmAndamento: false,
+      });
+      if (res.ok) {
+        setGpxFeedback({ kind: 'ok', text: res.mensagem });
+        setStatus(res.mensagem, 'ok');
+      } else if (res.cancelado) {
+        setGpxFeedback({ kind: 'warn', text: res.mensagem });
+        setStatus(res.mensagem, 'idle');
+      } else {
+        setGpxFeedback({ kind: 'err', text: res.mensagem });
+        setStatus(res.mensagem, 'err');
+      }
+    } finally {
+      setExportingGpx(false);
+    }
+  };
+
+  const handleExportSavedRoute = async (idCliente) => {
+    if (exportingGpx) return;
+    Keyboard.dismiss();
+
+    const navEstado = navigationRef.current?.estado;
+    const navEmAndamento =
+      !!navEstado && (navEstado.execucao === 'ativo' || navEstado.execucao === 'pausado');
+    if (navEmAndamento) {
+      const msg = 'Encerre ou finalize a navegação em andamento antes de exportar o GPX. Os dados da navegação permanecem preservados.';
+      setGpxFeedback({ kind: 'err', text: msg });
+      setStatus(msg, 'err');
+      return;
+    }
+
+    const svc = campoServiceRef.current;
+    if (!svc) return;
+
+    setExportingGpx(true);
+    setGpxFeedback(null);
+    setStatus('Preparando exportação GPX…', 'busy');
+    try {
+      const reg = await svc.obterRota(idCliente);
+      if (!reg) {
+        const msg = 'Rota salva não encontrada para exportação GPX.';
+        setGpxFeedback({ kind: 'err', text: msg });
+        setStatus(msg, 'err');
+        return;
+      }
+
+      let rotaCalculada = null;
+      let rotaPercorrida = null;
+      let pontosGps = [];
+      let pontos = [];
+
+      if (reg.tipoRota === TIPO_ROTA.GPS) {
+        rotaPercorrida = reg;
+        pontosGps = await svc.listarPontosGps(reg.idCliente);
+        if (reg.idRotaOrigemCliente) {
+          const orig = await svc.obterRota(reg.idRotaOrigemCliente);
+          if (orig && orig.tipoRota !== TIPO_ROTA.GPS && orig.geometry) {
+            rotaCalculada = reconstruirRespostaRotaDeRegistro(orig) || orig;
+            pontos = Array.isArray(orig.pontosJson) ? orig.pontosJson : [];
+          }
+        }
+      } else {
+        rotaCalculada = reconstruirRespostaRotaDeRegistro(reg) || reg;
+        pontos = Array.isArray(reg.pontosJson) ? reg.pontosJson : [];
+        const execs = await svc.listarRotasSalvas({
+          tipoRota: TIPO_ROTA.GPS,
+          incluirSimuladas: false,
+          limit: 40,
+        });
+        const vinc = execs.find(
+          (g) => !g.simulado && g.idRotaOrigemCliente === reg.idCliente && g.geometry,
+        );
+        if (vinc) {
+          rotaPercorrida = vinc;
+          pontosGps = await svc.listarPontosGps(vinc.idCliente);
+        }
+      }
+
+      const res = await exportarRotaGpxMobile(rotaCalculada, {
+        pontos,
+        rotaCalculadaOriginal: rotaCalculada,
+        rotaPercorrida,
+        pontosGps,
+        navegacaoEmAndamento: false,
+      });
       if (res.ok) {
         setGpxFeedback({ kind: 'ok', text: res.mensagem });
         setStatus(res.mensagem, 'ok');
@@ -469,14 +845,215 @@ export default function App() {
     setStatus(`Mapa de fundo alterado para ${info.rotulo} (${info.provedor}).`, 'idle');
   };
 
+  // ─────────────── Ocorrências colaborativas e alternativas ───────────────
+
+  const limparAlternativas = () => {
+    setRouteAlternatives(null);
+    setSelectedRouteId(null);
+    setComparacaoAlternativas(null);
+  };
+
+  const selecionarAlternativa = (altId, listaAlts = routeAlternatives) => {
+    const alts = Array.isArray(listaAlts) ? listaAlts : [];
+    const escolhida = alts.find((r) => r.id === altId) || alts[0];
+    if (!escolhida) return;
+    setSelectedRouteId(escolhida.id);
+    const novaRota = escolhida.rota || routeResult;
+    plannedRouteOriginalRef.current = {
+      rota: novaRota,
+      pontos: lista.pontos.map((p) => ({ ...p })),
+    };
+    lastGpsExecutionIdRef.current = null;
+    setGpsRecordForExport(null);
+    setRouteResult(novaRota);
+    const d = formatDistanceParts(escolhida.distance ?? escolhida.rota?.distance);
+    setStatus(`Rota selecionada (${escolhida.rotulo || escolhida.id}): ${d.v} ${d.u}.`, 'ok');
+    if (novaRota?.ok) {
+      void campoServiceRef.current?.salvarRotaCalculada(novaRota, {
+        pontos: lista.pontos,
+        modo: lastCalcModeRef.current || 'usuario',
+        circular: true,
+        origemSalvamento: 'auto',
+      }).then((saved) => {
+        if (saved?.rota?.idCliente && plannedRouteOriginalRef.current?.rota === novaRota) {
+          plannedRouteOriginalRef.current.rota.idCliente = saved.rota.idCliente;
+        }
+        return refreshCampoUi();
+      }).catch(() => {});
+    }
+  };
+
+  const aplicarResultadoAlternativas = (data) => {
+    if (Array.isArray(data.rotas) && data.rotas.length) {
+      const idAtivo = data.rotaSelecionadaId || data.rotas[0].id;
+      const escolhida = data.rotas.find((r) => r.id === idAtivo) || data.rotas[0];
+      setRouteAlternatives(data.rotas);
+      setComparacaoAlternativas(data.comparacaoAlternativas || null);
+      setSelectedRouteId(escolhida.id);
+      setRouteResult(escolhida.rota || data);
+      const d = formatDistanceParts(escolhida.distance ?? data.distance);
+      const qtdAlts = data.rotas.length;
+      setStatus(
+        qtdAlts > 1
+          ? `Rota calculada (${qtdAlts} opções): ${d.v} ${d.u}.`
+          : `Rota calculada: ${d.v} ${d.u}.`,
+        'ok',
+      );
+      return;
+    }
+    setRouteAlternatives(null);
+    setSelectedRouteId(null);
+    setComparacaoAlternativas(null);
+    setRouteResult(data);
+    const d = formatDistanceParts(data.distance);
+    setStatus(`Rota calculada: ${d.v} ${d.u}.`, 'ok');
+  };
+
+  const handleChangePreferencias = async (novasPrefs) => {
+    const salvas = await ocorrenciasServiceRef.current.salvarPreferencias(novasPrefs);
+    setPreferencias(salvas);
+    preferenciasRef.current = salvas;
+    if ((routeResult?.ok || routeError?.bloqueadaPorRestricao) && podeCalcular(lista).ok) {
+      void handleCalculate(lastCalcModeRef.current || 'usuario', salvas);
+    }
+  };
+
+  const handleStartPickOccurrence = () => {
+    Keyboard.dismiss();
+    setPickingId(null);
+    setPickingOccurrence(true);
+    if (layoutMode === 'panel') setLayoutMode('split');
+    setStatus('Toque sobre uma rua no mapa para registrar uma ocorrência.', 'busy');
+  };
+
+  const handleMapPickOccurrence = async ({ lon, lat }) => {
+    setPickingOccurrence(false);
+    setStatus('Identificando o segmento viário…', 'busy');
+    try {
+      const seg = await ocorrenciasServiceRef.current.associarSegmento({
+        latitude: lat,
+        longitude: lon,
+      });
+      if (!seg?.ok) {
+        setStatus(seg?.message || 'Toque mais próximo de uma via mapeada (até 45 m).', 'err');
+        return;
+      }
+      setOccModal({
+        visible: true,
+        mode: 'create',
+        segmentoPreview: seg,
+        coordinate: { lon, lat },
+        ocorrencia: null,
+        submitting: false,
+        errorText: null,
+      });
+      setStatus(`Via identificada: ${seg.principal?.logradouro || 'Trecho viário'}.`, 'idle');
+    } catch (err) {
+      setStatus(err?.message || 'Não foi possível identificar a via.', 'err');
+    }
+  };
+
+  const handleOpenOccurrenceDetail = (occOuId) => {
+    const occ =
+      typeof occOuId === 'string'
+        ? ocorrencias.find((o) => o.id === occOuId)
+        : ocorrencias.find((o) => o.id === occOuId?.id) || occOuId;
+    if (!occ) return;
+    setOccModal({
+      visible: true,
+      mode: 'detail',
+      segmentoPreview: null,
+      coordinate: null,
+      ocorrencia: occ,
+      submitting: false,
+      errorText: null,
+    });
+  };
+
+  const handleSubmitCreateOccurrence = async (payload) => {
+    setOccModal((prev) => ({ ...prev, submitting: true, errorText: null }));
+    try {
+      const res = await ocorrenciasServiceRef.current.registrar(payload, { usuarioId });
+      if (!res?.ok) {
+        setOccModal((prev) => ({
+          ...prev,
+          submitting: false,
+          errorText: res?.message || 'Não foi possível registrar a ocorrência.',
+        }));
+        return;
+      }
+      const ativas = await ocorrenciasServiceRef.current.listarAtivas();
+      setOcorrencias(ativas);
+      ocorrenciasRef.current = ativas;
+      setOccModal((prev) => ({ ...prev, visible: false, submitting: false }));
+      setStatus(
+        res.pendenteSincronizacao
+          ? 'Ocorrência salva offline e será sincronizada ao reconectar.'
+          : 'Ocorrência registrada e aplicada à rede.',
+        'ok',
+      );
+      if ((routeResult?.ok || routeError) && podeCalcular(lista).ok) {
+        void handleCalculate(lastCalcModeRef.current || 'usuario');
+      }
+    } catch (err) {
+      setOccModal((prev) => ({
+        ...prev,
+        submitting: false,
+        errorText: err?.message || 'Falha ao registrar ocorrência.',
+      }));
+    }
+  };
+
+  const handleInteractOccurrence = async (id, tipo) => {
+    setOccModal((prev) => ({ ...prev, submitting: true, errorText: null }));
+    try {
+      const res = await ocorrenciasServiceRef.current.interagir({ id, tipo, usuarioId });
+      if (!res?.ok) {
+        setOccModal((prev) => ({
+          ...prev,
+          submitting: false,
+          errorText: res?.message || 'Não foi possível registrar sua resposta.',
+        }));
+        return;
+      }
+      const ativas = await ocorrenciasServiceRef.current.listarAtivas();
+      setOcorrencias(ativas);
+      ocorrenciasRef.current = ativas;
+      const aindaAtiva = ativas.find((o) => o.id === id);
+      setOccModal((prev) => ({
+        ...prev,
+        visible: !!aindaAtiva,
+        ocorrencia: aindaAtiva || res.ocorrencia,
+        submitting: false,
+      }));
+      setStatus(
+        res.pendenteSincronizacao
+          ? 'Interação salva offline para sincronização posterior.'
+          : 'Interação registrada.',
+        'ok',
+      );
+      if ((routeResult?.ok || routeError) && podeCalcular(lista).ok) {
+        void handleCalculate(lastCalcModeRef.current || 'usuario');
+      }
+    } catch (err) {
+      setOccModal((prev) => ({
+        ...prev,
+        submitting: false,
+        errorText: err?.message || 'Falha ao interagir com a ocorrência.',
+      }));
+    }
+  };
+
   // ─────────────── Cálculo da rota ───────────────
 
-  const handleCalculate = async (modo = 'usuario') => {
+  const handleCalculate = async (modo = 'usuario', prefOverride = null) => {
     Keyboard.dismiss();
+    if (typeof lastCalcModeRef !== 'undefined') lastCalcModeRef.current = modo;
     const verificacao = podeCalcular(lista);
     if (!verificacao.ok) {
       setRouteResult(null);
       setPartialGeometry(null);
+      if (typeof limparAlternativas === 'function') limparAlternativas();
       setRouteError({
         title: 'Pontos incompletos',
         message: verificacao.mensagem,
@@ -490,6 +1067,7 @@ export default function App() {
     setCalculating(true);
     setStatus('Calculando a rota…', 'busy');
     setRouteResult(null);
+    if (typeof limparAlternativas === 'function') limparAlternativas();
     setRouteError(null);
     setPartialGeometry(null);
 
@@ -500,15 +1078,25 @@ export default function App() {
       enderecoDigital: p.enderecoDigital || null,
     }));
 
+    const opcoesCalc = { ...opcoesCalculoCircuito(modo) };
+    if (prefOverride != null) opcoesCalc.preferencias = prefOverride;
+    else if (typeof preferenciasRef !== 'undefined' && preferenciasRef.current != null) {
+      opcoesCalc.preferencias = preferenciasRef.current;
+    }
+    if (typeof ocorrenciasRef !== 'undefined' && Array.isArray(ocorrenciasRef.current) && ocorrenciasRef.current.length > 0) {
+      opcoesCalc.ocorrencias = ocorrenciasRef.current;
+    }
+
     try {
-      const data = await mobileNetworkService.calcularRotaParadas(pontosPayload, {
-        ...opcoesCalculoCircuito(modo),
-      });
+      const data = await mobileNetworkService.calcularRotaParadas(pontosPayload, opcoesCalc);
       if (requestId !== calculoRef.current) return;
       if (!data.ok) {
         setRouteError({
           title: reasonTitle(data.reason),
           message: data.message || 'Não foi possível calcular a rota.',
+          bloqueadaPorRestricao:
+            data.reason === 'BLOQUEADO_POR_OCORRENCIA' ||
+            data.bloqueadaPorRestricao === true,
         });
         if (data.legs && data.legs.length && data.geometry) {
           setPartialGeometry(data.geometry);
@@ -517,9 +1105,34 @@ export default function App() {
         return;
       }
 
-      setRouteResult(data);
-      const d = formatDistanceParts(data.distance);
-      setStatus(`Rota calculada: ${d.v} ${d.u}.`, 'ok');
+      if (typeof aplicarResultadoAlternativas === 'function') {
+        aplicarResultadoAlternativas(data);
+      } else {
+        setRouteResult(data);
+        const d = formatDistanceParts(data.distance);
+        setStatus(`Rota calculada: ${d.v} ${d.u}.`, 'ok');
+      }
+
+      const rotaPersistir = Array.isArray(data.rotas) && data.rotas.length
+        ? (data.rotas.find((r) => r.id === (data.rotaSelecionadaId || data.rotas[0].id))?.rota || data)
+        : data;
+      plannedRouteOriginalRef.current = {
+        rota: rotaPersistir,
+        pontos: lista.pontos.map((p) => ({ ...p })),
+      };
+      lastGpsExecutionIdRef.current = null;
+      setGpsRecordForExport(null);
+      void campoServiceRef.current?.salvarRotaCalculada(rotaPersistir, {
+        pontos: lista.pontos,
+        modo,
+        circular: true,
+        origemSalvamento: 'auto',
+      }).then((saved) => {
+        if (saved?.rota?.idCliente && plannedRouteOriginalRef.current?.rota === rotaPersistir) {
+          plannedRouteOriginalRef.current.rota.idCliente = saved.rota.idCliente;
+        }
+        return refreshCampoUi();
+      }).catch(() => {});
     } catch (err) {
       if (requestId !== calculoRef.current) return;
       setRouteError({
@@ -537,6 +1150,289 @@ export default function App() {
     : null;
 
   const activeRouteGeometry = routeResult?.geometry || partialGeometry || null;
+
+  const altRoutesMap = useMemo(() => {
+    if (!Array.isArray(routeAlternatives) || routeAlternatives.length <= 1) return [];
+    return routeAlternatives
+      .filter((r) => r.id !== selectedRouteId && r.rota?.geometry)
+      .map((r) => ({ id: r.id, geometry: r.rota.geometry }));
+  }, [routeAlternatives, selectedRouteId]);
+
+  const highlightSegmentsMap = useMemo(() => {
+    const ativa =
+      (Array.isArray(routeAlternatives) &&
+        routeAlternatives.find((r) => r.id === selectedRouteId)) ||
+      null;
+    const listaOcc = ativa?.ocorrenciasNoTrajeto || routeResult?.ocorrenciasNoTrajeto || [];
+    const out = [];
+    for (const oc of listaOcc) {
+      const match = ocorrencias.find((item) => item.id === oc.id);
+      const fid = match?.localizacao?.featureId ?? oc.featureId ?? null;
+      if (fid == null) continue;
+      const feat = networkFeatures.find((f) => Number(f.properties?.ID) === Number(fid));
+      if (feat?.geometry) {
+        out.push({
+          id: oc.id,
+          classificacao: oc.classificacao || match?.classificacao,
+          geometry: feat.geometry,
+        });
+      }
+    }
+    return out;
+  }, [routeAlternatives, selectedRouteId, routeResult, ocorrencias, networkFeatures]);
+
+  // ─────────────── Persistência offline de rotas e observações ───────────────
+
+  const handleSaveCurrentRoute = async () => {
+    if (!routeResult?.ok || savingRoute) return;
+    setSavingRoute(true);
+    try {
+      await campoServiceRef.current.salvarRotaCalculada(routeResult, {
+        pontos: lista.pontos,
+        modo: lastCalcModeRef.current || 'usuario',
+        circular: true,
+        origemSalvamento: 'manual',
+      });
+      await refreshCampoUi();
+      setStatus('Rota salva no dispositivo.', 'ok');
+    } catch (err) {
+      setStatus(err?.message || 'Não foi possível salvar a rota.', 'err');
+    } finally {
+      setSavingRoute(false);
+    }
+  };
+
+  const handleOpenSavedRoute = async (idCliente) => {
+    Keyboard.dismiss();
+    try {
+      const svc = campoServiceRef.current;
+      const registro = await svc.obterRota(idCliente);
+      if (!registro) return;
+      if (registro.tipoRota === TIPO_ROTA.GPS && registro.simulado) return;
+
+      let rotaCalculadaReg = registro.tipoRota === TIPO_ROTA.GPS ? null : registro;
+      let trilhaGps = null;
+      let gpsReg = null;
+
+      if (registro.tipoRota === TIPO_ROTA.GPS) {
+        gpsReg = registro;
+        trilhaGps = registro.geometry || null;
+        if (registro.idRotaOrigemCliente) {
+          const orig = await svc.obterRota(registro.idRotaOrigemCliente);
+          if (orig && orig.tipoRota !== TIPO_ROTA.GPS && orig.geometry) {
+            rotaCalculadaReg = orig;
+          }
+        }
+      } else {
+        const execucoes = await svc.listarRotasSalvas({
+          tipoRota: TIPO_ROTA.GPS,
+          incluirSimuladas: false,
+          limit: 50,
+        });
+        const gpsVinc = execucoes.find(
+          (g) => !g.simulado && g.idRotaOrigemCliente === registro.idCliente && g.geometry,
+        );
+        if (gpsVinc) {
+          gpsReg = gpsVinc;
+          trilhaGps = gpsVinc.geometry;
+        }
+      }
+
+      if (rotaCalculadaReg) {
+        svc.definirRotaCalculadaAtiva(rotaCalculadaReg);
+        const reconstruida = reconstruirRespostaRotaDeRegistro(rotaCalculadaReg);
+        if (Array.isArray(rotaCalculadaReg.pontosJson) && rotaCalculadaReg.pontosJson.length >= 2) {
+          const novaLista = criarListaCircuito();
+          novaLista.pontos = rotaCalculadaReg.pontosJson.map((p, idx) => ({
+            id: `saved-${idx}-${Date.now()}`,
+            rotulo: p.rotulo || String.fromCharCode(65 + idx),
+            enderecoDigital: p.enderecoDigital || '',
+            codigoNormalizado: p.enderecoDigital || null,
+            codigoCompleto: p.codigoCompleto || p.enderecoDigital || null,
+            latitude: p.latitude,
+            longitude: p.longitude,
+            origem: 'salva',
+            status: STATUS.CONVERTIDO,
+            mensagem: 'Carregado da rota salva offline.',
+          }));
+          rotularPontos(novaLista);
+          restoringSavedRouteRef.current = true;
+          setLista(novaLista);
+        }
+        plannedRouteOriginalRef.current = {
+          rota: rotaCalculadaReg,
+          pontos: Array.isArray(rotaCalculadaReg.pontosJson) ? rotaCalculadaReg.pontosJson : [],
+        };
+        setRouteResult(reconstruida);
+      } else {
+        // Cenário C: execução GPS real sem rota calculada vinculada
+        svc.definirRotaCalculadaAtiva(null);
+        plannedRouteOriginalRef.current = null;
+        setRouteResult(null);
+      }
+
+      lastGpsExecutionIdRef.current = gpsReg?.idCliente || null;
+      setGpsRecordForExport(gpsReg);
+      setRouteError(null);
+      setPartialGeometry(null);
+      setRouteAlternatives(null);
+      setSelectedRouteId(null);
+      setComparacaoAlternativas(null);
+      setGpsTrailGeometry(trilhaGps);
+      await refreshCampoUi();
+      setStatus(`Rota salva aberta offline (${registro.titulo || 'Rota'}).`, 'ok');
+    } catch (err) {
+      setStatus(err?.message || 'Falha ao abrir rota salva.', 'err');
+    }
+  };
+
+  const handleRecoverGpsSession = async (idCliente, acao) => {
+    try {
+      const res = await campoServiceRef.current.recuperarExecucaoPendente(idCliente, acao);
+      if (acao === 'finalizar' && res?.rota?.geometry && !res.rota.simulado) {
+        lastGpsExecutionIdRef.current = res.rota.idCliente;
+        setGpsRecordForExport(res.rota);
+        setGpsTrailGeometry(res.rota.geometry);
+      }
+      await refreshCampoUi();
+      setStatus(acao === 'descartar' ? 'Execução GPS pendente descartada.' : 'Execução GPS recuperada e salva.', 'ok');
+    } catch (err) {
+      setStatus(err?.message || 'Falha ao recuperar sessão GPS.', 'err');
+    }
+  };
+
+  const handleStartPickRouteObs = () => {
+    Keyboard.dismiss();
+    if (!campoServiceRef.current?.obterRotaParaObservacao()) {
+      setStatus('Calcule ou abra uma rota salva antes de registrar uma observação.', 'err');
+      return;
+    }
+    setPickingId(null);
+    setPickingOccurrence(false);
+    setPickingRouteObs(true);
+    if (layoutMode === 'panel') setLayoutMode('split');
+    setStatus('Toque no mapa para marcar o local da observação da rota.', 'busy');
+  };
+
+  const handleMapPickRouteObs = ({ lon, lat }) => {
+    setPickingRouteObs(false);
+    setRouteObsModal({
+      visible: true,
+      mode: 'create',
+      coordinate: { lon, lat },
+      observacao: null,
+      eventos: [],
+      submitting: false,
+      errorText: null,
+    });
+  };
+
+  const handleCreateRouteObsAtGps = () => {
+    if (!navigation?.posicao) return;
+    setRouteObsModal({
+      visible: true,
+      mode: 'create',
+      coordinate: { lon: navigation.posicao.longitude, lat: navigation.posicao.latitude },
+      observacao: null,
+      eventos: [],
+      submitting: false,
+      errorText: null,
+    });
+  };
+
+  const handleOpenRouteObservationDetail = async (obsOuId) => {
+    const obs =
+      typeof obsOuId === 'string'
+        ? routeObservations.find((o) => o.idCliente === obsOuId)
+        : obsOuId;
+    if (!obs) return;
+    let eventos = [];
+    try {
+      eventos = await campoServiceRef.current.repositorio.listarEventosObservacao(obs.idCliente);
+    } catch {
+      eventos = [];
+    }
+    setRouteObsModal({
+      visible: true,
+      mode: 'detail',
+      coordinate: null,
+      observacao: obs,
+      eventos,
+      submitting: false,
+      errorText: null,
+    });
+  };
+
+  const handleSubmitCreateRouteObs = async (payload) => {
+    setRouteObsModal((prev) => ({ ...prev, submitting: true, errorText: null }));
+    try {
+      await campoServiceRef.current.criarObservacao(payload);
+      await refreshCampoUi();
+      setRouteObsModal((prev) => ({ ...prev, visible: false, submitting: false }));
+      setStatus('Observação salva no dispositivo.', 'ok');
+    } catch (err) {
+      setRouteObsModal((prev) => ({
+        ...prev,
+        submitting: false,
+        errorText: err?.message || 'Não foi possível salvar a observação.',
+      }));
+    }
+  };
+
+  const handleSubmitEditRouteObs = async (payload) => {
+    setRouteObsModal((prev) => ({ ...prev, submitting: true, errorText: null }));
+    try {
+      const res = await campoServiceRef.current.editarObservacao(payload);
+      const eventos = await campoServiceRef.current.repositorio.listarEventosObservacao(payload.idCliente);
+      await refreshCampoUi();
+      setRouteObsModal((prev) => ({
+        ...prev,
+        observacao: res.observacao,
+        eventos,
+        submitting: false,
+      }));
+      setStatus('Observação atualizada no dispositivo.', 'ok');
+    } catch (err) {
+      setRouteObsModal((prev) => ({
+        ...prev,
+        submitting: false,
+        errorText: err?.message || 'Não foi possível editar a observação.',
+      }));
+    }
+  };
+
+  const handleChangeStatusRouteObs = async (payload) => {
+    setRouteObsModal((prev) => ({ ...prev, submitting: true, errorText: null }));
+    try {
+      const res = await campoServiceRef.current.alterarStatusObservacao(payload);
+      const eventos = await campoServiceRef.current.repositorio.listarEventosObservacao(payload.idCliente);
+      await refreshCampoUi();
+      setRouteObsModal((prev) => ({
+        ...prev,
+        observacao: res.observacao,
+        eventos,
+        submitting: false,
+      }));
+      setStatus('Status da observação atualizado.', 'ok');
+    } catch (err) {
+      setRouteObsModal((prev) => ({
+        ...prev,
+        submitting: false,
+        errorText: err?.message || 'Não foi possível alterar o status.',
+      }));
+    }
+  };
+
+  const handleSyncCampoAgora = async () => {
+    setStatus('Sincronizando registros de campo…', 'busy');
+    const res = await campoServiceRef.current.sincronizarAgora();
+    await refreshCampoUi();
+    if (res?.ok) {
+      setStatus('Registros de campo sincronizados.', 'ok');
+    } else {
+      setStatus('Registros mantidos localmente para sincronização posterior.', 'idle');
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -649,6 +1545,29 @@ export default function App() {
               }}
               onMapPickCoordinate={handleMapPickCoordinate}
               onMapClick={handleMapClick}
+              occurrences={ocorrencias}
+              showOccurrences={showOccurrences}
+              altRoutes={altRoutesMap}
+              highlightSegments={highlightSegmentsMap}
+              pickingOccurrence={pickingOccurrence}
+              onStartPickOccurrence={handleStartPickOccurrence}
+              onCancelPickOccurrence={() => {
+                setPickingOccurrence(false);
+                setStatus('Pronto', 'idle');
+              }}
+              onMapPickOccurrence={handleMapPickOccurrence}
+              onOccurrenceClick={handleOpenOccurrenceDetail}
+              onAltRouteClick={(altId) => selecionarAlternativa(altId)}
+              onToggleOccurrences={() => setShowOccurrences((v) => !v)}
+              gpsTrailGeometry={gpsTrailGeometry}
+              routeObservations={routeObservations}
+              pickingRouteObs={pickingRouteObs}
+              onCancelPickRouteObs={() => {
+                setPickingRouteObs(false);
+                setStatus('Pronto', 'idle');
+              }}
+              onMapPickRouteObs={handleMapPickRouteObs}
+              onRouteObservationClick={handleOpenRouteObservationDetail}
             />
           </View>
 
@@ -662,6 +1581,28 @@ export default function App() {
             <View style={styles.block}>
               <Text style={styles.blockTitle}>Pontos do trajeto</Text>
               {!!networkCacheWarning && <Text accessibilityRole="alert" style={styles.cacheWarning}>{networkCacheWarning}</Text>}
+
+              {pendingRecovery.length > 0 && (
+                <View style={styles.recoveryBanner}>
+                  <Text style={styles.recoveryTitle}>
+                    Rota GPS interrompida detectada ({pendingRecovery[0].totalPontos ?? 0} pontos)
+                  </Text>
+                  <View style={styles.recoveryActions}>
+                    <TouchableOpacity
+                      style={styles.recoveryBtnPrimary}
+                      onPress={() => handleRecoverGpsSession(pendingRecovery[0].idCliente, 'finalizar')}
+                    >
+                      <Text style={styles.recoveryBtnPrimaryText}>Finalizar e salvar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.recoveryBtnGhost}
+                      onPress={() => handleRecoverGpsSession(pendingRecovery[0].idCliente, 'descartar')}
+                    >
+                      <Text style={styles.recoveryBtnGhostText}>Descartar</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
 
               {lista.pontos.map((p) => (
                 <PointCard
@@ -691,6 +1632,11 @@ export default function App() {
                 <Text style={styles.btnGhostText}>+ Adicionar parada</Text>
               </TouchableOpacity>
 
+              <RoutePreferencesSection
+                preferencias={preferencias}
+                onChangePreferencias={handleChangePreferencias}
+              />
+
               <TouchableOpacity
                 style={[styles.btnPrimary, calculating && styles.btnDisabled]}
                 disabled={calculating}
@@ -718,6 +1664,16 @@ export default function App() {
                   <Text style={styles.btnGhostText}>Limpar</Text>
                 </TouchableOpacity>
               </View>
+
+              <SavedRoutesSection
+                rotas={savedRoutes}
+                canSaveCurrent={!!routeResult?.ok}
+                saving={savingRoute}
+                onSaveCurrent={handleSaveCurrentRoute}
+                onOpenRoute={handleOpenSavedRoute}
+                onExportRoute={handleExportSavedRoute}
+                onRefresh={refreshCampoUi}
+              />
             </View>
 
             <NavigationPanel estado={navigation} controller={navigationRef.current}
@@ -729,9 +1685,24 @@ export default function App() {
                 }
               }} />
 
+            <RouteObservationsSection
+              rotaAlvo={campoServiceRef.current?.obterRotaParaObservacao()}
+              observacoes={routeObservations}
+              hasActiveGpsPosition={!!navigation?.posicao}
+              pickingObservation={pickingRouteObs}
+              onStartPickMap={handleStartPickRouteObs}
+              onCancelPickMap={() => {
+                setPickingRouteObs(false);
+                setStatus('Pronto', 'idle');
+              }}
+              onCreateAtGpsPosition={handleCreateRouteObsAtGps}
+              onOpenObservation={handleOpenRouteObservationDetail}
+            />
+
             {/* Bloco de Resultado da Rota */}
             <RouteResultPanel
               routeResult={routeResult}
+              gpsRouteInfo={!routeResult && gpsRecordForExport && !gpsRecordForExport.simulado ? gpsRecordForExport : null}
               routeSegments={routeSegments}
               onToggleSegment={toggleSegment}
               onRestoreSegments={restoreSegments}
@@ -739,6 +1710,65 @@ export default function App() {
               exportingGpx={exportingGpx}
               gpxFeedback={gpxFeedback}
               routeError={routeError}
+              routeAlternatives={routeAlternatives}
+              selectedRouteId={selectedRouteId}
+              comparacaoAlternativas={comparacaoAlternativas}
+              onSelectAlternative={(altId) => selecionarAlternativa(altId)}
+              onInspectOccurrence={(oc) => {
+                const match = ocorrencias.find((o) => o.id === oc.id);
+                if (match) {
+                  const loc = match.localizacao || match;
+                  if (layoutMode === 'panel') setLayoutMode('split');
+                  if (loc.longitude != null && loc.latitude != null) {
+                    mapRef.current?.centerPoint(loc.longitude, loc.latitude);
+                  }
+                  handleOpenOccurrenceDetail(match);
+                }
+              }}
+              onBypassAlerts={() => {
+                void handleChangePreferencias({
+                  ...preferencias,
+                  modo: MODOS_PREFERENCIA.IGNORAR,
+                });
+              }}
+            />
+
+            <OccurrenceModal
+              visible={occModal.visible}
+              mode={occModal.mode}
+              segmentoPreview={occModal.segmentoPreview}
+              coordinate={occModal.coordinate}
+              ocorrencia={occModal.ocorrencia}
+              usuarioId={usuarioId}
+              submitting={occModal.submitting}
+              errorText={occModal.errorText}
+              onClose={() => setOccModal((prev) => ({ ...prev, visible: false }))}
+              onSubmitCreate={handleSubmitCreateOccurrence}
+              onInteract={handleInteractOccurrence}
+              onFocusCoordinate={(coord) => {
+                setOccModal((prev) => ({ ...prev, visible: false }));
+                if (layoutMode === 'panel') setLayoutMode('split');
+                mapRef.current?.centerPoint(coord.longitude, coord.latitude);
+              }}
+            />
+
+            <RouteObservationModal
+              visible={routeObsModal.visible}
+              mode={routeObsModal.mode}
+              coordinate={routeObsModal.coordinate}
+              observacao={routeObsModal.observacao}
+              eventos={routeObsModal.eventos}
+              submitting={routeObsModal.submitting}
+              errorText={routeObsModal.errorText}
+              onClose={() => setRouteObsModal((prev) => ({ ...prev, visible: false }))}
+              onSubmitCreate={handleSubmitCreateRouteObs}
+              onSubmitEdit={handleSubmitEditRouteObs}
+              onChangeStatus={handleChangeStatusRouteObs}
+              onFocusCoordinate={(coord) => {
+                setRouteObsModal((prev) => ({ ...prev, visible: false }));
+                if (layoutMode === 'panel') setLayoutMode('split');
+                mapRef.current?.centerPoint(coord.longitude, coord.latitude);
+              }}
             />
 
             <NetworkDiagnosticsPanel
@@ -748,6 +1778,7 @@ export default function App() {
               onRetry={() => networkPanelRef.current?.executar('carregar')}
               onCheckUpdates={() => networkPanelRef.current?.executar('verificar')}
               onRefreshWfs={() => networkPanelRef.current?.executar('baixar')}
+              onSaveApiUrl={handleSaveApiUrl}
             />
           </ScrollView>
         )}
@@ -773,6 +1804,20 @@ export default function App() {
           >
             {statusInfo.text}
           </Text>
+          <TouchableOpacity
+            style={[
+              styles.syncPill,
+              syncSummary.estado === SYNC_STATUS.SYNCED && styles.syncPillOk,
+              syncSummary.estado === SYNC_STATUS.ERROR && styles.syncPillErr,
+              (syncSummary.estado === SYNC_STATUS.PENDING || syncSummary.estado === SYNC_STATUS.SYNCING) && styles.syncPillWarn,
+            ]}
+            accessibilityRole="button"
+            onPress={handleSyncCampoAgora}
+          >
+            <Text style={styles.syncPillText} numberOfLines={1}>
+              {syncSummary.texto || 'Salvo no dispositivo'}
+            </Text>
+          </TouchableOpacity>
         </View>
       </View>
     </SafeAreaView>
@@ -927,5 +1972,73 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontSize: 12,
     flex: 1,
+  },
+  syncPill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel2,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    maxWidth: 175,
+  },
+  syncPillOk: {
+    backgroundColor: '#dcfce7',
+    borderColor: '#86efac',
+  },
+  syncPillWarn: {
+    backgroundColor: '#fef3c7',
+    borderColor: '#fcd34d',
+  },
+  syncPillErr: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+  },
+  syncPillText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: COLORS.text,
+  },
+  recoveryBanner: {
+    backgroundColor: COLORS.warnBg,
+    borderColor: COLORS.warnBorder,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+    gap: 8,
+  },
+  recoveryTitle: {
+    color: COLORS.warn,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  recoveryActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  recoveryBtnPrimary: {
+    backgroundColor: COLORS.accentStrong,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  recoveryBtnPrimaryText: {
+    color: COLORS.white,
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  recoveryBtnGhost: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: COLORS.panel,
+  },
+  recoveryBtnGhostText: {
+    color: COLORS.textSecondary,
+    fontSize: 11.5,
+    fontWeight: '600',
   },
 });

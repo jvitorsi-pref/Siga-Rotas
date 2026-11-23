@@ -44,6 +44,14 @@ test('rótulos distinguem snapshot, cache e WFS carregado sem declarar conectivi
 test('apresentação inclui quota, limite remoto e últimos cinco erros sem apagar avisos WFS',()=>{
  const p=apresentarRede({warnings:['originais'],cache:{status:'memory-only',error:'quota'},remoteApi:{configured:true,supported:false},update:{recentErrors:Array.from({length:8},(_,i)=>({message:String(i)}))}});
  assert.deepEqual(p.avisos,['originais','quota','Delegação remota não implementada; o cálculo permanece local.']);assert.deepEqual(p.erros,['3','4','5','6','7']);
+
+ const pNode=apresentarRede({source:'api-node',backendSource:'wfs',remoteApi:{configured:true,supported:true,execution:'remote',backendSource:'wfs'}});
+ assert.equal(pNode.fonte,'Servidor Node.js (WFS)');
+ assert.equal(pNode.calculo,'Via servidor Node.js (WFS)');
+
+ const pFallback=apresentarRede({source:'wfs-cache',remoteApi:{configured:true,supported:true,execution:'local-fallback',lastError:'timeout'}});
+ assert.equal(pFallback.calculo,'Local no aparelho (contingência offline)');
+ assert.ok(pFallback.avisos.some(a=>/timeout/.test(a)));
 });
 
 test('integração: painel mostra grafo/cache reais, quota e recuperação offline após nova gravação',async()=>{
@@ -56,4 +64,39 @@ test('integração: painel mostra grafo/cache reais, quota e recuperação offli
  await panel.executar('verificar');assert.equal(changes.at(-1).meta.cache.status,'memory-only');assert.match(apresentarRede(changes.at(-1).meta).avisos[0],/apenas em memória/);
  quota=false;await panel.executar('verificar');assert.equal(changes.at(-1).meta.cache.status,'persisted');panel.descartar();
  const restarted=new MobileNetworkServiceCore({...options,allowWfs:false});const recovered=[],next=criarPainelRede({service:restarted,aoMudar:s=>recovered.push(s)});await next.abrir();assert.equal(recovered.at(-1).meta.source,'wfs-cache');assert.equal(recovered.at(-1).meta.update.enabled,false);assert.equal(recovered.at(-1).features[0].properties.ID,2);next.descartar();
+});
+
+test('painel configura servidor backend (ApiProxy.ashx e modo local) e trata URL inválida ou erro',async()=>{
+ let currentUrl=null;
+ const calls=[];
+ const c=setup({
+  options:{allowWfs:false},
+  async setRemoteApiUrl(url){currentUrl=url||null;calls.push(['setUrl',currentUrl]);},
+  async syncWithServer(opts){calls.push(['sync',opts]);return {synced:true,backendSource:'wfs',knownTotal:4545};},
+  getNetworkMeta(){return this.state?{source:currentUrl?'api-node':'snapshot',features:this.state.features.length,cache:{status:'unknown'},remoteApi:{configured:Boolean(currentUrl),url:currentUrl,transport:currentUrl?.endsWith('.ashx')?'ashx':'direct',execution:currentUrl?'remote':'local'},update:{}}:null;},
+ });
+ await c.panel.abrir();
+
+ const invalida=await c.panel.configurarServidor('ftp://errado');
+ assert.equal(invalida.ok,false);
+ assert.equal(invalida.codigo,'URL_INVALIDA');
+ assert.equal(c.changes.at(-1).feedback.kind,'err');
+
+ const okRemote=await c.panel.configurarServidor('https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx');
+ assert.equal(okRemote.ok,true);
+ assert.equal(okRemote.mode,'remote');
+ assert.match(c.changes.at(-1).feedback.text,/ApiProxy\.ashx/);
+ assert.equal(apresentarRede(c.changes.at(-1).meta).transporte,'Proxy WebForms (ApiProxy.ashx)');
+
+ const okLocal=await c.panel.configurarServidor('');
+ assert.equal(okLocal.ok,true);
+ assert.equal(okLocal.mode,'local');
+ assert.match(c.changes.at(-1).feedback.text,/Modo local/);
+ assert.equal(apresentarRede(c.changes.at(-1).meta).transporte,'Modo local (sem servidor configurado)');
+
+ c.service.syncWithServer=async()=>{throw new Error('503 indisponível');};
+ const falha=await c.panel.configurarServidor('https://api.siga.local');
+ assert.equal(falha.ok,false);
+ assert.match(c.changes.at(-1).feedback.text,/503 indisponível/);
+ c.panel.descartar();
 });

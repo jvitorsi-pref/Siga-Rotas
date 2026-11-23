@@ -26,6 +26,27 @@ export function criarSincronizacaoMapa(enviar) {
       if ((!geometry || p.suppressRouteFit) && pendente === 'route') pendente = !enquadrado && features.length ? 'network' : null;
     }
     if (ultimo.position !== p.navigationPosition) enviar({ type: 'SET_POSITION', position: p.navigationPosition || null });
+    if (p.occurrences !== undefined && ultimo.occurrences !== p.occurrences) {
+      enviar({ type: 'SET_OCCURRENCES', occurrences: p.occurrences || VAZIO });
+    }
+    if (p.showOccurrences !== undefined && ultimo.showOccurrences !== p.showOccurrences) {
+      enviar({ type: 'SET_SHOW_OCCURRENCES', show: p.showOccurrences !== false });
+    }
+    if (p.altRoutes !== undefined && ultimo.altRoutes !== p.altRoutes) {
+      enviar({ type: 'SET_ALT_ROUTES', altRoutes: p.altRoutes || VAZIO });
+    }
+    if (p.highlightSegments !== undefined && ultimo.highlightSegments !== p.highlightSegments) {
+      enviar({ type: 'SET_HIGHLIGHT_SEGMENTS', segments: p.highlightSegments || VAZIO });
+    }
+    if (p.gpsTrailGeometry !== undefined && ultimo.gpsTrailGeometry !== p.gpsTrailGeometry) {
+      enviar({ type: 'SET_GPS_TRAIL', geometry: p.gpsTrailGeometry || null });
+    }
+    if (p.routeObservations !== undefined && ultimo.routeObservations !== p.routeObservations) {
+      enviar({ type: 'SET_ROUTE_OBS', observations: p.routeObservations || VAZIO });
+    }
+    if (p.picking !== undefined && ultimo.picking !== !!p.picking) {
+      enviar({ type: 'SET_PICKING', picking: !!p.picking });
+    }
     if (p.centerRequest && p.centerRequest !== ultimo.centerRequest) {
       comandoPendente = { type: 'CENTER_POINT', lon: p.centerRequest.longitude, lat: p.centerRequest.latitude };
       origemComando = 'prop';
@@ -38,7 +59,7 @@ export function criarSincronizacaoMapa(enviar) {
     } else if (visivel && pendente) {
       enviar({ type: pendente === 'route' ? 'FIT_ROUTE' : 'FIT_NETWORK' }); pendente = null; enquadrado = true;
     }
-    ultimo = { ...p, features, routeGeometry: geometry, position: p.navigationPosition, visible: visivel, basemapMode: modoBase };
+    ultimo = { ...p, features, routeGeometry: geometry, position: p.navigationPosition, visible: visivel, basemapMode: modoBase, picking: p.picking !== undefined ? !!p.picking : undefined };
   }
   return { atualizar, comando, redimensionar };
 }

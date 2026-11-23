@@ -16,12 +16,19 @@
  *    que não seja refeito a cada rota. Ele fica em memória no processo e é
  *    invalidado apenas quando a camada muda.
  *
- *  • Um snapshot da rede é persistido em disco. Ao subir, o servidor usa o
- *    snapshot enquanto ele estiver dentro do TTL, evitando depender da rede
- *    do município no arranque.
+ *  • Prioridade estrita de carregamento: quando o acesso ao WFS está ativo,
+ *    o servidor consulta PRIMEIRO o GeoServer WFS da Prefeitura, valida a
+ *    integridade geográfica dos dados recebidos (feições não vazias, total
+ *    completo, geometrias válidas e grafo com arestas) e só então atualiza o
+ *    grafo e o snapshot local em disco de forma atômica.
+ *
+ *  • Contingência automática: se o WFS estiver indisponível ou retornar dados
+ *    inválidos/incompletos, o servidor preserva qualquer rede válida já ativa
+ *    em memória (ou recorre ao último snapshot válido em disco), registrando o
+ *    motivo e expondo o modo de origem ('wfs' vs 'snapshot') nos diagnósticos.
  */
 
-import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
+import { readFile, writeFile, rename, unlink, mkdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -87,17 +94,23 @@ export class NetworkService {
     /** @type {NetworkState|null} */
     this.state = null;
     this.loading = null;
+    this.refreshing = null;
     this.listeners = new Set();
     /** @type {NodeJS.Timeout[]} */
     this.timers = [];
     /** @type {Promise<any>|null} */
     this.checking = null;
-    /** informação sobre a última verificação de atualização */
+    /** informação sobre a última verificação de atualização e origem ativa */
     this.update = {
       lastCheckedAt: null,
       lastChangeAt: null,
       lastResult: null,
       fingerprint: null,
+      originMode: null,
+      lastWfsAttemptAt: null,
+      lastWfsSuccessAt: null,
+      lastWfsError: null,
+      lastFallbackAt: null,
       errors: [],
     };
   }
@@ -123,11 +136,41 @@ export class NetworkService {
     return this.loading;
   }
 
-  /** Recarrega a rede do WFS, ignorando o cache. */
+  /**
+   * Recarrega a rede a partir do WFS sem apagar o estado saudável em memória
+   * antes que os novos dados sejam validados. Em falha do WFS, preserva o
+   * estado ativo (ou recorre ao snapshot se ainda não houver estado).
+   */
   async refresh() {
-    this.state = null;
-    this.loading = null;
-    return this.ensureReady();
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = (async () => {
+      if (!this.options.allowWfs) {
+        const state = await this.ensureReady();
+        return { ...state, refreshFallback: false, refreshError: null };
+      }
+      if (!this.state) {
+        const state = await this.ensureReady();
+        return {
+          ...state,
+          refreshFallback: state.source !== 'wfs',
+          refreshError: state.source !== 'wfs' ? this.update.lastWfsError : null,
+        };
+      }
+      this.update.lastWfsAttemptAt = new Date().toISOString();
+      try {
+        const state = await this._reloadFromWfs();
+        return { ...state, refreshFallback: false, refreshError: null };
+      } catch (err) {
+        const msg = err?.message || String(err);
+        this.update.lastWfsError = msg;
+        this._recordError(err);
+        // Preserva integralmente o estado saudável já carregado (sem rebaixar WFS para snapshot).
+        return { ...this.state, refreshFallback: true, refreshError: msg };
+      }
+    })().finally(() => {
+      this.refreshing = null;
+    });
+    return this.refreshing;
   }
 
   /* ══════════════════════════════════════════════════════════════════
@@ -236,13 +279,19 @@ export class NetworkService {
     let reason = null;
     let serverTotal = null;
 
+    this.update.lastWfsAttemptAt = new Date().toISOString();
+
     if (deep) {
-      // verificação completa: baixa tudo e compara a impressão digital
+      // verificação completa: baixa tudo, valida integridade geográfica e compara impressão digital
       const result = await fetchNetwork({ typeName: this.options.layerName, baseUrl: this.options.baseUrl });
       serverTotal = result.serverTotal;
+      const validGraph = this._validateAndBuildGraph(result);
+      this.update.lastWfsSuccessAt = new Date().toISOString();
+      this.update.lastWfsError = null;
       const fingerprint = fingerprintOf(result.features);
       const before = this.update.fingerprint;
-      changed = before !== null && before !== fingerprint;
+      const emContingencia = this.state?.source === 'snapshot';
+      changed = (before !== null && before !== fingerprint) || emContingencia;
       if (before === null) {
         // primeira impressão digital: registra sem recarregar
         this.update.fingerprint = fingerprint;
@@ -250,13 +299,15 @@ export class NetworkService {
         if (!this.state) {
           // ainda não há rede em uso: o download que acabamos de fazer
           // serve de linha de base (evita baixar a camada duas vezes)
-          await this._applyFeatures(result.features, result);
+          await this._applyFeatures(result.features, result, validGraph);
           reason = 'rede carregada a partir da verificação completa';
         }
       } else if (changed) {
-        reason = 'conteúdo da camada alterado';
-        // já temos a rede nova em mãos: reaproveita
-        await this._applyFeatures(result.features, result);
+        reason = emContingencia && before === fingerprint
+          ? 'GeoServer WFS restabelecido; rede promovida do snapshot para WFS'
+          : 'conteúdo da camada alterado';
+        // já temos a rede nova e o grafo validado em mãos: reaproveita
+        await this._applyFeatures(result.features, result, validGraph);
       }
     } else {
       // ainda não há rede em uso: carrega-a para ter uma linha de base
@@ -273,9 +324,15 @@ export class NetworkService {
         maxRetries: this.options.autoUpdate.checkMaxRetries,
       });
       serverTotal = check.serverTotal;
-      changed = check.changed;
+      this.update.lastWfsSuccessAt = new Date().toISOString();
+      this.update.lastWfsError = null;
+
+      const emContingencia = this.state?.source === 'snapshot';
+      changed = check.changed || emContingencia;
       if (changed) {
-        reason = `total de feições alterado (${known} -> ${serverTotal})`;
+        reason = check.changed
+          ? `total de feições alterado (${known} -> ${serverTotal})`
+          : 'GeoServer WFS voltou a responder; promovendo rede do snapshot para WFS';
         await this._reloadFromWfs();
       }
     }
@@ -292,10 +349,59 @@ export class NetworkService {
     return this.update.lastResult;
   }
 
+  /**
+   * Valida a integridade geográfica mínima dos dados antes de substituir a
+   * rede ativa ou sobrescrever o snapshot em disco.
+   */
+  _validateAndBuildGraph(result, { requireComplete = true } = {}) {
+    if (!result || !Array.isArray(result.features) || result.features.length === 0) {
+      throw new Error('Dados geográficos inválidos: conjunto de feições vazio ou ausente.');
+    }
+    if (
+      requireComplete &&
+      Number.isFinite(result.serverTotal) &&
+      result.serverTotal > 0 &&
+      result.features.length < result.serverTotal
+    ) {
+      throw new Error(
+        `Dados WFS incompletos: recebidas ${result.features.length} de ${result.serverTotal} feições.`
+      );
+    }
+
+    let temGeometriaValida = false;
+    for (const f of result.features) {
+      const g = f?.geometry;
+      if (!g || !Array.isArray(g.coordinates)) continue;
+      const linhas = g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : [];
+      for (const linha of linhas) {
+        if (!Array.isArray(linha) || linha.length < 2) continue;
+        const ok = linha.every(
+          (c) => Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1]) &&
+            Math.abs(c[0]) <= 180 && Math.abs(c[1]) <= 90
+        );
+        if (ok) {
+          temGeometriaValida = true;
+          break;
+        }
+      }
+      if (temGeometriaValida) break;
+    }
+    if (!temGeometriaValida) {
+      throw new Error('Dados geográficos inválidos: nenhuma geometria viária LineString/MultiLineString válida.');
+    }
+
+    const graph = buildGraph(result.features, this.options.graphOptions);
+    if (!graph || !Array.isArray(graph.edges) || graph.edges.length === 0 || !graph.nodes?.length) {
+      throw new Error('Dados geográficos inválidos: o grafo resultante não possui arestas viárias.');
+    }
+    return graph;
+  }
+
   /** Baixa a rede do WFS e constrói um novo grafo, sem trocar o estado atual. */
   async _reloadFromWfs() {
     const result = await fetchNetwork({ typeName: this.options.layerName, baseUrl: this.options.baseUrl });
-    return this._applyFeatures(result.features, result);
+    const graph = this._validateAndBuildGraph(result);
+    return this._applyFeatures(result.features, result, graph);
   }
 
   /**
@@ -305,9 +411,12 @@ export class NetworkService {
    * requisições em andamento continuam usando a rede antiga, sem nunca ver
    * um grafo pela metade.
    */
-  async _applyFeatures(features, result) {
+  async _applyFeatures(features, result, prebuiltGraph = null) {
     const t0 = Date.now();
-    const graph = buildGraph(features, this.options.graphOptions);
+    const graph = prebuiltGraph || this._validateAndBuildGraph({
+      features,
+      serverTotal: result?.serverTotal,
+    });
 
     const state = {
       graph,
@@ -327,10 +436,13 @@ export class NetworkService {
     // troca atômica
     this.state = state;
     this.update.lastChangeAt = new Date().toISOString();
+    this.update.lastWfsSuccessAt = this.update.lastChangeAt;
+    this.update.lastWfsError = null;
+    this.update.originMode = 'wfs';
     this.update.fingerprint = fingerprintOf(features);
     this._emit();
 
-    // persiste o snapshot para o próximo arranque
+    // persiste o snapshot para contingência após validação
     await this._writeSnapshot({
       features,
       serverTotal: state.serverTotal,
@@ -352,92 +464,98 @@ export class NetworkService {
   async _load() {
     const t0 = Date.now();
 
-    // 1) tenta usar o snapshot local (arranque rápido e resiliente)
-    const snapshot = await this._readSnapshot();
-    if (snapshot && Date.now() - snapshot.savedAt < this.options.snapshotTtl) {
+    // 1) Quando o acesso ao WFS está habilitado, consulta o GeoServer WFS PRIMEIRO
+    if (this.options.allowWfs) {
+      this.update.lastWfsAttemptAt = new Date().toISOString();
       try {
-        const graph = buildGraph(snapshot.features, this.options.graphOptions);
-        // registra a impressão digital do snapshot: é a linha de base
-        // contra a qual a verificação completa vai comparar
-        this.update.fingerprint = fingerprintOf(snapshot.features);
+        const result = await fetchNetwork({ typeName: this.options.layerName, baseUrl: this.options.baseUrl });
+        const graph = this._validateAndBuildGraph(result);
+        const nowIso = new Date().toISOString();
+        this.update.fingerprint = fingerprintOf(result.features);
+        this.update.lastWfsSuccessAt = nowIso;
+        this.update.lastWfsError = null;
+        this.update.originMode = 'wfs';
+
+        // Persiste o snapshot válido para contingência
+        await this._writeSnapshot(result).catch((err) => {
+          console.warn('[rede] não foi possível gravar o snapshot:', err.message);
+        });
+
         return {
           graph,
-          features: snapshot.features,
+          features: result.features,
           diagnostics: graph.diagnostics,
-          source: 'snapshot',
-          strategy: 'snapshot',
-          builtAt: snapshot.savedAt,
+          source: 'wfs',
+          strategy: result.strategy,
+          builtAt: Date.now(),
           elapsedMs: Date.now() - t0,
-          serverTotal: snapshot.serverTotal ?? null,
-          warnings: snapshot.warnings || [],
-          attributes: snapshot.attributes || [],
+          serverTotal: result.serverTotal ?? result.features.length,
+          warnings: result.warnings || [],
+          attributes: result.attributes || [],
+          wfsPages: result.pages,
+          wfsElapsedMs: result.elapsedMs,
         };
       } catch (err) {
-        console.warn('[rede] snapshot inválido, recarregando do WFS:', err.message);
+        const motivo = err?.message || String(err);
+        this.update.lastWfsError = motivo;
+        this._recordError(err);
+
+        // 2) Contingência automática: recorre ao último snapshot válido em disco
+        const snapshot = await this._readSnapshot();
+        if (snapshot) {
+          try {
+            const graph = this._validateAndBuildGraph(snapshot);
+            console.warn(
+              `[rede] WFS indisponível (${motivo}); servindo o snapshot local de ` +
+                `${new Date(snapshot.savedAt).toLocaleString('pt-BR')}.`
+            );
+            this.update.fingerprint = fingerprintOf(snapshot.features);
+            this.update.originMode = 'snapshot';
+            this.update.lastFallbackAt = new Date().toISOString();
+            return {
+              graph,
+              features: snapshot.features,
+              diagnostics: graph.diagnostics,
+              source: 'snapshot',
+              strategy: 'snapshot (WFS indisponível)',
+              builtAt: snapshot.savedAt,
+              elapsedMs: Date.now() - t0,
+              serverTotal: snapshot.serverTotal ?? snapshot.features.length,
+              warnings: [
+                ...(snapshot.warnings || []),
+                `GeoServer WFS indisponível (${motivo}) — servindo o último snapshot local até a próxima verificação.`,
+              ],
+              attributes: snapshot.attributes || [],
+            };
+          } catch (snapErr) {
+            console.warn('[rede] snapshot local também inválido:', snapErr.message);
+          }
+        }
+        throw err;
       }
     }
 
-    if (!this.options.allowWfs) {
-      throw new Error('Nenhum snapshot válido disponível e o acesso ao WFS está desabilitado.');
+    // 3) Modo explícito sem WFS (ex.: testes isolados / contingência offline)
+    const snapshot = await this._readSnapshot();
+    if (snapshot) {
+      const graph = this._validateAndBuildGraph(snapshot);
+      this.update.fingerprint = fingerprintOf(snapshot.features);
+      this.update.originMode = 'snapshot';
+      return {
+        graph,
+        features: snapshot.features,
+        diagnostics: graph.diagnostics,
+        source: 'snapshot',
+        strategy: 'snapshot',
+        builtAt: snapshot.savedAt,
+        elapsedMs: Date.now() - t0,
+        serverTotal: snapshot.serverTotal ?? snapshot.features.length,
+        warnings: snapshot.warnings || [],
+        attributes: snapshot.attributes || [],
+      };
     }
 
-    // 2) busca no WFS
-    let result;
-    try {
-      result = await fetchNetwork({ typeName: this.options.layerName, baseUrl: this.options.baseUrl });
-    } catch (err) {
-      // 2b) RESILIÊNCIA: o WFS da Prefeitura pode estar fora do ar (ou
-      // indisponível exatamente enquanto a view é atualizada). Se existe um
-      // snapshot anterior, ele é melhor do que o servidor ficar sem rede:
-      // a aplicação continua calculando rotas com os dados da última
-      // atualização bem-sucedida e avisa o usuário.
-      if (snapshot) {
-        console.warn(
-          `[rede] WFS indisponível (${err.message}); servindo o snapshot local de ` +
-            `${new Date(snapshot.savedAt).toLocaleString('pt-BR')}.`
-        );
-        const graph = buildGraph(snapshot.features, this.options.graphOptions);
-        this.update.fingerprint = fingerprintOf(snapshot.features);
-        return {
-          graph,
-          features: snapshot.features,
-          diagnostics: graph.diagnostics,
-          source: 'snapshot',
-          strategy: 'snapshot (WFS indisponível)',
-          builtAt: snapshot.savedAt,
-          elapsedMs: Date.now() - t0,
-          serverTotal: snapshot.serverTotal ?? null,
-          warnings: [
-            ...(snapshot.warnings || []),
-            'GeoServer WFS indisponível — servindo o último snapshot local até a próxima verificação.',
-          ],
-          attributes: snapshot.attributes || [],
-        };
-      }
-      throw err;
-    }
-    const graph = buildGraph(result.features, this.options.graphOptions);
-    this.update.fingerprint = fingerprintOf(result.features);
-
-    // 3) persiste o snapshot para o próximo arranque
-    await this._writeSnapshot(result).catch((err) => {
-      console.warn('[rede] não foi possível gravar o snapshot:', err.message);
-    });
-
-    return {
-      graph,
-      features: result.features,
-      diagnostics: graph.diagnostics,
-      source: 'wfs',
-      strategy: result.strategy,
-      builtAt: Date.now(),
-      elapsedMs: Date.now() - t0,
-      serverTotal: result.serverTotal,
-      warnings: result.warnings,
-      attributes: result.attributes,
-      wfsPages: result.pages,
-      wfsElapsedMs: result.elapsedMs,
-    };
+    throw new Error('Nenhum snapshot válido disponível e o acesso ao WFS está desabilitado.');
   }
 
   async _readSnapshot() {
@@ -465,13 +583,20 @@ export class NetworkService {
     const payload = {
       savedAt: Date.now(),
       layer: this.options.layerName,
-      serverTotal: result.serverTotal,
+      serverTotal: result.serverTotal ?? result.features?.length ?? null,
       strategy: result.strategy,
       attributes: result.attributes,
       warnings: result.warnings,
       features: result.features,
     };
-    await writeFile(this.options.snapshotPath, JSON.stringify(payload), 'utf8');
+    const tmpPath = `${this.options.snapshotPath}.tmp-${process.pid}-${Date.now()}`;
+    try {
+      await writeFile(tmpPath, JSON.stringify(payload), 'utf8');
+      await rename(tmpPath, this.options.snapshotPath);
+    } catch (err) {
+      await unlink(tmpPath).catch(() => {});
+      throw err;
+    }
   }
 
   /** Descreve a camada no servidor (DescribeFeatureType). */
@@ -497,21 +622,34 @@ export class NetworkService {
   /** Resumo do estado atual, para o endpoint /api/health. */
   status() {
     if (!this.state) {
-      return { ready: false, loading: !!this.loading, update: this.updateStatus() };
+      return {
+        ready: false,
+        loading: !!this.loading,
+        originMode: this.update.originMode,
+        lastWfsError: this.update.lastWfsError,
+        update: this.updateStatus(),
+      };
     }
     const d = this.state.diagnostics;
     return {
       ready: true,
       source: this.state.source,
+      originMode: this.state.source,
+      fallbackActive: this.state.source !== 'wfs',
       strategy: this.state.strategy,
       builtAt: new Date(this.state.builtAt).toISOString(),
       elapsedMs: this.state.elapsedMs,
       features: this.state.features.length,
+      serverTotal: this.state.serverTotal,
       nodes: d.nodes,
       edges: d.edges,
       components: d.components,
       largestComponent: d.largestComponent,
       warnings: this.state.warnings,
+      lastWfsAttemptAt: this.update.lastWfsAttemptAt,
+      lastWfsSuccessAt: this.update.lastWfsSuccessAt,
+      lastWfsError: this.update.lastWfsError,
+      lastFallbackAt: this.update.lastFallbackAt,
       update: this.updateStatus(),
     };
   }
@@ -523,8 +661,13 @@ export class NetworkService {
       checkIntervalMs: this.options.autoUpdate.checkIntervalMs,
       deepCheckIntervalMs: this.options.autoUpdate.deepCheckIntervalMs,
       checkTimeoutMs: this.options.autoUpdate.checkTimeoutMs,
+      originMode: this.update.originMode,
       lastCheckedAt: this.update.lastCheckedAt,
       lastChangeAt: this.update.lastChangeAt,
+      lastWfsAttemptAt: this.update.lastWfsAttemptAt,
+      lastWfsSuccessAt: this.update.lastWfsSuccessAt,
+      lastWfsError: this.update.lastWfsError,
+      lastFallbackAt: this.update.lastFallbackAt,
       lastResult: this.update.lastResult,
       errors: this.update.errors.slice(-3),
     };

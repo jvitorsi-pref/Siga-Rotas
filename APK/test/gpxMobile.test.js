@@ -71,8 +71,9 @@ test('APK GPX: SAF solicita pasta, cria .gpx e grava conteúdo UTF-8 real', asyn
   const res = await exportarRotaGpxMobile(rotaExemplo(), { fileSystem });
   assert.equal(res.ok, true);
   assert.equal(res.modo, 'saf');
+  assert.equal(res.cenario, 'CALCULADA');
   assert.equal(res.pasta, 'Download/Rotas');
-  assert.match(res.arquivo, /^siga-rota-A-B-A-.*\.gpx$/);
+  assert.equal(res.arquivo, 'rota_calculada.gpx');
   assert.equal(chamadas[0].mime, 'application/gpx+xml');
   assert.deepEqual(chamadas[1].opts, { encoding: 'utf8' });
   assert.match(chamadas[1].conteudo, /<gpx version="1\.1"/);
@@ -124,7 +125,7 @@ test('APK GPX: falha ao gravar remove arquivo vazio criado no SAF e reporta erro
   const res = await exportarRotaGpxMobile(rotaExemplo(), { fileSystem });
   assert.equal(res.ok, false);
   assert.equal(res.motivo, 'ERRO_GRAVACAO');
-  assert.match(removido.uri, /^content:\/\/doc\/siga-rota-/);
+  assert.equal(removido.uri, 'content://doc/rota_calculada.gpx');
   assert.deepEqual(removido.opts, { idempotent: true });
 });
 
@@ -158,6 +159,96 @@ test('APK Req 4: seleção no mapa preenche Plus Code automaticamente dentro da 
   const binding = readFileSync(new URL('../src/services/mobileGpxExport.js', import.meta.url), 'utf8');
   assert.match(app, /handleMapPickCoordinate[\s\S]*?resolverPontoNoMapa\(lat,\s*lon/);
   assert.match(app, /handleExportGpx[\s\S]*?exportarRotaGpxMobile\(routeResult/);
+  assert.match(app, /plannedRouteOriginalRef/);
+  assert.match(app, /handleExportSavedRoute/);
   assert.match(binding, /from 'expo-file-system'/);
   assert.match(binding, /exportarRotaGpxMobileCore/);
+});
+
+test('APK GPX Cenário B (ZIP em Base64), Cenário C (somente GPS), simulação e bloqueio em navegação ativa', async () => {
+  const { lerZipStore, decodificarUtf8 } = await import('../src/utils/zip.js');
+  const pontosGps = [
+    { latitude: -23.6635, longitude: -46.5320, timestampMs: 1700000000000, ordem: 1, segmentoIndice: 0 },
+    { latitude: -23.6645, longitude: -46.5305, timestampMs: 1700000020000, ordem: 2, segmentoIndice: 0 },
+  ];
+
+  // Cenário B no SAF: cria exportacao_rotas.zip em Base64 válido
+  const chamadasZip = [];
+  const fsZip = {
+    EncodingType: { UTF8: 'utf8', Base64: 'base64' },
+    StorageAccessFramework: {
+      async requestDirectoryPermissionsAsync() {
+        return {
+          granted: true,
+          directoryUri: 'content://com.android.externalstorage.documents/tree/primary%3ADownload%2FRotas',
+        };
+      },
+      async createFileAsync(dirUri, nome, mime) {
+        chamadasZip.push({ fn: 'create', nome, mime });
+        return `${dirUri}/document/${nome}`;
+      },
+    },
+    async writeAsStringAsync(uri, conteudo, opts) {
+      chamadasZip.push({ fn: 'write', uri, conteudo, opts });
+    },
+  };
+
+  const resB = await exportarRotaGpxMobile(rotaExemplo(), {
+    fileSystem: fsZip,
+    pontosGps,
+  });
+  assert.equal(resB.ok, true);
+  assert.equal(resB.cenario, 'AMBAS');
+  assert.equal(resB.arquivo, 'exportacao_rotas.zip');
+  assert.equal(chamadasZip[0].mime, 'application/zip');
+  assert.deepEqual(chamadasZip[1].opts, { encoding: 'base64' });
+
+  const zipBuffer = new Uint8Array(Buffer.from(chamadasZip[1].conteudo, 'base64'));
+  const arquivos = lerZipStore(zipBuffer);
+  assert.ok(arquivos['rota_calculada.gpx']);
+  assert.ok(arquivos['rota_percorrida.gpx']);
+  assert.match(decodificarUtf8(arquivos['rota_percorrida.gpx']), /<time>2023-11-14T22:13:20\.000Z<\/time>/);
+
+  // Cenário C no SAF: somente GPS real sem rota calculada
+  const chamadasC = [];
+  const resC = await exportarRotaGpxMobile(null, {
+    fileSystem: {
+      EncodingType: { UTF8: 'utf8', Base64: 'base64' },
+      StorageAccessFramework: {
+        async requestDirectoryPermissionsAsync() {
+          return { granted: true, directoryUri: 'content://tree/primary%3ADownload' };
+        },
+        async createFileAsync(_dir, nome, mime) {
+          chamadasC.push({ fn: 'create', nome, mime });
+          return `content://doc/${nome}`;
+        },
+      },
+      async writeAsStringAsync(_uri, conteudo, opts) {
+        chamadasC.push({ fn: 'write', conteudo, opts });
+      },
+    },
+    rotaPercorrida: { tipoRota: 'GPS', simulado: false },
+    pontosGps,
+  });
+  assert.equal(resC.ok, true);
+  assert.equal(resC.cenario, 'PERCORRIDA');
+  assert.equal(resC.arquivo, 'rota_percorrida.gpx');
+  assert.equal(chamadasC[0].mime, 'application/gpx+xml');
+  assert.deepEqual(chamadasC[1].opts, { encoding: 'utf8' });
+
+  // Bloqueio durante navegação em andamento não abre SAF
+  let abriuSaf = false;
+  const resNav = await exportarRotaGpxMobile(rotaExemplo(), {
+    navegacaoEmAndamento: true,
+    fileSystem: {
+      StorageAccessFramework: {
+        async requestDirectoryPermissionsAsync() { abriuSaf = true; return { granted: true }; },
+        async createFileAsync() { return ''; },
+      },
+      async writeAsStringAsync() {},
+    },
+  });
+  assert.equal(resNav.ok, false);
+  assert.equal(resNav.motivo, 'NAVEGACAO_EM_ANDAMENTO');
+  assert.equal(abriuSaf, false);
 });

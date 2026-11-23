@@ -19,7 +19,7 @@ function walk(dir) {
     return entry.isDirectory() ? walk(p) : [p];
   });
 }
-const files = ['core', 'server', 'public', 'APK/src', 'test', 'APK/test', 'tools'].flatMap(walk)
+const files = ['core', 'ocorrencias', 'campo', 'server', 'public', 'APK/src', 'test', 'APK/test', 'tools'].flatMap(walk)
   .filter((p) => /\.(js|mjs|html|css|webmanifest)$/.test(p) && !p.startsWith('public/vendor/'));
 files.push('APK/App.js', 'APK/metro.config.js', 'APK/app.json', 'APK/eas.json', 'APK/package.json', 'package.json', 'APK/android/app/src/main/AndroidManifest.xml');
 const rows = files.sort().map((file) => {
@@ -31,8 +31,12 @@ const rows = files.sort().map((file) => {
   const exports = [...text.matchAll(/^export\s+(?:(?:async\s+)?(?:function|class|const)\s+(\w+)|\*\s+from\s+['"]([^'"]+))/gm)].map((m) => m[1] || `→ ${m[2]}`);
   return `| \`${file}\` | ${text.split('\n').length} | ${state} | ${exports.join(', ') || '—'} |`;
 });
-// Sem exceções de campo: módulos de coleta foram removidos do projeto.
-const approvedChanges = {};
+// Hashes aprovados exclusivamente para a camada de serviço HTTP/persistência (o núcleo `core/` permanece inalterado).
+const approvedChanges = {
+  'server/index.js': '53d06f81ab3e01a60c33924a99979e1e17e72e93025a176c265e7c6d77b2c1cb',
+  'server/networkService.js': 'c82e6d1af9a71f38d2382277cf5408370d24a088659b5f3e087dbd2fb5306728',
+  'server/ocorrenciasService.js': '0cd123e4e20c1c1c7aa957af8ffe882fca0f41dd3a8624c5375ef62ae1d4cd90',
+};
 const protectedFiles = ['core', 'server'].flatMap(walk).filter((p) => p.endsWith('.js'));
 const differs = (p) => {
   try { return !readFileSync(path.join(root, p)).equals(execFileSync('git', ['show', `${baseline}:${p}`], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })); }

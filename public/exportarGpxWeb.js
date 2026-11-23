@@ -1,6 +1,6 @@
-import { gerarGpxRota, nomeArquivoGpx } from './gpx.js';
+import { prepararPacoteExportacaoGpx } from './gpx.js';
 
-function downloadBlob(gpxXml, nomeArquivo, env) {
+function downloadBlob(conteudo, nomeArquivo, mimeType, env) {
   const doc = env.document;
   const BlobCtor = env.Blob;
   const UrlApi = env.URL;
@@ -10,7 +10,7 @@ function downloadBlob(gpxXml, nomeArquivo, env) {
     throw new Error('O navegador não disponibilizou os recursos de download de arquivo.');
   }
 
-  const blob = new BlobCtor([gpxXml], { type: 'application/gpx+xml;charset=utf-8' });
+  const blob = new BlobCtor([conteudo], { type: mimeType });
   const url = UrlApi.createObjectURL(blob);
   try {
     const link = doc.createElement('a');
@@ -29,36 +29,54 @@ function downloadBlob(gpxXml, nomeArquivo, env) {
     const timer = agendar(() => UrlApi.revokeObjectURL?.(url), 1000);
     timer?.unref?.();
   }
-
-  return {
-    ok: true,
-    modo: 'download',
-    arquivo: nomeArquivo,
-    mensagem: `Arquivo GPX gerado e enviado para download (${nomeArquivo}).`,
-  };
 }
 
 /**
- * Exporta a rota calculada em GPX 1.1 iniciando imediatamente o download
- * convencional do navegador para a pasta de downloads padrão.
+ * Exporta a rota calculada e/ou percorrida em GPX 1.1 (ou ZIP com ambos os GPX
+ * no Cenário B) iniciando imediatamente o download convencional do navegador.
  */
 export async function exportarRotaGpxWeb(route, opcoes = {}) {
   const env = opcoes.env || globalThis;
-  let gpxXml;
-  let nomeArquivo;
-  try {
-    gpxXml = gerarGpxRota(route, { pontos: opcoes.pontos, agora: opcoes.agora });
-    nomeArquivo = nomeArquivoGpx(route, opcoes.agora);
-  } catch (err) {
+  const pacote = prepararPacoteExportacaoGpx({
+    rotaCalculada: route,
+    rotaCalculadaOriginal: opcoes.rotaCalculadaOriginal ?? null,
+    rotaPercorrida: opcoes.rotaPercorrida ?? null,
+    pontos: opcoes.pontos ?? [],
+    pontosGps: opcoes.pontosGps ?? [],
+    navegacaoEmAndamento: opcoes.navegacaoEmAndamento === true,
+    criarZipFn: opcoes.criarZipFn,
+    agora: opcoes.agora,
+  });
+
+  if (!pacote.ok) {
     return {
       ok: false,
-      motivo: 'SEM_ROTA',
-      mensagem: err.message || 'Calcule uma rota completa antes de exportar em GPX.',
+      motivo: pacote.motivo,
+      mensagem: pacote.mensagem,
     };
   }
 
   try {
-    return downloadBlob(gpxXml, nomeArquivo, env);
+    const conteudo = pacote.tipoArquivo === 'zip' ? pacote.zipBytes : pacote.gpxXml;
+    const mimeType =
+      pacote.tipoArquivo === 'zip' ? 'application/zip' : 'application/gpx+xml;charset=utf-8';
+    downloadBlob(conteudo, pacote.nomeArquivo, mimeType, env);
+
+    const nomesInternos = pacote.arquivos.map((a) => a.nome);
+    const mensagem =
+      pacote.cenario === 'AMBAS'
+        ? `Pacote ${pacote.nomeArquivo} enviado para download (${nomesInternos.join(' e ')}).`
+        : `Arquivo GPX gerado e enviado para download (${pacote.nomeArquivo}).`;
+
+    return {
+      ok: true,
+      modo: 'download',
+      cenario: pacote.cenario,
+      tipoArquivo: pacote.tipoArquivo,
+      arquivo: pacote.nomeArquivo,
+      arquivosInternos: nomesInternos,
+      mensagem,
+    };
   } catch (err) {
     return {
       ok: false,

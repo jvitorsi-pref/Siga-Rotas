@@ -342,7 +342,8 @@ export function criarInterfaceNavegacao(app) {
     }
   }
 
-  function encerrar(silencioso) {
+  function encerrar(silencioso, opcoes = {}) {
+    const estavaAtivo = nav.ativo;
     pararFonte();
     if (nav.timerSinal) {
       clearInterval(nav.timerSinal);
@@ -353,6 +354,9 @@ export function criarInterfaceNavegacao(app) {
     nav.plano = null;
     nav.seguindo = true;
     posSource.clear();
+    if (estavaAtivo && !opcoes.jaFinalizado && typeof app.aoEncerrarNavegacaoCampo === 'function') {
+      void app.aoEncerrarNavegacaoCampo({ concluida: false });
+    }
     if (typeof app.definirEstadoTrechos === 'function') {
       app.definirEstadoTrechos({ atual: null, percorridos: [] });
     }
@@ -379,6 +383,9 @@ export function criarInterfaceNavegacao(app) {
     nav.ativo = true;
     nav.seguindo = true;
     nav.ultimaAtualizacao = Date.now();
+    if (typeof app.aoIniciarNavegacaoCampo === 'function') {
+      void app.aoIniciarNavegacaoCampo(app.rotaAtual, { modo: nav.modo });
+    }
 
     nav.controlador = criarNavegacao(nav.plano, {
       aoMudar,
@@ -399,7 +406,10 @@ export function criarInterfaceNavegacao(app) {
         if (typeof app.setStatus === 'function') {
           app.setStatus('Trajeto concluído. Navegação encerrada.', 'ok');
         }
-        encerrar(true);
+        if (typeof app.aoEncerrarNavegacaoCampo === 'function') {
+          void app.aoEncerrarNavegacaoCampo({ concluida: true });
+        }
+        encerrar(true, { jaFinalizado: true });
       },
     });
     nav.controlador.iniciar();
@@ -421,8 +431,12 @@ export function criarInterfaceNavegacao(app) {
         plano: nav.plano,
         velocidadeMultiplicador: nav.velocidadeSim,
         aoAtualizar: (p) => {
+          if (!nav.ativo || !nav.controlador || nav.controlador.estado.execucao !== EXECUCAO.ATIVO) return;
           nav.ultimaAtualizacao = Date.now();
           nav.controlador.atualizarPosicao(p);
+          if (typeof app.aoPontoGpsNavegacaoCampo === 'function') {
+            void app.aoPontoGpsNavegacaoCampo(p);
+          }
           atualizarSimulador();
         },
       });
@@ -434,8 +448,12 @@ export function criarInterfaceNavegacao(app) {
     } else {
       nav.fonte = criarFonteGPS({
         aoAtualizar: (p) => {
+          if (!nav.ativo || !nav.controlador || nav.controlador.estado.execucao !== EXECUCAO.ATIVO) return;
           nav.ultimaAtualizacao = Date.now();
           nav.controlador.atualizarPosicao(p);
+          if (typeof app.aoPontoGpsNavegacaoCampo === 'function') {
+            void app.aoPontoGpsNavegacaoCampo(p);
+          }
         },
         aoErro: (e) => {
           definirAlerta(e.mensagem, 'erro');
@@ -513,10 +531,16 @@ export function criarInterfaceNavegacao(app) {
         ctrl.pausar();
         if (nav.simulador) nav.simulador.pausar();
         if (els.pausar) els.pausar.textContent = 'Continuar';
+        if (typeof app.aoPausarNavegacaoCampo === 'function') {
+          void app.aoPausarNavegacaoCampo();
+        }
       } else {
         ctrl.retomar();
         if (nav.simulador) nav.simulador.retomar();
         if (els.pausar) els.pausar.textContent = 'Pausar';
+        if (typeof app.aoRetomarNavegacaoCampo === 'function') {
+          void app.aoRetomarNavegacaoCampo();
+        }
       }
     });
   }

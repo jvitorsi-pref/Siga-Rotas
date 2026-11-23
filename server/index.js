@@ -22,21 +22,32 @@
  */
 
 import http from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { NetworkService } from './networkService.js';
+import { OcorrenciasService } from './ocorrenciasService.js';
 import { routeOnGraph } from '../core/router.js';
 import { calcularRotaComParadas } from '../core/rotaParadas.js';
 import { criarServicoEnderecoDigital, MODOS } from '../core/enderecoDigitalService.js';
 import { UPDATE_DEFAULTS } from '../core/config.js';
+import {
+  CATEGORIAS_OCORRENCIA,
+  CLASSIFICACAO_META,
+} from '../ocorrencias/catalogo.js';
+import { normalizarPreferencias } from '../ocorrencias/preferencias.js';
+import { associarSegmentoDaRede } from '../ocorrencias/regras.js';
+import { calcularRotaComAlternativas } from '../ocorrencias/roteamentoAlternativo.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const CORE_DIR = path.join(ROOT, 'core');
+const OCORRENCIAS_DIR = path.join(ROOT, 'ocorrencias');
+const CAMPO_DIR = path.join(ROOT, 'campo');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -68,6 +79,8 @@ function parseArgs(argv) {
     port: 8080,
     host: '0.0.0.0',
     noAutoUpdate: false,
+    corsOrigins: '',
+    apiToken: '',
     checkIntervalMs: UPDATE_DEFAULTS.checkIntervalMs,
     deepCheckIntervalMs: UPDATE_DEFAULTS.deepCheckIntervalMs,
   };
@@ -75,6 +88,8 @@ function parseArgs(argv) {
     if ((argv[i] === '--port' || argv[i] === '-p') && argv[i + 1]) args.port = Number(argv[++i]);
     else if ((argv[i] === '--host' || argv[i] === '-h') && argv[i + 1]) args.host = argv[++i];
     else if (argv[i] === '--no-auto-update') args.noAutoUpdate = true;
+    else if (argv[i] === '--cors-origins' && argv[i + 1]) args.corsOrigins = argv[++i];
+    else if (argv[i] === '--api-token' && argv[i + 1]) args.apiToken = argv[++i];
     // os dois intervalos são expressos em MINUTOS (mesma unidade das
     // variáveis de ambiente CHECK_INTERVAL_MIN / DEEP_CHECK_INTERVAL_MIN)
     else if (argv[i] === '--check-interval' && argv[i + 1]) args.checkIntervalMs = Number(argv[++i]) * 60000;
@@ -83,9 +98,57 @@ function parseArgs(argv) {
   if (Number.isFinite(Number(process.env.PORT))) args.port = Number(process.env.PORT);
   if (process.env.HOST) args.host = process.env.HOST;
   if (process.env.NO_AUTO_UPDATE === '1') args.noAutoUpdate = true;
+  if (process.env.CORS_ORIGINS) args.corsOrigins = process.env.CORS_ORIGINS;
+  if (process.env.SIGA_API_TOKEN) args.apiToken = process.env.SIGA_API_TOKEN;
   if (process.env.CHECK_INTERVAL_MIN) args.checkIntervalMs = Number(process.env.CHECK_INTERVAL_MIN) * 60000;
   if (process.env.DEEP_CHECK_INTERVAL_MIN) args.deepCheckIntervalMs = Number(process.env.DEEP_CHECK_INTERVAL_MIN) * 60000;
   return args;
+}
+
+function parseAllowedOrigins(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map((s) => String(s).trim()).filter(Boolean);
+  return String(raw)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function isLoopbackHost(hostHeader) {
+  const h = String(hostHeader || '').split(':')[0].toLowerCase();
+  return h === 'localhost' || h === '127.0.0.1' || h === '[::1]';
+}
+
+function resolveCorsHeader(req, allowedOrigins) {
+  const origin = req.headers.origin;
+  if (!origin) return { originHeader: null, allowed: true };
+  if (allowedOrigins.includes('*')) return { originHeader: '*', allowed: true };
+  if (allowedOrigins.includes(origin)) return { originHeader: origin, allowed: true };
+  try {
+    const parsedOrigin = new URL(origin);
+    const reqHost = String(req.headers.host || '').toLowerCase();
+    if (reqHost && parsedOrigin.host.toLowerCase() === reqHost) {
+      return { originHeader: origin, allowed: true };
+    }
+    if (isLoopbackHost(parsedOrigin.host) && isLoopbackHost(reqHost)) {
+      return { originHeader: origin, allowed: true };
+    }
+  } catch {
+    return { originHeader: null, allowed: false };
+  }
+  return { originHeader: null, allowed: false };
+}
+
+function verifyApiToken(req, expectedToken) {
+  if (!expectedToken) return true;
+  const headerToken = req.headers['x-siga-token'];
+  const auth = req.headers.authorization;
+  const bearer = typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  const provided = typeof headerToken === 'string' ? headerToken.trim() : bearer;
+  if (!provided) return false;
+  const a = Buffer.from(provided, 'utf8');
+  const b = Buffer.from(expectedToken, 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 /**
@@ -114,17 +177,23 @@ export function parsePoint(raw) {
   return { lon, lat };
 }
 
-/** Envia uma resposta JSON. */
-function sendJson(res, status, payload, compact) {
+/** Envia uma resposta JSON com cabeçalhos de segurança e CORS controlado. */
+function sendJson(res, status, payload, compact, cors = { originHeader: null }) {
   // O payload da rede tem megabytes: sem indentacao, a resposta cai de
   // ~5,9 MB para ~2,7 MB.
   const body = compact ? JSON.stringify(payload) : JSON.stringify(payload, null, 2);
-  res.writeHead(status, {
+  const headers = {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
     'Cache-Control': 'no-store',
-    'Access-Control-Allow-Origin': '*',
-  });
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+  };
+  if (cors?.originHeader) {
+    headers['Access-Control-Allow-Origin'] = cors.originHeader;
+    if (cors.originHeader !== '*') headers['Vary'] = 'Origin';
+  }
+  res.writeHead(status, headers);
   res.end(body);
 }
 
@@ -136,21 +205,34 @@ function sendJson(res, status, payload, compact) {
 async function serveStatic(req, res, pathname) {
   let rel = pathname === '/' ? '/index.html' : pathname;
   rel = decodeURIComponent(rel);
-  const baseDir = rel.startsWith('/core/') ? CORE_DIR : PUBLIC_DIR;
-  const filePath = path.join(baseDir, rel.startsWith('/core/') ? rel.slice('/core'.length) : rel);
+  const baseDir = rel.startsWith('/core/')
+    ? CORE_DIR
+    : rel.startsWith('/ocorrencias/')
+      ? OCORRENCIAS_DIR
+      : rel.startsWith('/campo/')
+        ? CAMPO_DIR
+        : PUBLIC_DIR;
+  const subRel = rel.startsWith('/core/')
+    ? rel.slice('/core'.length)
+    : rel.startsWith('/ocorrencias/')
+      ? rel.slice('/ocorrencias'.length)
+      : rel.startsWith('/campo/')
+        ? rel.slice('/campo'.length)
+        : rel;
+  const filePath = path.join(baseDir, subRel);
   if (!filePath.startsWith(baseDir)) {
     sendJson(res, 403, { error: 'Acesso negado' });
     return;
   }
   if (!existsSync(filePath)) {
-    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' });
     res.end('Não encontrado');
     return;
   }
   try {
     const info = await stat(filePath);
     if (info.isDirectory()) {
-      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' });
       res.end('Não encontrado');
       return;
     }
@@ -164,17 +246,27 @@ async function serveStatic(req, res, pathname) {
     const etag = `"${info.size.toString(16)}-${Math.floor(info.mtimeMs).toString(16)}"`;
     const vendor = rel.startsWith('/vendor/');
     if (req.headers['if-none-match'] === etag) {
-      res.writeHead(304, { ETag: etag, 'Cache-Control': vendor ? 'public, max-age=3600' : 'no-cache' });
+      res.writeHead(304, {
+        ETag: etag,
+        'Cache-Control': vendor ? 'public, max-age=3600' : 'no-cache',
+        'X-Content-Type-Options': 'nosniff',
+      });
       res.end();
       return;
     }
 
-    res.writeHead(200, {
+    const headers = {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Content-Length': data.length,
       'Cache-Control': vendor ? 'public, max-age=3600' : 'no-cache',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'strict-origin-when-cross-origin',
       ETag: etag,
-    });
+    };
+    if (ext === '.html') {
+      headers['X-Frame-Options'] = 'SAMEORIGIN';
+    }
+    res.writeHead(200, headers);
     res.end(data);
   } catch (err) {
     sendJson(res, 500, { error: `Falha ao ler o arquivo: ${err.message}` });
@@ -187,6 +279,12 @@ async function serveStatic(req, res, pathname) {
  */
 export function createServer(options = {}) {
   const service = options.service || new NetworkService(options.networkOptions);
+  const ocorrenciasService =
+    options.ocorrenciasService || new OcorrenciasService(options.ocorrenciasOptions);
+  const allowedOrigins = parseAllowedOrigins(options.corsOrigins ?? process.env.CORS_ORIGINS ?? '');
+  const apiToken = String(options.apiToken ?? process.env.SIGA_API_TOKEN ?? '').trim();
+  const maxStops = Number.isFinite(options.maxStops) ? options.maxStops : 100;
+
   // Liga a verificação periódica de mudanças na camada. Só é possível
   // desligá-la com `autoUpdate: { enabled: false }` ou com o acesso ao WFS
   // desabilitado (caso dos testes).
@@ -197,29 +295,66 @@ export function createServer(options = {}) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const { pathname } = url;
+    const cors = resolveCorsHeader(req, allowedOrigins);
 
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
+      if (!cors.allowed) {
+        sendJson(res, 403, { ok: false, reason: 'ORIGEM_NAO_PERMITIDA', message: 'Origem CORS não autorizada.' }, false, { originHeader: null });
+        return;
+      }
+      const headers = {
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      });
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Siga-Token',
+        'X-Content-Type-Options': 'nosniff',
+      };
+      if (cors.originHeader) {
+        headers['Access-Control-Allow-Origin'] = cors.originHeader;
+        if (cors.originHeader !== '*') headers['Vary'] = 'Origin';
+      }
+      res.writeHead(204, headers);
       res.end();
       return;
     }
 
     try {
-      // corpo JSON opcional (POST)
+      if (pathname.startsWith('/api/') && !verifyApiToken(req, apiToken)) {
+        sendJson(res, 401, {
+          ok: false,
+          reason: 'NAO_AUTORIZADO',
+          message: 'Credencial de acesso à API ausente ou inválida.',
+        }, false, cors);
+        return;
+      }
+
+      // corpo JSON opcional (POST) com proteção contra payloads excessivos
       let corpo = null;
       if (req.method === 'POST') {
-        const bruto = await new Promise((resolve) => {
+        const leitura = await new Promise((resolve, reject) => {
           let buf = '';
+          let excedeu = false;
           req.on('data', (c) => {
+            if (excedeu) return;
             buf += c;
-            if (buf.length > 1e6) req.destroy();
+            if (Buffer.byteLength(buf, 'utf8') > 1e6) {
+              excedeu = true;
+              resolve({ tooLarge: true });
+              req.resume();
+            }
           });
-          req.on('end', () => resolve(buf));
+          req.on('end', () => {
+            if (!excedeu) resolve({ text: buf });
+          });
+          req.on('error', reject);
         });
+        if (leitura.tooLarge) {
+          sendJson(res, 413, {
+            ok: false,
+            reason: 'PAYLOAD_MUITO_GRANDE',
+            message: 'O corpo da requisição excede o limite de 1 MB.',
+          }, false, cors);
+          return;
+        }
+        const bruto = leitura.text;
         if (bruto && bruto.trim()) {
           try {
             corpo = JSON.parse(bruto);
@@ -228,14 +363,14 @@ export function createServer(options = {}) {
               ok: false,
               reason: 'JSON_INVALIDO',
               message: 'O corpo da requisição não é um JSON válido.',
-            });
+            }, false, cors);
             return;
           }
         }
       }
 
       if (pathname === '/api/health') {
-        sendJson(res, 200, service.status());
+        sendJson(res, 200, service.status(), false, cors);
         return;
       }
 
@@ -246,14 +381,19 @@ export function createServer(options = {}) {
           features: state.features,
           meta: {
             source: state.source,
+            originMode: state.source,
+            fallbackActive: state.source !== 'wfs',
             strategy: state.strategy,
             builtAt: new Date(state.builtAt).toISOString(),
             features: state.features.length,
+            serverTotal: state.serverTotal,
             attributes: state.attributes,
             warnings: state.warnings,
+            lastWfsError: service.update.lastWfsError,
+            lastWfsSuccessAt: service.update.lastWfsSuccessAt,
             update: service.updateStatus(),
           },
-        }, true);
+        }, true, cors);
         return;
       }
 
@@ -267,14 +407,14 @@ export function createServer(options = {}) {
             message:
               'Informe origem e destino no formato "longitude,latitude" ' +
               '(ex.: -46.5450,-23.6600).',
-          });
+          }, false, cors);
           return;
         }
         const state = await service.ensureReady();
         const result = routeOnGraph(state.graph, origin, destination, {
           maxSnapDistance: options.maxSnapDistance ?? 100,
         });
-        sendJson(res, result.ok ? 200 : 422, result);
+        sendJson(res, result.ok ? 200 : 422, result, false, cors);
         return;
       }
 
@@ -297,7 +437,7 @@ export function createServer(options = {}) {
           longitude: resultado.longitude,
           naRegiao: resultado.naRegiao,
           mensagem: resultado.mensagem,
-        });
+        }, false, cors);
         return;
       }
 
@@ -321,7 +461,23 @@ export function createServer(options = {}) {
             message:
               'Informe ao menos dois pontos no formato ' +
               '[{"rotulo":"A","latitude":-23.66,"longitude":-46.53}, ...].',
-          });
+          }, false, cors);
+          return;
+        }
+        if (pontos.length > maxStops) {
+          sendJson(res, 400, {
+            ok: false,
+            reason: 'LIMITE_PONTOS_EXCEDIDO',
+            message: `Quantidade máxima de paradas por requisição é ${maxStops}.`,
+          }, false, cors);
+          return;
+        }
+        if (pontos.some((p) => !p || typeof p !== 'object')) {
+          sendJson(res, 400, {
+            ok: false,
+            reason: 'PARAMETROS_INVALIDOS',
+            message: 'Cada ponto deve ser um objeto válido com coordenadas.',
+          }, false, cors);
           return;
         }
         const state = await service.ensureReady();
@@ -329,7 +485,17 @@ export function createServer(options = {}) {
         const circular =
           (corpo?.circular ?? url.searchParams.get('circular') ?? false) === true ||
           (corpo?.circular ?? url.searchParams.get('circular')) === 'true';
-        const resultado = calcularRotaComParadas(state.graph, pontos, {
+
+        let preferenciasRaw = corpo?.preferencias ?? null;
+        if (!preferenciasRaw && url.searchParams.get('preferencias')) {
+          try {
+            preferenciasRaw = JSON.parse(url.searchParams.get('preferencias'));
+          } catch {
+            preferenciasRaw = null;
+          }
+        }
+        const ocorrenciasAtivas = await ocorrenciasService.listar({ incluirInativas: false });
+        const opcoesBase = {
           maxSnapDistance: options.maxSnapDistance ?? 100,
           modo:
             modo === 'otimizada'
@@ -338,8 +504,109 @@ export function createServer(options = {}) {
                 ? 'saida_curta'
                 : 'usuario',
           circular,
+        };
+        const usarAlternativas = preferenciasRaw != null || ocorrenciasAtivas.length > 0;
+        const resultado = usarAlternativas
+          ? calcularRotaComAlternativas(state.graph, pontos, {
+              ...opcoesBase,
+              preferencias: normalizarPreferencias(preferenciasRaw),
+              ocorrencias: ocorrenciasAtivas,
+            })
+          : calcularRotaComParadas(state.graph, pontos, opcoesBase);
+        sendJson(res, resultado.ok ? 200 : 422, resultado, false, cors);
+        return;
+      }
+
+      // ------------------------------------------------------------------
+      // Ocorrências colaborativas de campo + associação precisa ao grafo
+      // ------------------------------------------------------------------
+      if (pathname === '/api/ocorrencias/segmento') {
+        const lat = Number(corpo?.latitude ?? url.searchParams.get('latitude'));
+        const lon = Number(corpo?.longitude ?? url.searchParams.get('longitude'));
+        const featureIdRaw = corpo?.featureIdPreferido ?? url.searchParams.get('featureIdPreferido');
+        const featureIdPreferido =
+          featureIdRaw !== null && featureIdRaw !== undefined && featureIdRaw !== ''
+            ? Number(featureIdRaw)
+            : null;
+        const state = await service.ensureReady();
+        const seg = associarSegmentoDaRede(state.graph, {
+          latitude: lat,
+          longitude: lon,
+          featureIdPreferido: Number.isFinite(featureIdPreferido) ? featureIdPreferido : null,
         });
-        sendJson(res, resultado.ok ? 200 : 422, resultado);
+        sendJson(res, seg.ok ? 200 : 422, seg, false, cors);
+        return;
+      }
+
+      if (pathname === '/api/ocorrencias' && req.method === 'GET') {
+        const incluirInativas = url.searchParams.get('incluirInativas') === 'true';
+        const categoria = url.searchParams.get('categoria') || null;
+        const lista = await ocorrenciasService.listar({ incluirInativas, categoria });
+        sendJson(res, 200, {
+          ok: true,
+          ocorrencias: lista,
+          catalogo: {
+            categorias: CATEGORIAS_OCORRENCIA,
+            classificacoes: CLASSIFICACAO_META,
+          },
+          atualizadoEm: new Date().toISOString(),
+        }, false, cors);
+        return;
+      }
+
+      if (pathname === '/api/ocorrencias' && req.method === 'POST') {
+        if (!corpo || typeof corpo !== 'object') {
+          sendJson(res, 400, {
+            ok: false,
+            reason: 'PARAMETROS_INVALIDOS',
+            message: 'Informe os dados da ocorrência em JSON.',
+          }, false, cors);
+          return;
+        }
+        const state = await service.ensureReady();
+        const usuarioId = corpo.usuarioId || req.headers['x-siga-usuario'] || '';
+        const resReg = await ocorrenciasService.registrar(corpo, {
+          graph: state.graph,
+          usuarioId,
+        });
+        const status = resReg.ok
+          ? 201
+          : resReg.reason === 'SEGMENTO_NAO_ENCONTRADO' || resReg.reason === 'REDE_VAZIA'
+            ? 422
+            : 400;
+        sendJson(res, status, resReg, false, cors);
+        return;
+      }
+
+      if (
+        req.method === 'POST' &&
+        (pathname === '/api/ocorrencias/interagir' ||
+          /^\/api\/ocorrencias\/[^/]+\/interagir$/.test(pathname))
+      ) {
+        if (!corpo || typeof corpo !== 'object') {
+          sendJson(res, 400, {
+            ok: false,
+            reason: 'PARAMETROS_INVALIDOS',
+            message: 'Informe id, tipo e usuarioId em JSON.',
+          }, false, cors);
+          return;
+        }
+        const match = pathname.match(/^\/api\/ocorrencias\/([^/]+)\/interagir$/);
+        const id = match ? decodeURIComponent(match[1]) : corpo.id;
+        const usuarioId = corpo.usuarioId || req.headers['x-siga-usuario'] || '';
+        const resInt = await ocorrenciasService.interagir({
+          id,
+          tipo: corpo.tipo,
+          usuarioId,
+        });
+        const status = resInt.ok
+          ? 200
+          : resInt.reason === 'OCORRENCIA_NAO_ENCONTRADA'
+            ? 404
+            : resInt.duplicada
+              ? 409
+              : 400;
+        sendJson(res, status, resInt, false, cors);
         return;
       }
 
@@ -348,19 +615,26 @@ export function createServer(options = {}) {
         sendJson(res, 200, {
           ...state.diagnostics,
           source: state.source,
+          originMode: state.source,
+          fallbackActive: state.source !== 'wfs',
           strategy: state.strategy,
           builtAt: new Date(state.builtAt).toISOString(),
           buildMs: state.elapsedMs,
           serverTotal: state.serverTotal,
           attributes: state.attributes,
-        });
+          warnings: state.warnings,
+          lastWfsAttemptAt: service.update.lastWfsAttemptAt,
+          lastWfsSuccessAt: service.update.lastWfsSuccessAt,
+          lastWfsError: service.update.lastWfsError,
+          lastFallbackAt: service.update.lastFallbackAt,
+        }, false, cors);
         return;
       }
 
       if (pathname === '/api/updates') {
         // força uma verificação imediata e devolve o resultado
         const result = await service._checkForChanges({ deep: true });
-        sendJson(res, 200, { ok: true, ...result, status: service.updateStatus() });
+        sendJson(res, 200, { ok: true, ...result, status: service.updateStatus() }, false, cors);
         return;
       }
 
@@ -370,7 +644,7 @@ export function createServer(options = {}) {
           attributes: schema.attributes,
           knownAttributes: schema.known,
           layer: service.options.layerName,
-        });
+        }, false, cors);
         return;
       }
 
@@ -378,18 +652,23 @@ export function createServer(options = {}) {
         const state = await service.refresh();
         sendJson(res, 200, {
           ok: true,
+          refreshed: !state.refreshFallback,
+          preserved: !!state.refreshFallback,
+          warning: state.refreshError || null,
           source: state.source,
+          originMode: state.source,
+          fallbackActive: state.source !== 'wfs',
           strategy: state.strategy,
           features: state.features.length,
           nodes: state.diagnostics.nodes,
           edges: state.diagnostics.edges,
           elapsedMs: state.elapsedMs,
-        });
+        }, false, cors);
         return;
       }
 
       if (pathname.startsWith('/api/')) {
-        sendJson(res, 404, { error: 'Endpoint desconhecido' });
+        sendJson(res, 404, { error: 'Endpoint desconhecido' }, false, cors);
         return;
       }
 
@@ -401,11 +680,12 @@ export function createServer(options = {}) {
         reason: 'ERRO_INTERNO',
         message: err.message,
         stack: process.env.NODE_ENV === 'production' ? undefined : err.stack,
-      });
+      }, false, cors);
     }
   });
 
   server.networkService = service;
+  server.ocorrenciasService = ocorrenciasService;
   return server;
 }
 
@@ -417,6 +697,8 @@ const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPat
 if (isMain) {
   const args = parseArgs(process.argv.slice(2));
   const server = createServer({
+    corsOrigins: args.corsOrigins,
+    apiToken: args.apiToken,
     networkOptions: {
       autoUpdate: {
         enabled: !args.noAutoUpdate,

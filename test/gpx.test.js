@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { gerarGpxRota, nomeArquivoGpx } from '../public/gpx.js';
+import {
+  gerarGpxRota,
+  gerarGpxRotaPercorrida,
+  prepararPacoteExportacaoGpx,
+  nomeArquivoGpx,
+  NOME_ARQUIVO_ROTA_CALCULADA,
+  NOME_ARQUIVO_ROTA_PERCORRIDA,
+  NOME_ARQUIVO_EXPORTACAO_ZIP,
+} from '../public/gpx.js';
+import { criarZip, lerZipStore, decodificarUtf8 } from '../public/zip.js';
 import { exportarRotaGpxWeb } from '../public/exportarGpxWeb.js';
 import { NetworkService } from '../server/networkService.js';
 import { calcularRotaComParadas } from '../core/rotaParadas.js';
@@ -238,9 +247,10 @@ test('GPX Web: download direto via Blob+<a download> sem abrir seletor de pastas
   assert.equal(abriuSeletorArquivo, false, 'não deve chamar showSaveFilePicker');
   assert.equal(res.ok, true);
   assert.equal(res.modo, 'download');
-  assert.equal(res.arquivo, 'siga-rota-A-C-B-A-2026-11-17_10-15.gpx');
+  assert.equal(res.cenario, 'CALCULADA');
+  assert.equal(res.arquivo, 'rota_calculada.gpx');
   assert.equal(fakeLink.href, 'blob:gpx-direto');
-  assert.equal(fakeLink.download, res.arquivo);
+  assert.equal(fakeLink.download, 'rota_calculada.gpx');
   assert.equal(clicado, true);
   assert.equal(removido, true);
   assert.equal(urlRevogada, 'blob:gpx-direto');
@@ -325,4 +335,212 @@ test('GPX E2E na rede real de Santo André: simples, múltiplas paradas, usuári
   );
   assert.deepEqual(parsedOtimizada.trkpts, coordsMotor);
   assert.deepEqual(parsedOtimizada.trkpts[0], parsedOtimizada.trkpts.at(-1));
+});
+
+test('GPX Cenário B (calculada + GPS real), desvio com recálculo, pausas/retomadas, simulação e Cenário C (GPS sem rota calculada)', async () => {
+  const rotaOriginal = rotaExemplo();
+  const rotaRecalculadaPosDesvio = {
+    ok: true,
+    circular: true,
+    modo: 'usuario',
+    distance: 490,
+    sequencia: ['B', 'A'],
+    pontos: [
+      { rotulo: 'B', latitude: -23.6660, longitude: -46.5290, ordem: 1 },
+    ],
+    legs: [
+      {
+        de: 'GPS',
+        para: 'B',
+        geometry: {
+          type: 'LineString',
+          coordinates: [[-46.5355, -23.6628], [-46.5290, -23.6660]],
+        },
+      },
+    ],
+  };
+
+  // Pontos GPS reais com desvio (-46.5355, -23.6628) e pausa/retomada (segmentoIndice 0 e 1)
+  const pontosGps = [
+    { latitude: -23.6635, longitude: -46.5320, timestampMs: 1700000000000, ordem: 1, segmentoIndice: 0, simulado: false },
+    { latitude: -23.6628, longitude: -46.5355, timestampMs: 1700000010000, ordem: 2, segmentoIndice: 0, simulado: false },
+    { latitude: -23.6641, longitude: -46.5310, timestampMs: 1700000060000, ordem: 3, segmentoIndice: 1, simulado: false },
+    { latitude: -23.6660, longitude: -46.5290, timestampMs: 1700000090000, ordem: 4, segmentoIndice: 1, simulado: false },
+  ];
+
+  // Cenário B (com rota original preservada após recálculo de desvio) → ZIP
+  const pacoteB = prepararPacoteExportacaoGpx({
+    rotaCalculada: rotaRecalculadaPosDesvio,
+    rotaCalculadaOriginal: rotaOriginal,
+    pontosGps,
+    agora: new Date('2026-11-16T18:30:00.000Z'),
+  });
+  assert.equal(pacoteB.ok, true);
+  assert.equal(pacoteB.cenario, 'AMBAS');
+  assert.equal(pacoteB.tipoArquivo, 'zip');
+  assert.equal(pacoteB.nomeArquivo, NOME_ARQUIVO_EXPORTACAO_ZIP);
+
+  const entradas = lerZipStore(pacoteB.zipBytes);
+  assert.deepEqual(Object.keys(entradas).sort(), [
+    NOME_ARQUIVO_ROTA_CALCULADA,
+    NOME_ARQUIVO_ROTA_PERCORRIDA,
+  ].sort());
+
+  const xmlCalc = decodificarUtf8(entradas[NOME_ARQUIVO_ROTA_CALCULADA]);
+  const xmlGps = decodificarUtf8(entradas[NOME_ARQUIVO_ROTA_PERCORRIDA]);
+
+  // Calcula preservou as 3 paradas originais e geometria original (9 trkpts), NÃO a rota recalculada
+  assert.equal((xmlCalc.match(/<wpt /g) || []).length, 3);
+  assert.equal((xmlCalc.match(/<trkpt /g) || []).length, 9);
+  assert.doesNotMatch(xmlCalc, /-46\.5355/);
+
+  // Percorrida contém estritamente os 4 pontos GPS reais em 2 <trkseg> com <time>
+  assert.equal((xmlGps.match(/<trkseg>/g) || []).length, 2);
+  assert.equal((xmlGps.match(/<trkpt /g) || []).length, 4);
+  assert.match(xmlGps, /-23\.6628000" lon="-46\.5355000"/);
+  assert.match(xmlGps, /<time>2023-11-14T22:13:20\.000Z<\/time>/);
+  assert.equal((xmlGps.match(/<wpt /g) || []).length, 3);
+
+  // Download Web no Cenário B envia Uint8Array como application/zip
+  let parteRecebida = null;
+  let mimeRecebido = '';
+  const fakeLink = { style: {}, click() {}, remove() {} };
+  const webB = await exportarRotaGpxWeb(rotaRecalculadaPosDesvio, {
+    rotaCalculadaOriginal: rotaOriginal,
+    pontosGps,
+    env: {
+      Blob: class {
+        constructor(parts, opts) {
+          parteRecebida = parts[0];
+          mimeRecebido = opts?.type || '';
+        }
+      },
+      URL: { createObjectURL: () => 'blob:zip', revokeObjectURL() {} },
+      setTimeout: (fn) => { fn(); return { unref() {} }; },
+      document: { body: { appendChild() {} }, createElement: () => fakeLink },
+    },
+  });
+  assert.equal(webB.ok, true);
+  assert.equal(webB.cenario, 'AMBAS');
+  assert.equal(webB.arquivo, 'exportacao_rotas.zip');
+  assert.equal(mimeRecebido, 'application/zip');
+  assert.ok(parteRecebida instanceof Uint8Array);
+  assert.ok(lerZipStore(parteRecebida)['rota_percorrida.gpx']);
+
+  // Modo simulação NUNCA vira rota_percorrida.gpx (cai para Cenário A)
+  const pacoteSim = prepararPacoteExportacaoGpx({
+    rotaCalculada: rotaOriginal,
+    rotaPercorrida: { tipoRota: 'GPS', simulado: true, geometry: { type: 'LineString', coordinates: [[-46.53, -23.66], [-46.529, -23.661]] } },
+    pontosGps: pontosGps.map((p) => ({ ...p, simulado: true })),
+  });
+  assert.equal(pacoteSim.ok, true);
+  assert.equal(pacoteSim.cenario, 'CALCULADA');
+  assert.equal(pacoteSim.nomeArquivo, NOME_ARQUIVO_ROTA_CALCULADA);
+
+  // Cenário C: rota GPS salva sem rota calculada vinculada → exporta somente rota_percorrida.gpx
+  const pacoteC = prepararPacoteExportacaoGpx({
+    rotaCalculada: null,
+    rotaPercorrida: { tipoRota: 'GPS', idCliente: 'gps-only-1', simulado: false, titulo: 'Campo Centro' },
+    pontosGps,
+  });
+  assert.equal(pacoteC.ok, true);
+  assert.equal(pacoteC.cenario, 'PERCORRIDA');
+  assert.equal(pacoteC.nomeArquivo, NOME_ARQUIVO_ROTA_PERCORRIDA);
+  assert.equal((pacoteC.gpxXml.match(/<wpt /g) || []).length, 0);
+  assert.equal((pacoteC.gpxXml.match(/<trkseg>/g) || []).length, 2);
+  assert.equal((pacoteC.gpxXml.match(/<trkpt /g) || []).length, 4);
+
+  // `gerarGpxRotaPercorrida` funciona independente mesmo com fallback de geometry GPS (sem pontos detalhados)
+  const xmlFallbackGps = gerarGpxRotaPercorrida({
+    rotaPercorrida: {
+      tipoRota: 'GPS',
+      simulado: false,
+      geometry: {
+        type: 'MultiLineString',
+        coordinates: [
+          [[-46.5320, -23.6635], [-46.5355, -23.6628]],
+          [[-46.5310, -23.6641], [-46.5290, -23.6660]],
+        ],
+      },
+    },
+  });
+  assert.equal((xmlFallbackGps.match(/<trkseg>/g) || []).length, 2);
+  assert.equal((xmlFallbackGps.match(/<trkpt /g) || []).length, 4);
+});
+
+test('GPX Cenário 8 (erros e proteções): navegação em andamento, coords inválidas, GPS insuficiente, falha ZIP e SW', () => {
+  const rota = rotaExemplo();
+
+  // Navegação em andamento bloqueia sem perder dados
+  const emNav = prepararPacoteExportacaoGpx({
+    rotaCalculada: rota,
+    navegacaoEmAndamento: true,
+  });
+  assert.equal(emNav.ok, false);
+  assert.equal(emNav.motivo, 'NAVEGACAO_EM_ANDAMENTO');
+
+  // Coordenadas GPS inválidas
+  const coordInvGps = prepararPacoteExportacaoGpx({
+    rotaCalculada: null,
+    pontosGps: [
+      { latitude: 120, longitude: -46.53 },
+      { latitude: -23.66, longitude: 250 },
+    ],
+  });
+  assert.equal(coordInvGps.ok, false);
+  assert.equal(coordInvGps.motivo, 'COORDENADAS_INVALIDAS');
+
+  // Coordenadas calculadas inválidas
+  const coordInvCalc = prepararPacoteExportacaoGpx({
+    rotaCalculada: {
+      ok: true,
+      geometry: { type: 'LineString', coordinates: [[999, 999], [NaN, NaN]] },
+    },
+  });
+  assert.equal(coordInvCalc.ok, false);
+  assert.equal(coordInvCalc.motivo, 'GEOMETRIA_INVALIDA');
+
+  // Apenas 1 ponto GPS sem rota calculada
+  const gpsUmPonto = prepararPacoteExportacaoGpx({
+    rotaCalculada: null,
+    pontosGps: [{ latitude: -23.6635, longitude: -46.5320, timestampMs: 1700000000000 }],
+  });
+  assert.equal(gpsUmPonto.ok, false);
+  assert.equal(gpsUmPonto.motivo, 'SEM_GPS');
+
+  // Simulação pura sem calculada
+  const simSemCalc = prepararPacoteExportacaoGpx({
+    rotaCalculada: null,
+    rotaPercorrida: { tipoRota: 'GPS', simulado: true },
+  });
+  assert.equal(simSemCalc.ok, false);
+  assert.equal(simSemCalc.motivo, 'SIMULACAO_NAO_EXPORTAVEL');
+
+  // Falha explícita na geração ZIP
+  const falhaZip = prepararPacoteExportacaoGpx({
+    rotaCalculada: rota,
+    pontosGps: [
+      { latitude: -23.6635, longitude: -46.5320 },
+      { latitude: -23.6660, longitude: -46.5290 },
+    ],
+    criarZipFn: () => { throw new Error('Falha simulada no compactador'); },
+  });
+  assert.equal(falhaZip.ok, false);
+  assert.equal(falhaZip.motivo, 'ERRO_ZIP');
+  assert.match(falhaZip.mensagem, /Falha simulada no compactador/);
+
+  // Service Worker, app.js e navegacaoUI.js preservam contrato completo
+  const swSrc = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
+  const appSrc = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const navSrc = readFileSync(new URL('../public/navegacaoUI.js', import.meta.url), 'utf8');
+  assert.match(swSrc, /'\/zip\.js'/);
+  assert.match(swSrc, /'\/gpx\.js'/);
+  assert.match(swSrc, /'\/exportarGpxWeb\.js'/);
+  assert.match(appSrc, /rotaPlanejadaOriginal/);
+  assert.match(appSrc, /exportarRotaSalvaCampo/);
+  assert.match(navSrc, /controlador\.estado\.execucao !== EXECUCAO\.ATIVO\) return;/);
+
+  // Valida que ZIP vazio é rejeitado por criarZip
+  assert.throws(() => criarZip([]), /nenhuma entrada/i);
+  assert.throws(() => criarZip([{ nome: 'vazio.gpx', conteudo: '' }]), /vazio/i);
 });

@@ -9,12 +9,20 @@ const require=createRequire(new URL('../package.json',import.meta.url));
 const source=readFileSync(new URL('../src/components/NetworkDiagnosticsPanel.js',import.meta.url),'utf8');
 const code=require('@babel/core').transformSync(source,{babelrc:false,configFile:false,plugins:[require.resolve('@babel/plugin-transform-react-jsx'),require.resolve('@babel/plugin-transform-modules-commonjs')]}).code;
 function setup(props){
- let open=false;
- const React={Fragment:'Fragment',createElement:(type,props,...children)=>({type,props:{...props,children}}),useState:()=>[open,fn=>{open=typeof fn==='function'?fn(open):fn;}]};
+ const hooks=[];let idx=0;
+ const React={
+  Fragment:'Fragment',
+  createElement:(type,p,...children)=>({type,props:{...p,children}}),
+  useState:(init)=>{
+   const slot=idx++;
+   if(!(slot in hooks)) hooks[slot]=typeof init==='function'?init():init;
+   return [hooks[slot],fn=>{hooks[slot]=typeof fn==='function'?fn(hooks[slot]):fn;}];
+  },
+ };
  const module={exports:{}};
- const deps={react:React,'react-native':{StyleSheet:{create:s=>s},View:'View',Text:'Text',TouchableOpacity:'TouchableOpacity',ActivityIndicator:'ActivityIndicator'},'../theme/colors.js':{COLORS},'../utils/networkPresentation.js':{apresentarRede}};
+ const deps={react:React,'react-native':{StyleSheet:{create:s=>s},View:'View',Text:'Text',TextInput:'TextInput',TouchableOpacity:'TouchableOpacity',ActivityIndicator:'ActivityIndicator'},'../theme/colors.js':{COLORS},'../utils/networkPresentation.js':{apresentarRede}};
  new Function('require','module','exports',code)(name=>{assert.ok(name in deps,name);return deps[name];},module,module.exports);
- const render=()=>module.exports.NetworkDiagnosticsPanel(props);
+ const render=()=>{idx=0;return module.exports.NetworkDiagnosticsPanel(props);};
  function nodes(node,out=[]){if(Array.isArray(node)){for(const c of node)nodes(c,out);}else if(node&&typeof node==='object'){out.push(node);nodes(typeof node.type==='function'?node.type(node.props):node.props?.children,out);}return out;}
  function text(node){if(Array.isArray(node))return node.map(text).join(' ');if(node==null||typeof node==='boolean')return '';if(typeof node!=='object')return String(node);return text(typeof node.type==='function'?node.type(node.props):node.props?.children);}
  return {render,nodes,text};
@@ -35,6 +43,38 @@ test('botões de rede ficam desativados durante operação e mantêm seus callba
 test('diagnóstico pode expandir e mostra os contadores do grafo fornecido',()=>{
  const c=setup({meta,diagnostics:{nodes:123,edges:456,crossings:7,buildMs:89}});assert.doesNotMatch(c.text(c.render()),/Nós/);c.nodes(c.render()).find(n=>n.type==='TouchableOpacity'&&c.text(n).includes('Diagnóstico do grafo')).props.onPress();const text=c.text(c.render());assert.match(text,/Nós/);assert.match(text,/123/);assert.match(text,/456/);assert.match(text,/Cruzamentos/);assert.match(text,/89 ms/);
 });
-test('App monta o painel no ScrollView e conecta os três comandos e descarte',()=>{
- const app=readFileSync(new URL('../App.js',import.meta.url),'utf8');assert.match(app,/<NetworkDiagnosticsPanel[\s\S]*?<\/ScrollView>/);for(const name of ['carregar','verificar','baixar'])assert.ok(app.includes(`networkPanelRef.current?.executar('${name}')`));assert.match(app,/painel\.descartar\(\)/);
+test('painel exibe modo servidor Node.js (WFS / snapshot) e contingência offline no aparelho',()=>{
+ const onlineWfs=setup({meta:{...meta,source:'api-node',backendSource:'wfs',remoteApi:{configured:true,supported:true,execution:'remote',backendSource:'wfs',transport:'ashx',url:'https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx'}}});
+ const wfsTxt=onlineWfs.text(onlineWfs.render());
+ assert.match(wfsTxt,/Servidor Node\.js \(WFS\)/);
+ assert.match(wfsTxt,/Via servidor Node\.js \(WFS\)/);
+ assert.match(wfsTxt,/Proxy WebForms \(ApiProxy\.ashx\)/);
+
+ const onlineSnap=setup({meta:{...meta,source:'api-node',backendSource:'snapshot',remoteApi:{configured:true,supported:true,execution:'remote',backendSource:'snapshot',transport:'direct',url:'https://api.siga.local'}}});
+ const snapTxt=onlineSnap.text(onlineSnap.render());
+ assert.match(snapTxt,/Servidor Node\.js \(snapshot\)/);
+ assert.match(snapTxt,/Via servidor Node\.js \(snapshot\)/);
+ assert.match(snapTxt,/API Node\.js direta/);
+
+ const offlineFallback=setup({meta:{...meta,source:'wfs-cache',remoteApi:{configured:true,supported:true,execution:'local-fallback',lastError:'offline'}}});
+ assert.match(offlineFallback.text(offlineFallback.render()),/Local no aparelho \(contingência offline\)/);
+});
+test('painel permite configurar URL do servidor backend (ApiProxy.ashx ou modo local)',()=>{
+ const saved=[];
+ const c=setup({meta,onSaveApiUrl:(u)=>saved.push(u)});
+ const toggle=c.nodes(c.render()).find(n=>n.type==='TouchableOpacity'&&c.text(n).includes('Configurar servidor backend'));
+ assert.ok(toggle);
+ toggle.props.onPress();
+ const ns=c.nodes(c.render());
+ const input=ns.find(n=>n.type==='TextInput');
+ assert.ok(input);
+ input.props.onChangeText('https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx');
+ const btnConnect=c.nodes(c.render()).find(n=>n.type==='TouchableOpacity'&&c.text(n).includes('Conectar e sincronizar'));
+ const btnLocal=c.nodes(c.render()).find(n=>n.type==='TouchableOpacity'&&c.text(n).includes('Usar modo local'));
+ btnConnect.props.onPress();
+ btnLocal.props.onPress();
+ assert.deepEqual(saved,['https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx','']);
+});
+test('App monta o painel no ScrollView e conecta os três comandos, URL backend e descarte',()=>{
+ const app=readFileSync(new URL('../App.js',import.meta.url),'utf8');assert.match(app,/<NetworkDiagnosticsPanel[\s\S]*?<\/ScrollView>/);for(const name of ['carregar','verificar','baixar'])assert.ok(app.includes(`networkPanelRef.current?.executar('${name}')`));assert.ok(app.includes('networkPanelRef.current?.configurarServidor('));assert.match(app,/painel\.descartar\(\)/);
 });

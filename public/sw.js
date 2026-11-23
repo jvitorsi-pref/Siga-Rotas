@@ -12,23 +12,28 @@
    esqueleto salvo é usado.
    ========================================================================== */
 
-const CACHE = 'siga-rotas-v12';
+const CACHE = 'siga-rotas-v16';
 
 /** Arquivos do esqueleto do aplicativo. */
 const ESQUELETO = [
   '/',
   '/index.html',
   '/styles.css',
+  '/config.js',
   '/logo-siga-app.png',
   '/app.js',
   '/clienteRede.js',
+  '/armazenamentoIndexedDB.js',
+  '/campoWebService.js',
   '/camadaBase.js',
+  '/zip.js',
   '/gpx.js',
   '/exportarGpxWeb.js',
   '/planejamentoCircuito.js',
   '/revisoesEndereco.js',
   '/resumoRota.js',
   '/navegacaoUI.js',
+  '/ocorrenciasUI.js',
   '/manifest.webmanifest',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
@@ -52,6 +57,15 @@ const ESQUELETO = [
   '/core/simulador.js',
   '/core/instrucoes.js',
   '/core/navegacao.js',
+  '/ocorrencias/catalogo.js',
+  '/ocorrencias/preferencias.js',
+  '/ocorrencias/regras.js',
+  '/ocorrencias/roteamentoAlternativo.js',
+  '/campo/modeloCampo.js',
+  '/campo/filtroGps.js',
+  '/campo/repositorioCampo.js',
+  '/campo/contratosBackend.js',
+  '/campo/syncEngine.js',
 ];
 
 self.addEventListener('install', (event) => {
@@ -87,6 +101,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return; // recursos externos
   if (url.pathname.startsWith('/api/')) return; // a API nunca é cacheada
+  if (url.pathname.endsWith('.ashx')) return; // proxy WebForms nunca é cacheado
   if (url.pathname === '/sw.js') return;
 
   event.respondWith(

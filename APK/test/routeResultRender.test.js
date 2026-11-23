@@ -37,3 +37,11 @@ test('APK: botão Exportar GPX aparece para rota completa, dispara callback e ex
  assert.match(render({routeResult,onExportGpx:()=>{},gpxFeedback:{kind:'ok',text:'GPX salvo em Download'}}),/GPX salvo em Download/);
  assert.doesNotMatch(render({routeResult:{...routeResult,parcial:true},onExportGpx:()=>{}}),/Exportar GPX/);
 });
+test('APK: Cenário C (somente GPS real sem rota calculada) renderiza card GPS com Exportar GPX',()=>{
+ const text=render({routeResult:null,routeError:null,gpsRouteInfo:{distanciaMetros:432},onExportGpx:()=>{}});
+ assert.match(text,/Resultado \(GPS Real\)/);
+ assert.match(text,/432/);
+ assert.match(text,/Trajeto GPS real registrado/);
+ assert.match(text,/Exportar GPX/);
+ assert.equal(render({routeResult:null,routeError:null,gpsRouteInfo:null}),'');
+});

@@ -51,6 +51,23 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
     onCancelPick,
     onMapPickCoordinate,
     onMapClick,
+    occurrences,
+    showOccurrences,
+    altRoutes,
+    highlightSegments,
+    pickingOccurrence = false,
+    onCancelPickOccurrence,
+    onMapPickOccurrence,
+    onOccurrenceClick,
+    onAltRouteClick,
+    onToggleOccurrences,
+    onStartPickOccurrence,
+    gpsTrailGeometry,
+    routeObservations,
+    pickingRouteObs = false,
+    onCancelPickRouteObs,
+    onMapPickRouteObs,
+    onRouteObservationClick,
   },
   ref
 ) {
@@ -80,8 +97,15 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
     syncRef.current.atualizar({ ready: mapReady, session: mapSession, visible,
       basemapMode: modoBaseAtivo,
       features, markers, routeGeometry, routeSegments, navigationPosition,
-      centerRequest, suppressRouteFit });
-  }, [mapReady, mapSession, visible, modoBaseAtivo, features, markers, routeGeometry, routeSegments, navigationPosition, centerRequest, suppressRouteFit]);
+      centerRequest, suppressRouteFit,
+      ...(occurrences !== undefined ? { occurrences } : {}),
+      ...(showOccurrences !== undefined ? { showOccurrences } : {}),
+      ...(altRoutes !== undefined ? { altRoutes } : {}),
+      ...(highlightSegments !== undefined ? { highlightSegments } : {}),
+      ...(gpsTrailGeometry !== undefined ? { gpsTrailGeometry } : {}),
+      ...(routeObservations !== undefined ? { routeObservations } : {}),
+      ...(pickingPoint || pickingOccurrence || pickingRouteObs ? { picking: true } : occurrences !== undefined ? { picking: false } : {}) });
+  }, [mapReady, mapSession, visible, modoBaseAtivo, features, markers, routeGeometry, routeSegments, navigationPosition, centerRequest, suppressRouteFit, occurrences, showOccurrences, altRoutes, highlightSegments, gpsTrailGeometry, routeObservations, pickingPoint, pickingOccurrence, pickingRouteObs]);
 
   useEffect(() => {
     if (modoBaseAtivo === CAMADA_PADRAO) {
@@ -101,11 +125,20 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
         } else {
           setBasemapStatus(null);
         }
+      } else if (data.type === 'OCC_CLICK') {
+        if (onOccurrenceClick) onOccurrenceClick(data.id);
+      } else if (data.type === 'ROUTE_OBS_CLICK') {
+        if (onRouteObservationClick) onRouteObservationClick(data.idCliente);
+      } else if (data.type === 'ALT_ROUTE_CLICK') {
+        if (onAltRouteClick) onAltRouteClick(data.id);
       } else if (data.type === 'MAP_CLICK') {
-        // Com a seleção de ponto ativa, o toque define o ponto. Sem seleção,
-        // o toque pode ocultar/mostrar um trecho da rota (paridade com o Web).
+        // Com a seleção de ponto, observação ou ocorrência ativa, o toque define o alvo.
         if (pickingPoint && onMapPickCoordinate) {
           onMapPickCoordinate({ lon: data.lon, lat: data.lat });
+        } else if (pickingRouteObs && onMapPickRouteObs) {
+          onMapPickRouteObs({ lon: data.lon, lat: data.lat });
+        } else if (pickingOccurrence && onMapPickOccurrence) {
+          onMapPickOccurrence({ lon: data.lon, lat: data.lat });
         } else if (onMapClick) {
           onMapClick({ lon: data.lon, lat: data.lat, zoom: data.zoom });
         }
@@ -201,9 +234,53 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
           </TouchableOpacity>
         </View>
       )}
+      {!pickingPoint && pickingRouteObs && (
+        <View style={styles.pickBanner}>
+          <Text style={styles.pickBannerText}>
+            Toque no mapa para marcar a{' '}
+            <Text style={styles.pickBannerBold}>observação da rota</Text>
+          </Text>
+          <TouchableOpacity style={styles.pickCancelBtn} onPress={onCancelPickRouteObs}>
+            <Text style={styles.pickCancelText}>Cancelar</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      {!pickingPoint && !pickingRouteObs && pickingOccurrence && (
+        <View style={styles.pickBanner}>
+          <Text style={styles.pickBannerText}>
+            Toque sobre uma via no mapa para sinalizar uma{' '}
+            <Text style={styles.pickBannerBold}>ocorrência</Text>
+          </Text>
+          <TouchableOpacity style={styles.pickCancelBtn} onPress={onCancelPickOccurrence}>
+            <Text style={styles.pickCancelText}>Cancelar</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Controles flutuantes rápidos do mapa */}
       <View style={styles.quickControls}>
+        {typeof onStartPickOccurrence === 'function' && (
+          <TouchableOpacity
+            style={[styles.controlBtn, pickingOccurrence && styles.controlBtnActive]}
+            accessibilityRole="button"
+            onPress={() => (pickingOccurrence ? onCancelPickOccurrence?.() : onStartPickOccurrence())}
+          >
+            <Text style={[styles.controlBtnText, pickingOccurrence && styles.controlBtnTextActive]}>
+              ⚠ Ocorrência
+            </Text>
+          </TouchableOpacity>
+        )}
+        {typeof onToggleOccurrences === 'function' && (
+          <TouchableOpacity
+            style={styles.controlBtn}
+            accessibilityRole="button"
+            onPress={onToggleOccurrences}
+          >
+            <Text style={styles.controlBtnText}>
+              {showOccurrences !== false ? '👁 Alertas' : '🚫 Alertas'}
+            </Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           style={styles.controlBtn}
           onPress={() => sendMessageToMap({ type: 'FIT_NETWORK' })}
@@ -250,6 +327,18 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
             <View style={[styles.swatchDot, { backgroundColor: COLORS.stop }]} />
             <Text style={styles.legendText}>Parada intermediária</Text>
           </View>
+          {!!altRoutes?.length && (
+            <View style={styles.legendRow}>
+              <View style={[styles.swatchLine, { backgroundColor: '#64748b' }]} />
+              <Text style={styles.legendText}>Rota alternativa</Text>
+            </View>
+          )}
+          {!!occurrences?.length && (
+            <View style={styles.legendRow}>
+              <View style={[styles.swatchDot, { backgroundColor: '#d97706' }]} />
+              <Text style={styles.legendText}>Ocorrências ({occurrences.length})</Text>
+            </View>
+          )}
           {!!routeSegments?.length && (
             <Text style={styles.legendText}>{routeSegments.filter((t) => t.visivel).length}/{routeSegments.length} trechos visíveis</Text>
           )}
@@ -403,6 +492,9 @@ const styles = StyleSheet.create({
     bottom: 48,
     right: 12,
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    maxWidth: '92%',
     gap: 6,
   },
   controlBtn: {
@@ -413,10 +505,17 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 10,
   },
+  controlBtnActive: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
+  },
   controlBtnText: {
     color: COLORS.accent,
     fontSize: 11.5,
     fontWeight: '600',
+  },
+  controlBtnTextActive: {
+    color: '#ffffff',
   },
   legend: {
     position: 'absolute',

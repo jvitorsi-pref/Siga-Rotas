@@ -3,10 +3,22 @@ import { criarNavegacao, planoDeNavegacao, EXECUCAO } from '../../../core/navega
 import { criarSimulador } from '../../../core/simulador.js';
 import { instrucaoAtual } from '../../../core/instrucoes.js';
 
-export function criarNavegacaoMobile({ calcularRotaParadas, aoMudar = () => {}, aoRecalcular = () => {}, criarFonte = criarSimulador, criarFonteGPS } = {}) {
+export function criarNavegacaoMobile({
+  calcularRotaParadas,
+  aoMudar = () => {},
+  aoRecalcular = () => {},
+  criarFonte = criarSimulador,
+  criarFonteGPS,
+  aoIniciarExecucao = null,
+  aoAtualizarPontoExecucao = null,
+  aoPausarExecucao = null,
+  aoRetomarExecucao = null,
+  aoEncerrarExecucao = null,
+} = {}) {
   let controlador = null, fonte = null, resposta = null;
   let geracao = 0, descartada = false, velocidade = 5, aviso = '', concluida = false;
   let recalculo = null, revisaoRecalculo = 0, revisaoAtivacao = 0, modo = 'simulacao', iniciando = false;
+  let execucaoCampoAtiva = false;
 
   function snapshot() {
     const e = controlador?.estado;
@@ -90,13 +102,27 @@ export function criarNavegacaoMobile({ calcularRotaParadas, aoMudar = () => {}, 
       if (!['gps', 'simulacao'].includes(modoSolicitado)) return { ok: false, message: 'Fonte de posição inválida.' };
       if (modoSolicitado === 'gps' && !criarFonteGPS) return { ok: false, message: 'Fonte GPS nativa indisponível.' };
       cancelarRecalculo(); pararFonte(); modo = modoSolicitado; iniciando = false;
+      if (execucaoCampoAtiva) {
+        execucaoCampoAtiva = false;
+        aoEncerrarExecucao?.({ concluida: false });
+      }
       fonte = null; resposta = rota; concluida = false;
       aviso = modo === 'simulacao' ? 'MODO DE TESTE — posição simulada, não é GPS real.' : 'GPS real — aguardando permissão e localização do aparelho.';
+      execucaoCampoAtiva = true;
+      aoIniciarExecucao?.(rota, { modo: modoSolicitado });
       controlador = criarNavegacao(plano, {
         aoMudar: emitir,
         aoChegarParada: p => { aviso = `Chegada confirmada à parada ${p.rotulo}.`; emitir(); },
         aoDesvioConfirmado: info => { void recalcular(info); },
-        aoConcluir: () => { cancelarRecalculo(); concluida = true; pararFonte(); aviso = modo === 'simulacao' ? 'Trajeto concluído em modo de teste.' : 'Trajeto concluído com GPS real.'; emitir(); },
+        aoConcluir: () => {
+          cancelarRecalculo(); concluida = true; pararFonte();
+          aviso = modo === 'simulacao' ? 'Trajeto concluído em modo de teste.' : 'Trajeto concluído com GPS real.';
+          if (execucaoCampoAtiva) {
+            execucaoCampoAtiva = false;
+            aoEncerrarExecucao?.({ concluida: true });
+          }
+          emitir();
+        },
       });
       const token = geracao;
       const factory = modo === 'gps' ? criarFonteGPS : criarFonte;
@@ -104,6 +130,7 @@ export function criarNavegacaoMobile({ calcularRotaParadas, aoMudar = () => {}, 
         if (descartada || token !== geracao || controlador.estado.execucao !== EXECUCAO.ATIVO) return;
         if ((p.simulado === true) !== (modo === 'simulacao')) { aviso = 'Fonte incompatível com a navegação selecionada.'; emitir(); return; }
         controlador.atualizarPosicao(p);
+        aoAtualizarPontoExecucao?.(p);
       }, aoErro: erro => {
         if (descartada || token !== geracao) return;
         aviso = erro.mensagem; controlador.marcarSinalPerdido(true); emitir();
@@ -117,14 +144,22 @@ export function criarNavegacaoMobile({ calcularRotaParadas, aoMudar = () => {}, 
       if (controlador?.estado.execucao !== EXECUCAO.ATIVO) return;
       // Não muda a geração da fonte; só invalida o recálculo em andamento.
       fonte?.pausar(); iniciando = false; revisaoRecalculo++; revisaoAtivacao++; controlador.pausar(); recalculo = null;
-      controlador.estado.recalculando = false; controlador.reiniciarContadores(); emitir();
+      controlador.estado.recalculando = false; controlador.reiniciarContadores();
+      aoPausarExecucao?.();
+      emitir();
     },
     retomar() {
       if (controlador?.estado.execucao !== EXECUCAO.PAUSADO) return;
-      controlador.retomar(); return ativarFonte(true);
+      controlador.retomar();
+      aoRetomarExecucao?.();
+      return ativarFonte(true);
     },
     encerrar() {
       cancelarRecalculo(); pararFonte(); iniciando = false;
+      if (execucaoCampoAtiva) {
+        execucaoCampoAtiva = false;
+        aoEncerrarExecucao?.({ concluida: false });
+      }
       if (controlador) controlador.encerrar();
       controlador = null; fonte = null; resposta = null; emitir();
     },

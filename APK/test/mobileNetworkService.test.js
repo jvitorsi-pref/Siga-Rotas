@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MobileNetworkServiceCore, STORAGE_KEY_SNAPSHOT, fingerprintOf } from '../src/services/mobileNetworkServiceCore.js';
+import {
+  STORAGE_KEY_API_URL,
+  montarUrlEndpointApi,
+  normalizarApiUrl,
+  resolverTipoTransporteApi,
+} from '../src/config/apiConfig.js';
 import { readFileSync } from 'node:fs';
 import { buildGraph } from '../src/core/graph.js';
 import { WFS_DEFAULTS, UPDATE_DEFAULTS, LAYER_NAME } from '../src/core/config.js';
@@ -68,6 +74,179 @@ test('sem snapshot local válido, fallback WFS é persistido; offline explícito
  const c=setup({embeddedSnapshot:null});assert.equal((await c.service.ensureReady()).source,'wfs');assert.equal(c.writes.length,1);
  const off=setup({embeddedSnapshot:null,allowWfs:false});await assert.rejects(()=>off.service.ensureReady(),/desativada/);assert.equal(off.calls.length,0);
 });
-test('fingerprint não depende da ordem das feições e opção remota não promete delegação',async()=>{
- const a=[feature(1),feature(2,200)];assert.equal(fingerprintOf(a),fingerprintOf([...a].reverse()));const c=setup({remoteApiUrl:'https://example.invalid'});await c.service.ensureReady();assert.deepEqual(c.service.getNetworkMeta().remoteApi,{configured:true,supported:false,execution:'local'});
+test('fingerprint não depende da ordem das feições e integração com servidor Node.js delega rotas, cai para offline e sincroniza na reconexão',async()=>{
+ const a=[feature(1),feature(2,200)];assert.equal(fingerprintOf(a),fingerprintOf([...a].reverse()));
+
+ const valores=new Map();
+ const storage={
+  async getItem(k){return valores.get(k)||null;},
+  async setItem(k,v){valores.set(k,v);},
+ };
+
+ let servidorOnline=true;
+ let chamadasApi=[];
+ let featuresServidor=[feature(10,300),feature(11,150)];
+ let origemServidor='wfs';
+
+ const fetchMock=async(url,init)=>{
+  chamadasApi.push({url:String(url),method:init?.method||'GET'});
+  if(!servidorOnline) throw new Error('Network request failed');
+  const u=new URL(url);
+  if(u.pathname==='/api/health'){
+   return new Response(JSON.stringify({ready:true,source:origemServidor,originMode:origemServidor,features:featuresServidor.length,builtAt:'2026-11-16T01:00:00.000Z'}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  if(u.pathname==='/api/network'){
+   return new Response(JSON.stringify({type:'FeatureCollection',features:featuresServidor,meta:{source:origemServidor,originMode:origemServidor,strategy:origemServidor==='wfs'?'single':'snapshot',builtAt:'2026-11-16T01:00:00.000Z',serverTotal:featuresServidor.length,attributes:['ID'],warnings:[]}}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  if(u.pathname==='/api/rota-paradas'){
+   return new Response(JSON.stringify({ok:true,distance:321.5,circular:true,sequencia:['A','B'],sequenciaCompleta:['A','B','A'],legs:[{de:'A',para:'B',distance:160.75,cor:'#1b7f3a',geometry:{type:'LineString',coordinates:[coord(0),coord(150)]}},{de:'B',para:'A',distance:160.75,retorno:true,cor:'#6a1b9a',geometry:{type:'LineString',coordinates:[coord(150),coord(0)]}}],geometry:{type:'LineString',coordinates:[coord(0),coord(150),coord(0)]},streets:['Rua teste']}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  if(u.pathname==='/api/endereco-digital'){
+   return new Response(JSON.stringify({ok:true,status:'CONVERTIDO',latitude:-23.66,longitude:-46.54,codigoNormalizado:'8FP9+J6',codigoCompleto:'587P8FP9+J6'}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  return new Response('{}',{status:404});
+ };
+
+ const srv=new MobileNetworkServiceCore({
+  storage,
+  embeddedSnapshot:{...result(1,100),savedAt:1000},
+  remoteApiUrl:'https://node.siga.local/',
+  fetchImpl:fetchMock,
+  allowWfs:false,
+  autoUpdate:{enabled:false},
+ });
+
+ // 1) Online: carrega do servidor Node.js e delega cálculo + Endereço Digital
+ const st=await srv.ensureReady();
+ assert.equal(st.source,'api-node');
+ assert.equal(st.features[0].properties.ID,10);
+ assert.equal(srv.getNetworkMeta().remoteApi.supported,true);
+ assert.equal(srv.getNetworkMeta().remoteApi.execution,'remote');
+ assert.equal(srv.getNetworkMeta().remoteApi.backendSource,'wfs');
+
+ const rotaOnline=await srv.calcularRotaParadas([{rotulo:'A',longitude:coord(0)[0],latitude:coord(0)[1]},{rotulo:'B',longitude:coord(150)[0],latitude:coord(150)[1]}],{modo:'usuario',circular:true});
+ assert.equal(rotaOnline.distance,321.5);
+ const endOnline=await srv.resolverEnderecoDigital('8FP9+J6');
+ assert.equal(endOnline.status,'CONVERTIDO');
+
+ // 2) Perda de conexão com Node.js: calcula offline com cache local e enfileira pendência de sincronização
+ servidorOnline=false;
+ const ptsOffline=[{rotulo:'A',longitude:coord(0)[0],latitude:coord(0)[1]},{rotulo:'B',longitude:coord(300)[0],latitude:coord(300)[1]}];
+ const rotaOffline=await srv.calcularRotaParadas(ptsOffline,{modo:'usuario',circular:true});
+ assert.equal(rotaOffline.ok,true);
+ assert.ok(rotaOffline.distance>590&&rotaOffline.distance<610);
+ assert.equal(srv.getNetworkMeta().remoteApi.execution,'local-fallback');
+ assert.equal(srv.getNetworkMeta().remoteApi.online,false);
+ assert.equal(srv.getNetworkMeta().remoteApi.pendingSyncCount,1);
+
+ // 3) Retorno de conexão (agora servidor em modo snapshot): sincroniza pendências e atualiza rede
+ servidorOnline=true;
+ origemServidor='snapshot';
+ featuresServidor=[feature(20,400)];
+ const sync=await srv.syncWithServer();
+ assert.equal(sync.synced,true);
+ assert.equal(sync.changed,true);
+ assert.equal(sync.pendingFlushed,1);
+ assert.equal(srv.state.features[0].properties.ID,20);
+ assert.equal(srv.getNetworkMeta().remoteApi.execution,'remote');
+ assert.equal(srv.getNetworkMeta().remoteApi.online,true);
+ assert.equal(srv.getNetworkMeta().remoteApi.backendSource,'snapshot');
+ assert.equal(srv.getNetworkMeta().remoteApi.pendingSyncCount,0);
+});
+
+test('apiConfig e MobileNetworkServiceCore suportam proxy WebForms ApiProxy.ashx e troca dinâmica de servidor',async()=>{
+ assert.equal(normalizarApiUrl('https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx?endpoint=/api/health'),'https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx');
+ assert.equal(resolverTipoTransporteApi('https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx'),'ashx');
+ assert.equal(resolverTipoTransporteApi('https://node.siga.local/'),'direct');
+ assert.equal(montarUrlEndpointApi('https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx','/api/health'),'https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx?endpoint=%2Fapi%2Fhealth');
+ assert.equal(montarUrlEndpointApi('https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx','/api/endereco-digital?modo=local&codigo=8FP9%2BJ6'),'https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx?endpoint=%2Fapi%2Fendereco-digital&modo=local&codigo=8FP9%2BJ6');
+
+ const valores=new Map();
+ const storage={
+  async getItem(k){return valores.has(k)?valores.get(k):null;},
+  async setItem(k,v){valores.set(k,v);},
+ };
+ const chamadas=[];
+ const featuresServidor=[feature(30,250)];
+ const fetchMock=async(url,init)=>{
+  chamadas.push({url:String(url),method:init?.method||'GET'});
+  const u=new URL(url);
+  assert.equal(u.pathname,'/SigaApp/SigaRotas/ApiProxy.ashx');
+  const ep=u.searchParams.get('endpoint');
+  if(ep==='/api/health'){
+   return new Response(JSON.stringify({ready:true,source:'wfs',originMode:'wfs',features:1,builtAt:'2026-11-16T02:00:00.000Z'}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  if(ep==='/api/network'){
+   return new Response(JSON.stringify({type:'FeatureCollection',features:featuresServidor,meta:{source:'wfs',originMode:'wfs',strategy:'single',builtAt:'2026-11-16T02:00:00.000Z',serverTotal:1,attributes:['ID'],warnings:[]}}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  if(ep==='/api/endereco-digital'){
+   assert.equal(u.searchParams.get('codigo'),'8FP9+J6');
+   return new Response(JSON.stringify({ok:true,status:'CONVERTIDO',latitude:-23.66,longitude:-46.54,codigoNormalizado:'8FP9+J6'}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  if(ep==='/api/rota-paradas'){
+   return new Response(JSON.stringify({ok:true,distance:250,circular:true,sequencia:['A','B'],sequenciaCompleta:['A','B','A'],legs:[],geometry:{type:'LineString',coordinates:[]},streets:['Rua teste']}),{status:200,headers:{'Content-Type':'application/json'}});
+  }
+  return new Response('{}',{status:404});
+ };
+
+ // Inicia sem URL (modo local) e depois aponta para o ApiProxy.ashx em runtime
+ const srv=new MobileNetworkServiceCore({
+  storage,
+  embeddedSnapshot:{...result(1,100),savedAt:1000},
+  fetchImpl:fetchMock,
+  allowWfs:false,
+  autoUpdate:{enabled:false},
+ });
+ const localState=await srv.ensureReady();
+ assert.equal(localState.source,'snapshot');
+ assert.equal(srv.getNetworkMeta().remoteApi.configured,false);
+ assert.equal(srv.getNetworkMeta().remoteApi.transport,'local');
+
+ await srv.setRemoteApiUrl('https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx');
+ const sync=await srv.syncWithServer({forceNetworkReload:true});
+ assert.equal(sync.synced,true);
+ assert.equal(srv.state.source,'api-node');
+ assert.equal(srv.state.features[0].properties.ID,30);
+ assert.equal(srv.getNetworkMeta().remoteApi.transport,'ashx');
+ assert.equal(valores.get(STORAGE_KEY_API_URL),'https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx');
+
+ const ed=await srv.resolverEnderecoDigital('8FP9+J6');
+ assert.equal(ed.status,'CONVERTIDO');
+ const rt=await srv.calcularRotaParadas([{rotulo:'A',longitude:coord(0)[0],latitude:coord(0)[1]},{rotulo:'B',longitude:coord(250)[0],latitude:coord(250)[1]}],{modo:'usuario',circular:true});
+ assert.equal(rt.distance,250);
+ assert.ok(chamadas.every(c=>c.url.includes('/ApiProxy.ashx?endpoint=%2Fapi%2F')));
+
+ // Novo ciclo carregando URL salva em AsyncStorage automaticamente
+ const prevEnv=process.env.EXPO_PUBLIC_SIGA_API_URL;
+ process.env.EXPO_PUBLIC_SIGA_API_URL='https://build-padrao.siga.local';
+ try{
+  const reloaded=new MobileNetworkServiceCore({
+   storage,
+   embeddedSnapshot:{...result(1,100),savedAt:1000},
+   fetchImpl:fetchMock,
+   allowWfs:false,
+   autoUpdate:{enabled:false},
+  });
+  await reloaded.ensureReady();
+  assert.equal(reloaded.getNetworkMeta().remoteApi.url,'https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx');
+  assert.equal(reloaded.getNetworkMeta().remoteApi.transport,'ashx');
+
+  // Troca explícita para modo local persiste sentinela mesmo com variável de build presente
+  await reloaded.setRemoteApiUrl('');
+  assert.equal(valores.get(STORAGE_KEY_API_URL),'local');
+  const forcedLocal=new MobileNetworkServiceCore({
+   storage,
+   embeddedSnapshot:{...result(1,100),savedAt:1000},
+   fetchImpl:fetchMock,
+   allowWfs:false,
+   autoUpdate:{enabled:false},
+  });
+  const stLocal=await forcedLocal.ensureReady();
+  assert.equal(stLocal.source,'wfs-cache');
+  assert.equal(forcedLocal.getNetworkMeta().remoteApi.configured,false);
+  assert.equal(forcedLocal.getNetworkMeta().remoteApi.transport,'local');
+ }finally{
+  if(prevEnv===undefined) delete process.env.EXPO_PUBLIC_SIGA_API_URL;
+  else process.env.EXPO_PUBLIC_SIGA_API_URL=prevEnv;
+ }
 });

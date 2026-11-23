@@ -23,7 +23,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import path from 'node:path';
 
-import { rm } from 'node:fs/promises';
+import { rm, readFile, writeFile } from 'node:fs/promises';
 
 import { NetworkService } from '../server/networkService.js';
 import { ROOT } from './helpers.js';
@@ -393,4 +393,117 @@ test('o status expõe a situação da atualização automática', async (t) => {
   assert.equal(st.update.checkIntervalMs, 60000);
   assert.ok('lastCheckedAt' in st.update);
   assert.ok('lastChangeAt' in st.update);
+  assert.equal(st.originMode, 'wfs');
+  assert.equal(st.fallbackActive, false);
+});
+
+test('WFS tem prioridade estrita sobre snapshot válido recente em disco', async (t) => {
+  const mock = await criarWfsSimulado([eixo(10), eixo(11)]);
+  t.after(mock.close);
+  const s = await servico(mock, { snapshotTtl: Number.MAX_SAFE_INTEGER });
+  t.after(() => s.stopAutoUpdate());
+
+  // Pré-grava um snapshot recente (mesmo com savedAt agora e 1 feição diferente)
+  await writeFile(
+    s.options.snapshotPath,
+    JSON.stringify({
+      savedAt: Date.now(),
+      serverTotal: 1,
+      strategy: 'single',
+      features: [eixo(1)],
+      attributes: ['ID'],
+      warnings: [],
+    }),
+    'utf8'
+  );
+
+  const estado = await s.ensureReady();
+  assert.equal(estado.source, 'wfs');
+  assert.equal(estado.features.length, 2);
+  assert.equal(estado.features[0].properties.ID, 10);
+  assert.equal(s.status().originMode, 'wfs');
+  assert.equal(s.status().fallbackActive, false);
+
+  // Snapshot foi atualizado atomicamente com a rede WFS válida
+  const gravado = JSON.parse(await readFile(s.options.snapshotPath, 'utf8'));
+  assert.equal(gravado.features.length, 2);
+  assert.equal(gravado.features[0].properties.ID, 10);
+});
+
+test('WFS com resposta HTTP 200 vazia/incompleta/sem arestas aciona snapshot válido sem corromper o arquivo', async (t) => {
+  const mock = await criarWfsSimulado([eixo(1), eixo(2)]);
+  t.after(mock.close);
+  const s = await servico(mock);
+  t.after(() => s.stopAutoUpdate());
+
+  // 1) Primeiro carrega WFS válido e grava snapshot bom
+  await s.ensureReady();
+  const snapshotAntes = await readFile(s.options.snapshotPath, 'utf8');
+
+  // 2) Simula GeoServer retornando payload vazio (HTTP 200 mas features: [])
+  mock.estado.features = [];
+  const sVazio = new NetworkService({
+    allowWfs: true,
+    baseUrl: mock.baseUrl,
+    snapshotPath: s.options.snapshotPath,
+    autoUpdate: { enabled: false },
+  });
+  const stVazio = await sVazio.ensureReady();
+  assert.equal(stVazio.source, 'snapshot');
+  assert.equal(stVazio.features.length, 2);
+  assert.equal(sVazio.status().originMode, 'snapshot');
+  assert.equal(sVazio.status().fallbackActive, true);
+  assert.match(sVazio.status().lastWfsError, /vazio|arestas/i);
+  assert.equal(await readFile(s.options.snapshotPath, 'utf8'), snapshotAntes);
+
+  // 3) Simula geometria sem arestas válidas
+  mock.estado.features = [{ type: 'Feature', properties: { ID: 99 }, geometry: null }];
+  const sSemArestas = new NetworkService({
+    allowWfs: true,
+    baseUrl: mock.baseUrl,
+    snapshotPath: s.options.snapshotPath,
+    autoUpdate: { enabled: false },
+  });
+  const stSemArestas = await sSemArestas.ensureReady();
+  assert.equal(stSemArestas.source, 'snapshot');
+  assert.equal(stSemArestas.features.length, 2);
+  assert.equal(await readFile(s.options.snapshotPath, 'utf8'), snapshotAntes);
+});
+
+test('refresh preserva rede WFS válida quando o GeoServer falha e promove snapshot de volta a WFS ao restabelecer', async (t) => {
+  const mock = await criarWfsSimulado([eixo(1), eixo(2)]);
+  t.after(mock.close);
+  const s = await servico(mock);
+  t.after(() => s.stopAutoUpdate());
+
+  await s.ensureReady();
+  assert.equal(s.state.source, 'wfs');
+  const estadoOriginal = s.state;
+
+  // WFS falha durante refresh: o estado WFS ativo NÃO pode ser descartado nem rebaixado para snapshot
+  mock.estado.falhar = true;
+  const aposFalha = await s.refresh();
+  assert.equal(aposFalha.refreshFallback, true);
+  assert.strictEqual(s.state, estadoOriginal);
+  assert.equal(s.state.source, 'wfs');
+  assert.ok(s.status().lastWfsError);
+
+  // Agora um servidor novo inicia em contingência (WFS fora no boot) e recupera depois
+  const s2 = new NetworkService({
+    allowWfs: true,
+    baseUrl: mock.baseUrl,
+    snapshotPath: s.options.snapshotPath,
+    autoUpdate: { enabled: false },
+  });
+  await s2.ensureReady();
+  assert.equal(s2.state.source, 'snapshot');
+  assert.equal(s2.status().fallbackActive, true);
+
+  // WFS volta ao ar mesmo com o mesmo número de feições (2)
+  mock.estado.falhar = false;
+  const check = await s2._checkForChanges();
+  assert.equal(check.changed, true);
+  assert.equal(s2.state.source, 'wfs');
+  assert.equal(s2.status().originMode, 'wfs');
+  assert.equal(s2.status().fallbackActive, false);
 });
