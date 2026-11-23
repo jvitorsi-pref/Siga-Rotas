@@ -88,6 +88,13 @@ function extrairTrackPoints(xml) {
   ]);
 }
 
+function extrairRoutePoints(xml) {
+  return [...xml.matchAll(/<rtept lat="([^"]+)" lon="([^"]+)"/g)].map((m) => [
+    Number(m[1]),
+    Number(m[2]),
+  ]);
+}
+
 function extrairWaypoints(xml) {
   return [...xml.matchAll(/<wpt lat="([^"]+)" lon="([^"]+)">[\s\S]*?<name>([^<]+)<\/name>/g)].map((m) => ({
     lat: Number(m[1]),
@@ -103,24 +110,28 @@ function validarEstruturaGpx11(xml) {
     /<gpx version="1\.1" creator="SIGA-Rotas Santo André" xmlns="http:\/\/www\.topografix\.com\/GPX\/1\/1"/,
   );
   assert.match(xml, /<metadata>[\s\S]*<name>[^<]+<\/name>[\s\S]*<desc>[^<]+<\/desc>[\s\S]*<time>[^<]+<\/time>[\s\S]*<bounds minlat="-?\d+\.\d+" minlon="-?\d+\.\d+" maxlat="-?\d+\.\d+" maxlon="-?\d+\.\d+"\/>[\s\S]*<\/metadata>/);
+  assert.match(xml, /<rte>[\s\S]*<rtept lat="-?\d+\.\d+" lon="-?\d+\.\d+"(?:\/>|>)[\s\S]*<\/rte>/);
   assert.match(xml, /<trk>[\s\S]*<trkseg>[\s\S]*<trkpt lat="-?\d+\.\d+" lon="-?\d+\.\d+"\/>[\s\S]*<\/trkseg>[\s\S]*<\/trk>/);
+  assert.ok(xml.indexOf('<rte>') < xml.indexOf('<trk>'), '<rte> deve aparecer antes de <trk> conforme GPX 1.1');
   assert.match(xml, /<\/gpx>\s*$/);
   const wpts = extrairWaypoints(xml);
+  const rtepts = extrairRoutePoints(xml);
   const trkpts = extrairTrackPoints(xml);
   assert.ok(wpts.length >= 2);
+  assert.ok(rtepts.length >= 2);
   assert.ok(trkpts.length >= 2);
-  for (const [lat, lon] of trkpts) {
+  for (const [lat, lon] of [...rtepts, ...trkpts]) {
     assert.ok(Number.isFinite(lat) && Math.abs(lat) <= 90, `lat inválida: ${lat}`);
     assert.ok(Number.isFinite(lon) && Math.abs(lon) <= 180, `lon inválida: ${lon}`);
   }
-  return { wpts, trkpts };
+  return { wpts, rtepts, trkpts };
 }
 
-test('GPX: gera XML GPX 1.1 válido com metadados, bounds, waypoints ordenados e trkseg por trecho', () => {
+test('GPX: gera XML GPX 1.1 válido com metadados, bounds, waypoints ordenados, <rte>/<rtept> contínuo e trkseg por trecho', () => {
   const rota = rotaExemplo();
   const xml = gerarGpxRota(rota, { agora: new Date('2026-11-16T18:30:00.000Z') });
 
-  validarEstruturaGpx11(xml);
+  const { rtepts } = validarEstruturaGpx11(xml);
   assert.match(xml, /<time>2026-11-16T18:30:00\.000Z<\/time>/);
   assert.match(xml, /<bounds minlat="-23\.6660000" minlon="-46\.5320000" maxlat="-23\.6610000" maxlon="-46\.5290000"\/>/);
 
@@ -129,6 +140,14 @@ test('GPX: gera XML GPX 1.1 válido com metadados, bounds, waypoints ordenados e
   const idxC = xml.indexOf('<name>C (8FQ9+HQ)</name>');
   const idxB = xml.indexOf('<name>B (8FMF+RC)</name>');
   assert.ok(idxA > 0 && idxC > idxA && idxB > idxC);
+
+  // <rte> une os 3 trechos contínuos removendo os 2 vértices duplicados de emenda (9 -> 7 <rtept>), sem <name> em <rtept>
+  assert.equal((xml.match(/<rte>/g) || []).length, 1);
+  assert.equal(rtepts.length, 7);
+  assert.deepEqual(rtepts[0], rtepts.at(-1));
+  const blocoRte = xml.slice(xml.indexOf('<rte>'), xml.indexOf('</rte>'));
+  assert.equal((blocoRte.match(/<name>/g) || []).length, 1);
+  assert.equal((blocoRte.match(/<rtept [^>]+?\/>/g) || []).length, 7);
 
   // 3 segmentos de trilha com todas as coordenadas preservadas
   assert.equal((xml.match(/<trkseg>/g) || []).length, 3);
@@ -189,8 +208,31 @@ test('GPX: escapa caracteres especiais XML, suporta MultiLineString e fallback d
       },
     },
   });
+  assert.equal((xmlMulti.match(/<rte>/g) || []).length, 1);
+  assert.equal((xmlMulti.match(/<rtept /g) || []).length, 5);
   assert.equal((xmlMulti.match(/<trkseg>/g) || []).length, 3);
   assert.equal((xmlMulti.match(/<trkpt /g) || []).length, 7);
+
+  // Segmentos desconexos (salto > 1e-4 deg) produzem rotas <rte> separadas sem ligar por reta falsa
+  const xmlDesconexo = gerarGpxRota({
+    ok: true,
+    circular: false,
+    modo: 'usuario',
+    distance: 400,
+    pontos: [
+      { rotulo: 'A', latitude: -23.66, longitude: -46.53 },
+      { rotulo: 'B', latitude: -23.67, longitude: -46.52 },
+    ],
+    geometry: {
+      type: 'MultiLineString',
+      coordinates: [
+        [[-46.53, -23.66], [-46.5305, -23.6605]],
+        [[-46.5205, -23.6705], [-46.52, -23.67]],
+      ],
+    },
+  });
+  assert.equal((xmlDesconexo.match(/<rte>/g) || []).length, 2);
+  assert.equal((xmlDesconexo.match(/<rtept /g) || []).length, 4);
 });
 
 test('GPX: recusa rota inexistente, parcial, com falha ou sem geometria', () => {
@@ -213,6 +255,20 @@ test('GPX: nomeArquivoGpx e geradores com carimbo local formatam nomes .gpx e .z
   assert.equal(NOME_ARQUIVO_EXPORTACAO_ZIP, 'exportacao_rotas.zip');
   assert.doesNotThrow(() => validarXmlGpxExportado(gerarGpxRota(rotaExemplo(), { agora: dataTeste })));
   assert.throws(() => validarXmlGpxExportado('<gpx></gpx>'), /não atende à estrutura GPX 1\.1 válida/);
+  assert.throws(
+    () =>
+      validarXmlGpxExportado(
+        '<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><metadata><bounds minlat="0" minlon="0" maxlat="1" maxlon="1"/></metadata><trk><trkseg><trkpt lat="-23.66" lon="-46.53"/><trkpt lat="-23.661" lon="-46.531"/></trkseg></trk></gpx>',
+      ),
+    /não atende à estrutura GPX 1\.1 válida/,
+  );
+  assert.throws(
+    () =>
+      validarXmlGpxExportado(
+        '<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><metadata><bounds minlat="0" minlon="0" maxlat="1" maxlon="1"/></metadata><trk><trkseg><trkpt lat="-23.66" lon="-46.53"/><trkpt lat="-23.661" lon="-46.531"/></trkseg></trk><rte><rtept lat="-23.66" lon="-46.53"/><rtept lat="-23.661" lon="-46.531"/></rte></gpx>',
+      ),
+    /<rte> deve anteceder <trk>/,
+  );
 });
 
 test('GPX: fallback para geometry global quando algum trecho não possui geometry própria', () => {
@@ -372,6 +428,10 @@ test('GPX E2E na rede real de Santo André: simples, múltiplas paradas, usuári
   );
   assert.deepEqual(parsedOtimizada.trkpts, coordsMotor);
   assert.deepEqual(parsedOtimizada.trkpts[0], parsedOtimizada.trkpts.at(-1));
+  assert.equal((xmlOtimizada.match(/<rte>/g) || []).length, 1);
+  assert.equal(parsedOtimizada.rtepts.length, verticesEsperadosOpt - (otimizada.legs.length - 1));
+  assert.ok(parsedOtimizada.rtepts.length > pontosBase.length * 4);
+  assert.deepEqual(parsedOtimizada.rtepts[0], parsedOtimizada.rtepts.at(-1));
 });
 
 test('GPX Cenário B (calculada + GPS real), desvio com recálculo, pausas/retomadas, simulação e Cenário C (GPS sem rota calculada)', async () => {
@@ -431,14 +491,20 @@ test('GPX Cenário B (calculada + GPS real), desvio com recálculo, pausas/retom
   const xmlCalc = decodificarUtf8(entradas[nomeCalcCenB]);
   const xmlGps = decodificarUtf8(entradas[nomeGpsCenB]);
 
-  // Calcula preservou as 3 paradas originais e geometria original (9 trkpts), NÃO a rota recalculada
+  // Calcula preservou as 3 paradas originais e geometria original (9 trkpts e 7 rtepts contínuos), NÃO a rota recalculada
   assert.equal((xmlCalc.match(/<wpt /g) || []).length, 3);
+  assert.equal((xmlCalc.match(/<rte>/g) || []).length, 1);
+  assert.equal((xmlCalc.match(/<rtept /g) || []).length, 7);
   assert.equal((xmlCalc.match(/<trkpt /g) || []).length, 9);
   assert.doesNotMatch(xmlCalc, /-46\.5355/);
 
-  // Percorrida contém estritamente os 4 pontos GPS reais em 2 <trkseg> com <time>
+  // Percorrida contém estritamente os 4 pontos GPS reais em 2 <trkseg> e 2 <rte> (devido à pausa com salto) com <time>
+  assert.equal((xmlGps.match(/<rte>/g) || []).length, 2);
+  assert.equal((xmlGps.match(/<rtept /g) || []).length, 4);
   assert.equal((xmlGps.match(/<trkseg>/g) || []).length, 2);
   assert.equal((xmlGps.match(/<trkpt /g) || []).length, 4);
+  assert.match(xmlGps, /<rtept lat="-23\.6635000" lon="-46\.5320000">\s*<time>2023-11-14T22:13:20\.000Z<\/time>\s*<\/rtept>/);
+  assert.match(xmlGps, /<rtept lat="-23\.6628000" lon="-46\.5355000">\s*<time>2023-11-14T22:13:30\.000Z<\/time>\s*<\/rtept>/);
   assert.match(xmlGps, /-23\.6628000" lon="-46\.5355000"/);
   assert.match(xmlGps, /<time>2023-11-14T22:13:20\.000Z<\/time>/);
   assert.equal((xmlGps.match(/<wpt /g) || []).length, 3);

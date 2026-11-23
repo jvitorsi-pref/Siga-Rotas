@@ -295,7 +295,118 @@ function formatarWaypointsXml(waypoints, { circular = false } = {}) {
   return linhas;
 }
 
-export function validarXmlGpxExportado(xml, { segmentosEsperados = null, contexto = 'GPX' } = {}) {
+function normalizarPontosSegmentoGpx(seg) {
+  const lista = Array.isArray(seg) ? seg : (Array.isArray(seg?.pontos) ? seg.pontos : []);
+  const out = [];
+  for (const item of lista) {
+    if (Array.isArray(item) && item.length >= 2) {
+      const lon = Number(item[0]);
+      const lat = Number(item[1]);
+      if (coordValida(lon, lat)) {
+        out.push({ longitude: lon, latitude: lat, timeIso: null });
+      }
+    } else if (item && typeof item === 'object') {
+      const lon = Number(item.longitude ?? item.lon ?? item.lng);
+      const lat = Number(item.latitude ?? item.lat);
+      if (coordValida(lon, lat)) {
+        out.push({ longitude: lon, latitude: lat, timeIso: item.timeIso || null });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Agrupa segmentos consecutivos em rotas contínuas `<rte>` quando a junção
+ * fim→início está dentro de `maxGapDeg` (~11 m), evitando duplicar o vértice
+ * de emenda e dividindo apenas em saltos reais (ex.: pausas de GPS).
+ */
+function agruparSegmentosParaRotas(segmentos, { maxGapDeg = 1e-4, dedupEpsDeg = 1e-7 } = {}) {
+  const normalizados = (Array.isArray(segmentos) ? segmentos : [])
+    .map(normalizarPontosSegmentoGpx)
+    .filter((pts) => pts.length >= 1);
+
+  if (normalizados.length === 0) return [];
+
+  const sufixoTotalPontos = new Array(normalizados.length).fill(0);
+  for (let i = normalizados.length - 1; i >= 0; i -= 1) {
+    sufixoTotalPontos[i] = normalizados[i].length + (i + 1 < normalizados.length ? sufixoTotalPontos[i + 1] : 0);
+  }
+
+  const rotas = [];
+  let atual = [];
+
+  for (let i = 0; i < normalizados.length; i += 1) {
+    const segPts = normalizados[i];
+    if (atual.length === 0) {
+      atual = segPts.slice();
+      continue;
+    }
+
+    const ultimo = atual[atual.length - 1];
+    const primeiro = segPts[0];
+    const contiguo =
+      Math.abs(ultimo.longitude - primeiro.longitude) <= maxGapDeg &&
+      Math.abs(ultimo.latitude - primeiro.latitude) <= maxGapDeg;
+
+    if (!contiguo && atual.length >= 2 && sufixoTotalPontos[i] >= 2) {
+      rotas.push(atual);
+      atual = segPts.slice();
+      continue;
+    }
+
+    const mesmoPontoEmenda =
+      Math.abs(ultimo.longitude - primeiro.longitude) <= dedupEpsDeg &&
+      Math.abs(ultimo.latitude - primeiro.latitude) <= dedupEpsDeg &&
+      (ultimo.timeIso || null) === (primeiro.timeIso || null);
+
+    const inicioIdx = mesmoPontoEmenda ? 1 : 0;
+    for (let j = inicioIdx; j < segPts.length; j += 1) {
+      atual.push(segPts[j]);
+    }
+  }
+
+  if (atual.length >= 2) {
+    rotas.push(atual);
+  } else if (atual.length === 1 && rotas.length > 0) {
+    rotas[rotas.length - 1].push(atual[0]);
+  }
+
+  return rotas;
+}
+
+function formatarRotasGpxXml(rotasAgrupadas, { nomeBase, desc, tipo = 'Caminhada' } = {}) {
+  const linhas = [];
+  const total = rotasAgrupadas.length;
+  rotasAgrupadas.forEach((pts, idx) => {
+    const nome = total > 1 ? `${nomeBase} (${idx + 1}/${total})` : nomeBase;
+    linhas.push(
+      '  <rte>',
+      `    <name>${escapeXml(nome)}</name>`,
+      `    <desc>${escapeXml(desc)}</desc>`,
+      `    <number>${idx + 1}</number>`,
+      `    <type>${escapeXml(tipo)}</type>`,
+    );
+    for (const pt of pts) {
+      if (pt.timeIso) {
+        linhas.push(
+          `    <rtept lat="${fmtCoord(pt.latitude)}" lon="${fmtCoord(pt.longitude)}">`,
+          `      <time>${escapeXml(pt.timeIso)}</time>`,
+          '    </rtept>',
+        );
+      } else {
+        linhas.push(`    <rtept lat="${fmtCoord(pt.latitude)}" lon="${fmtCoord(pt.longitude)}"/>`);
+      }
+    }
+    linhas.push('  </rte>');
+  });
+  return linhas;
+}
+
+export function validarXmlGpxExportado(
+  xml,
+  { segmentosEsperados = null, rotasEsperadas = null, contexto = 'GPX' } = {},
+) {
   if (
     typeof xml !== 'string' ||
     !xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>') ||
@@ -303,11 +414,19 @@ export function validarXmlGpxExportado(xml, { segmentosEsperados = null, context
     !xml.includes('xmlns="http://www.topografix.com/GPX/1/1"') ||
     !xml.includes('<metadata>') ||
     !xml.includes('<bounds ') ||
+    !xml.includes('<rte>') ||
+    !xml.includes('</rte>') ||
     !xml.includes('<trk>') ||
     !xml.includes('<trkseg>') ||
     !xml.includes('</gpx>')
   ) {
     throw new Error(`Arquivo ${contexto} gerado não atende à estrutura GPX 1.1 válida.`);
+  }
+
+  const idxRte = xml.indexOf('<rte>');
+  const idxTrk = xml.indexOf('<trk>');
+  if (idxRte === -1 || idxTrk === -1 || idxRte > idxTrk) {
+    throw new Error(`Ordem de elementos GPX 1.1 inválida (<rte> deve anteceder <trk>) no arquivo ${contexto}.`);
   }
 
   const wptMatches = [...xml.matchAll(/<wpt lat="([^"]+)" lon="([^"]+)"/g)];
@@ -316,6 +435,25 @@ export function validarXmlGpxExportado(xml, { segmentosEsperados = null, context
     const lon = Number(m[2]);
     if (!coordValida(lon, lat)) {
       throw new Error(`Waypoint com coordenada WGS84 inválida no arquivo ${contexto}.`);
+    }
+  }
+
+  const rteBlocos = [...xml.matchAll(/<rte>([\s\S]*?)<\/rte>/g)];
+  const rteptMatches = [...xml.matchAll(/<rtept lat="([^"]+)" lon="([^"]+)"/g)];
+  if (rteBlocos.length === 0 || rteptMatches.length < 2) {
+    throw new Error(`Arquivo ${contexto} gerado não possui rota (<rte>/<rtept>) válida.`);
+  }
+  for (const bloco of rteBlocos) {
+    const ptsBloco = [...bloco[1].matchAll(/<rtept lat="([^"]+)" lon="([^"]+)"/g)];
+    if (ptsBloco.length < 2) {
+      throw new Error(`Segmento <rte> do arquivo ${contexto} possui menos de 2 pontos.`);
+    }
+  }
+  for (const m of rteptMatches) {
+    const lat = Number(m[1]);
+    const lon = Number(m[2]);
+    if (!coordValida(lon, lat)) {
+      throw new Error(`Ponto de rota (<rtept>) com coordenada WGS84 inválida no arquivo ${contexto}.`);
     }
   }
 
@@ -329,6 +467,20 @@ export function validarXmlGpxExportado(xml, { segmentosEsperados = null, context
     const lon = Number(m[2]);
     if (!coordValida(lon, lat)) {
       throw new Error(`Ponto de trilha com coordenada WGS84 inválida no arquivo ${contexto}.`);
+    }
+  }
+
+  if (Array.isArray(rotasEsperadas)) {
+    if (rteBlocos.length !== rotasEsperadas.length) {
+      throw new Error(
+        `Divergência nas rotas GPX (${rteBlocos.length} <rte> geradas vs ${rotasEsperadas.length} esperadas).`,
+      );
+    }
+    const totalRtePtsEsperado = rotasEsperadas.reduce((acc, r) => acc + r.length, 0);
+    if (rteptMatches.length !== totalRtePtsEsperado) {
+      throw new Error(
+        `Divergência nos pontos de rota GPX (${rteptMatches.length} <rtept> vs ${totalRtePtsEsperado} esperados).`,
+      );
     }
   }
 
@@ -351,8 +503,13 @@ export function validarXmlGpxExportado(xml, { segmentosEsperados = null, context
   return true;
 }
 
-function validarXmlGpxNaoVazio(xml, contexto = 'GPX', segmentosEsperados = null) {
-  return validarXmlGpxExportado(xml, { segmentosEsperados, contexto });
+function validarXmlGpxNaoVazio(
+  xml,
+  contexto = 'GPX',
+  segmentosEsperados = null,
+  rotasEsperadas = null,
+) {
+  return validarXmlGpxExportado(xml, { segmentosEsperados, rotasEsperadas, contexto });
 }
 
 /**
@@ -379,7 +536,8 @@ export function nomeArquivoGpx(route, data = new Date()) {
 
 /**
  * Gera um documento GPX 1.1 válido a partir de uma rota calculada completa
- * (`<wpt>` das paradas + `<trk>/<trkseg>/<trkpt>` com toda a geometria).
+ * (`<wpt>` das paradas + `<rte>/<rtept>` com a geometria contínua +
+ * `<trk>/<trkseg>/<trkpt>` por trecho).
  */
 export function gerarGpxRota(route, opcoes = {}) {
   if (!route || route.ok === false || route.parcial) {
@@ -445,6 +603,8 @@ export function gerarGpxRota(route, opcoes = {}) {
     for (const [lon, lat] of seg.pontos) atualizarLimites(lon, lat);
   }
 
+  const rotasGpx = agruparSegmentosParaRotas(segmentos, { dedupEpsDeg: 1e-7 });
+
   const linhas = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<gpx version="1.1" creator="SIGA-Rotas Santo André" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">',
@@ -455,6 +615,11 @@ export function gerarGpxRota(route, opcoes = {}) {
     `    <bounds minlat="${fmtCoord(minLat)}" minlon="${fmtCoord(minLon)}" maxlat="${fmtCoord(maxLat)}" maxlon="${fmtCoord(maxLon)}"/>`,
     '  </metadata>',
     ...formatarWaypointsXml(waypoints, { circular: rotaNorm.circular !== false }),
+    ...formatarRotasGpxXml(rotasGpx, {
+      nomeBase: nomeRota,
+      desc: descRota,
+      tipo: 'Caminhada',
+    }),
     '  <trk>',
     `    <name>${escapeXml(nomeRota)}</name>`,
     `    <desc>${escapeXml(descRota)}</desc>`,
@@ -471,7 +636,7 @@ export function gerarGpxRota(route, opcoes = {}) {
 
   linhas.push('  </trk>', '</gpx>', '');
   const xml = linhas.join('\n');
-  validarXmlGpxNaoVazio(xml, nomeArquivoRotaCalculada(agora), segmentos);
+  validarXmlGpxNaoVazio(xml, nomeArquivoRotaCalculada(agora), segmentos, rotasGpx);
   return xml;
 }
 
@@ -651,8 +816,8 @@ export function extrairSegmentosGpsReais({ pontosGps = [], rotaPercorrida = null
 
 /**
  * Gera um documento GPX 1.1 válido representando exclusivamente o percurso
- * coletado pelo GPS real (`<trk>/<trkseg>/<trkpt>` com `<time>` quando disponível)
- * e preservando os pontos de parada (`<wpt>`) quando existentes.
+ * coletado pelo GPS real (`<rte>/<rtept>` e `<trk>/<trkseg>/<trkpt>` com
+ * `<time>` quando disponível), preservando `<wpt>` quando existentes.
  */
 export function gerarGpxRotaPercorrida({
   pontosGps = [],
@@ -708,6 +873,8 @@ export function gerarGpxRotaPercorrida({
     for (const pt of seg) atualizarLimites(pt.longitude, pt.latitude);
   }
 
+  const rotasGpx = agruparSegmentosParaRotas(extraido.segmentos, { dedupEpsDeg: 1e-8 });
+
   const linhas = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<gpx version="1.1" creator="SIGA-Rotas Santo André" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">',
@@ -718,6 +885,11 @@ export function gerarGpxRotaPercorrida({
     `    <bounds minlat="${fmtCoord(minLat)}" minlon="${fmtCoord(minLon)}" maxlat="${fmtCoord(maxLat)}" maxlon="${fmtCoord(maxLon)}"/>`,
     '  </metadata>',
     ...formatarWaypointsXml(waypoints, { circular: rotaOrigem?.circular !== false }),
+    ...formatarRotasGpxXml(rotasGpx, {
+      nomeBase: titulo,
+      desc: descRota,
+      tipo: 'Caminhada GPS',
+    }),
     '  <trk>',
     `    <name>${escapeXml(titulo)}</name>`,
     `    <desc>${escapeXml(descRota)}</desc>`,
@@ -742,7 +914,7 @@ export function gerarGpxRotaPercorrida({
 
   linhas.push('  </trk>', '</gpx>', '');
   const xml = linhas.join('\n');
-  validarXmlGpxNaoVazio(xml, nomeArquivoRotaPercorrida(agoraDate), extraido.segmentos);
+  validarXmlGpxNaoVazio(xml, nomeArquivoRotaPercorrida(agoraDate), extraido.segmentos, rotasGpx);
   return xml;
 }
 

@@ -3582,6 +3582,7 @@ import {
           'Todas as rotas salvas offline;',
           'Todos os percursos GPS gravados e pontos de trilha locais;',
           'Todas as observações de campo e históricos locais;',
+          'Todas as ocorrências locais (cache offline, alertas e marcadores na tela);',
           'Registros temporários e fila pendente de sincronização local.',
         ],
         alerta:
@@ -3595,6 +3596,7 @@ import {
           navUI.aoCalcularRota();
         }
         await campoWeb.limparDadosLocais({ forcarInterrupcaoNavegacao: true });
+        clienteRede.limparOcorrenciasLocais?.();
         routeSource.clear();
         gpsTrailSource.clear();
         routeObsSource.clear();
@@ -3607,12 +3609,26 @@ import {
         state.rotasDisponiveis = [];
         state.rotaSelecionadaId = null;
         state.comparacaoAlternativas = null;
+        state.ocorrencias = [];
+        stopPickingOccurrence();
+        fecharModalRegistroOcorrencia();
+        fecharDetalheOcorrencia();
+        renderizarOcorrenciasMapa();
         limparFeedbackGpx();
         limparFeedbackSaveOffline();
         if (els.exportGpx) els.exportGpx.hidden = true;
         if (els.saveRouteOffline) els.saveRouteOffline.hidden = true;
         if (els.addRouteObs) els.addRouteObs.hidden = true;
         if (els.startNav) els.startNav.hidden = true;
+        if (els.legendAlt) els.legendAlt.hidden = true;
+        if (els.routeAlternatives) {
+          els.routeAlternatives.hidden = true;
+          els.routeAlternatives.innerHTML = '';
+        }
+        if (els.routeOccurrences) {
+          els.routeOccurrences.hidden = true;
+          els.routeOccurrences.innerHTML = '';
+        }
         if (els.routeCampoObs) {
           els.routeCampoObs.hidden = true;
           els.routeCampoObs.innerHTML = '';

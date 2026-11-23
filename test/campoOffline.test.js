@@ -825,6 +825,46 @@ test('Web (IndexedDB + serviço): exclusão individual de observação/rota e li
   assert.match(html, /Limpar dados locais/);
   assert.match(html, /id="campo-confirm-modal"/);
   assert.doesNotMatch(appJs, /origemSalvamento:\s*'auto'/);
+  assert.match(appJs, /clienteRede\.limparOcorrenciasLocais\?\.\(\)/);
+  assert.match(appJs, /state\.ocorrencias\s*=\s*\[\]/);
+  assert.match(appJs, /renderizarOcorrenciasMapa\(\)/);
+
+  // clienteRede.limparOcorrenciasLocais remove ocorrências locais do modo offline sem exigir servidor
+  const { criarClienteRede } = await import('../public/clienteRede.js');
+  const cli = criarClienteRede({
+    href: 'https://prefeitura.local/siga/public/index.html?modo=cliente',
+    fetchImpl: async () => new Response('[]', { status: 404 }),
+    snapshotModuleLoader: async () => ({
+      features: [
+        {
+          type: 'Feature',
+          properties: { ID: 101, LOG_NOME: 'RUA TESTE LOCAL', COD_OFICIAL: 1 },
+          geometry: { type: 'LineString', coordinates: [[-46.532, -23.663], [-46.530, -23.663]] },
+        },
+      ],
+      source: 'snapshot-teste',
+    }),
+  });
+  await cli.garantirRede();
+  const postOcc = await cli.fetchApi('/api/ocorrencias', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      categoria: 'alagamento',
+      classificacao: 'evita',
+      temporalidade: 'temporaria',
+      latitude: -23.663,
+      longitude: -46.531,
+      featureIdPreferido: 101,
+      usuarioId: 'web-u1',
+    }),
+  });
+  assert.equal(postOcc.status, 201);
+  const antesLimpar = await cli.fetchApi('/api/ocorrencias').then((r) => r.json());
+  assert.equal(antesLimpar.ocorrencias.length, 1);
+  cli.limparOcorrenciasLocais();
+  const depoisLimpar = await cli.fetchApi('/api/ocorrencias').then((r) => r.json());
+  assert.equal(depoisLimpar.ocorrencias.length, 0);
 });
 
 test('Servidor estático serve /campo/*.js, armazenamentoIndexedDB.js, campoWebService.js e sw.js atualizado', async () => {

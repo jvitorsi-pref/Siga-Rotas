@@ -762,10 +762,16 @@ export function criarClienteRede(opcoes = {}) {
     return atenderLocalmente(pathname, searchParams, init, resolucao);
   }
 
+  function limparOcorrenciasLocais() {
+    ocorrenciasLocais = [];
+    return { ok: true };
+  }
+
   return {
     config: cfg,
     resolverModo,
     garantirRede,
     fetchApi,
+    limparOcorrenciasLocais,
   };
 }
