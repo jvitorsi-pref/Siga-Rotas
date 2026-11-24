@@ -11,15 +11,15 @@ const appJs = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8')
 const swJs = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
-test('Req 1: mapa-base usa filtro equilibrado, atribuição OSM permanece visível e CSS não mantém sobras escuras', () => {
+test('Req 1: mapa-base usa filtro equilibrado, marca OSM removida e CSS não mantém sobras escuras', () => {
   const basemapBlock = css.match(/\.basemap\s*\{[^}]*\}/)?.[0] || '';
   assert.match(basemapBlock, /grayscale/);
   assert.match(basemapBlock, /contrast/);
   assert.doesNotMatch(basemapBlock, /brightness\(1\.19\)/);
 
   const attrBlock = css.match(/\.ol-attribution\s*\{[^}]*\}/)?.[0] || '';
-  assert.ok(attrBlock.length > 0);
-  assert.doesNotMatch(attrBlock, /display:\s*none/);
+  assert.match(attrBlock, /display:\s*none/);
+  assert.match(appJs, /controls:[\s\S]*?attribution:\s*false/);
 
   assert.doesNotMatch(css, /#1b222b|#b7c0ca|#c4b5fd|#d8c7ff|rgba\(47,\s*129,\s*247/);
   const distanceBlock = css.match(/\.distance__value\s*\{[^}]*\}/)?.[0] || '';

@@ -198,44 +198,103 @@
         <button type="button" data-basemap="osm" aria-pressed="true">Mapa padrão</button>
         <button type="button" data-basemap="satelite" aria-pressed="false">Satélite</button>
       </div>
-      <div class="occ-toolbar">
-        <button type="button" class="occ-pill" id="occ-map-toggle" aria-pressed="true">
-          Alertas no mapa (<span id="occ-count">0</span>)
-        </button>
-        <button type="button" class="occ-pill occ-pill--add" id="occ-map-add">
-          + Ocorrência
-        </button>
-      </div>
       <div class="basemap-notice" id="basemap-notice" role="status" hidden>
         <span class="basemap-notice__text" id="basemap-notice-text"></span>
         <button type="button" class="basemap-notice__btn" id="basemap-fallback-btn">Usar mapa padrão</button>
       </div>
     </div>
 
-    <div class="legend">
-      <div><span class="swatch swatch--axis"></span> Eixo viário oficial</div>
-      <div><span class="swatch swatch--axis-unofficial"></span> Eixo não oficializado</div>
-      <div><span class="swatch swatch--route"></span> Rota selecionada</div>
-      <div id="legend-alt" hidden><span class="swatch swatch--route-alt"></span> Rota alternativa</div>
-      <div id="legend-return"><span class="swatch swatch--route-return"></span> Retorno a A</div>
-      <div><span class="swatch swatch--origin"></span> Origem e destino (A)</div>
-      <div><span class="swatch swatch--stop"></span> Parada intermediária</div>
-      <div id="legend-dest" hidden><span class="swatch swatch--dest"></span> Destino</div>
-      <div class="legend__occ-group" id="legend-occ">
-        <div><span class="swatch swatch--occ-info"></span> Informativo</div>
-        <div><span class="swatch swatch--occ-penaliza"></span> Custo aumentado</div>
-        <div><span class="swatch swatch--occ-evita"></span> Evita o trecho</div>
-      </div>
-      <div id="legend-trechos" class="legend__trechos" hidden>
-        <div class="legend__titulo">
-          <span>Trechos da rota</span>
-          <span class="legend__cont" id="legend-cont"></span>
+    <div class="map-actions-bar" id="map-actions-bar">
+      <div class="occ-menu-wrap" id="occ-menu-wrap">
+        <div class="occ-popover" id="occ-popover" role="menu" aria-label="Opções de ocorrências" hidden>
+          <button type="button" class="occ-popover__item" id="occ-map-add" role="menuitem">
+            <span class="occ-popover__icon" aria-hidden="true">+</span>
+            <span class="occ-popover__label">Nova Ocorrência</span>
+          </button>
+          <button type="button" class="occ-popover__item is-active" id="occ-map-toggle" role="menuitemcheckbox" aria-pressed="true" aria-checked="true">
+            <span class="occ-popover__icon" aria-hidden="true">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </span>
+            <span class="occ-popover__label">Visualizar</span>
+            <span class="occ-popover__status"><span id="occ-count">0</span> · <span id="occ-toggle-status">Ativo</span></span>
+          </button>
         </div>
-        <div id="legend-trechos-lista"></div>
-        <button type="button" class="legend__restaurar" id="legend-restaurar" hidden>
-          Mostrar todos
+        <button
+          type="button"
+          class="map-action-btn map-action-btn--icon"
+          id="occ-menu-btn"
+          aria-label="Ocorrências"
+          title="Ocorrências"
+          aria-haspopup="menu"
+          aria-expanded="false"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
         </button>
-        <div class="legend__dica">clique num trecho para ocultá-lo</div>
+      </div>
+
+      <button
+        type="button"
+        class="map-action-btn map-action-btn--icon"
+        id="fit-network-btn"
+        aria-label="Centralizar rede no mapa"
+        title="Centralizar rede no mapa"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="5" />
+          <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+          <line x1="12" y1="2" x2="12" y2="5" />
+          <line x1="12" y1="19" x2="12" y2="22" />
+          <line x1="2" y1="12" x2="5" y2="12" />
+          <line x1="19" y1="12" x2="22" y2="12" />
+        </svg>
+      </button>
+
+      <button
+        type="button"
+        class="map-action-btn map-action-btn--legend"
+        id="legend-toggle-btn"
+        aria-label="Abrir legenda"
+        aria-expanded="false"
+      >
+        Legenda
+      </button>
+
+      <div
+        class="legend"
+        id="legend-box"
+        role="region"
+        aria-label="Legenda do mapa — clique para fechar"
+        title="Clique na legenda para fechar"
+        hidden
+      >
+        <div><span class="swatch swatch--axis"></span> Eixo viário oficial</div>
+        <div><span class="swatch swatch--axis-unofficial"></span> Eixo não oficializado</div>
+        <div><span class="swatch swatch--route"></span> Rota selecionada</div>
+        <div id="legend-alt" hidden><span class="swatch swatch--route-alt"></span> Rota alternativa</div>
+        <div id="legend-return"><span class="swatch swatch--route-return"></span> Retorno a A</div>
+        <div><span class="swatch swatch--origin"></span> Origem e destino (A)</div>
+        <div><span class="swatch swatch--stop"></span> Parada intermediária</div>
+        <div id="legend-dest" hidden><span class="swatch swatch--dest"></span> Destino</div>
+        <div class="legend__occ-group" id="legend-occ">
+          <div><span class="swatch swatch--occ-info"></span> Informativo</div>
+          <div><span class="swatch swatch--occ-penaliza"></span> Custo aumentado</div>
+          <div><span class="swatch swatch--occ-evita"></span> Evita o trecho</div>
+        </div>
+        <div id="legend-trechos" class="legend__trechos" hidden>
+          <div class="legend__titulo">
+            <span>Trechos da rota</span>
+            <span class="legend__cont" id="legend-cont"></span>
+          </div>
+          <div id="legend-trechos-lista"></div>
+          <button type="button" class="legend__restaurar" id="legend-restaurar" hidden>
+            Mostrar todos
+          </button>
+          <div class="legend__dica">clique num trecho para ocultá-lo</div>
+        </div>
       </div>
     </div>
 

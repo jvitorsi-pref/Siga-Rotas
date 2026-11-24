@@ -135,7 +135,7 @@ export function NetworkDiagnosticsPanel({
           accessibilityRole="button" accessibilityState={{ disabled: !!syncing, busy: !!syncing }}
           onPress={onRefreshWfs}
         >
-          <Text style={styles.syncBtnText}>{operacao === 'baixar' ? 'Baixando…' : '⬇ Baixar do GeoServer'}</Text>
+          <Text style={styles.syncBtnText}>{operacao === 'baixar' ? 'Atualizando…' : 'Atualizar ruas'}</Text>
         </TouchableOpacity>
       </View>
 

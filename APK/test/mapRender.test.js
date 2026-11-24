@@ -24,9 +24,24 @@ function setup(initial={}){
  function ready(){let r=render();r.web.props.onMessage({nativeEvent:{data:JSON.stringify({type:'MAP_READY'})}});return render();}
  return {render,ready,nodes,text,sent,ref};
 }
-test('componente preserva WebView, fonte HTML e legenda ao alternar visibilidade',()=>{
- const c=setup(),first=c.ready();c.nodes(first.tree).find(n=>n.type==='TouchableOpacity'&&c.text(n).includes('Legenda')).props.onPress();const hiddenLegend=c.render();assert.doesNotMatch(c.text(hiddenLegend.tree),/Eixo viário oficial/);
- c.sent.length=0;const hidden=c.render({visible:false});const restored=c.render({visible:true});assert.strictEqual(first.web.props.ref,hidden.web.props.ref);assert.strictEqual(first.web.props.source,restored.web.props.source);assert.doesNotMatch(c.text(restored.tree),/Eixo viário oficial/);assert.deepEqual(c.sent,[{type:'RESIZE_MAP'}]);
+test('componente preserva WebView, fonte HTML e legenda retrátil (fecha no lugar do botão)',()=>{
+ const c=setup(),first=c.ready();
+ // Começa fechada: mostra o botão Legenda e oculta os itens da legenda
+ assert.doesNotMatch(c.text(first.tree),/Eixo viário oficial/);
+ const btnLegenda=c.nodes(first.tree).find(n=>n.type==='TouchableOpacity'&&c.text(n).includes('Legenda'));
+ assert.ok(btnLegenda);
+ // Ao tocar em Legenda, o botão some e a legenda abre no lugar
+ btnLegenda.props.onPress();
+ const openLegend=c.render();
+ assert.match(c.text(openLegend.tree),/Eixo viário oficial/);
+ assert.equal(c.nodes(openLegend.tree).some(n=>n.type==='TouchableOpacity'&&c.text(n).trim()==='Legenda'),false);
+ // Preserva WebView e estado aberto ao alternar visibilidade do mapa
+ c.sent.length=0;const hidden=c.render({visible:false});const restored=c.render({visible:true});assert.strictEqual(first.web.props.ref,hidden.web.props.ref);assert.strictEqual(first.web.props.source,restored.web.props.source);assert.match(c.text(restored.tree),/Eixo viário oficial/);assert.deepEqual(c.sent,[{type:'RESIZE_MAP'}]);
+ // Ao clicar na caixa da legenda, ela fecha e o botão Legenda volta
+ c.nodes(restored.tree).find(n=>n.type==='TouchableOpacity'&&c.text(n).includes('Eixo viário oficial')).props.onPress();
+ const closedLegend=c.render();
+ assert.doesNotMatch(c.text(closedLegend.tree),/Eixo viário oficial/);
+ assert.ok(c.nodes(closedLegend.tree).find(n=>n.type==='TouchableOpacity'&&c.text(n).includes('Legenda')));
 });
 test('onLayout solicita resize sem reenquadrar e não envia comandos quando mapa está oculto',()=>{
  const c=setup(),r=c.ready();c.sent.length=0;r.tree.props.onLayout();assert.deepEqual(c.sent,[{type:'RESIZE_MAP'}]);c.render({visible:false});c.sent.length=0;c.render().tree.props.onLayout();assert.equal(c.sent.length,0);
@@ -78,4 +93,37 @@ test('toque no mapa: com seleção ativa define o ponto; sem seleção alterna o
   semSelecao.web.props.onMessage({ nativeEvent: { data: JSON.stringify({ type: 'MAP_CLICK', lon: -46.5, lat: -23.7, zoom: 17 }) } });
   assert.deepEqual(cliques, [{ lon: -46.5, lat: -23.7, zoom: 17 }]);
   assert.equal(escolhidos.length, 1);
+});
+test('botão unificado de ocorrências abre popover com Nova Ocorrência e Visualizar; centralizar substitui Rede', () => {
+  let iniciou = 0, alternou = 0;
+  const c = setup({
+    showOccurrences: true,
+    onStartPickOccurrence: () => { iniciou += 1; },
+    onToggleOccurrences: () => { alternou += 1; },
+  });
+  const first = c.ready();
+  assert.doesNotMatch(c.text(first.tree), /\bRede\b/);
+  assert.doesNotMatch(c.text(first.tree), /Nova Ocorrência/);
+  const btnCenter = c.nodes(first.tree).find(n => n.type === 'TouchableOpacity' && n.props.accessibilityLabel === 'Centralizar rede no mapa');
+  assert.ok(btnCenter);
+  c.sent.length = 0;
+  btnCenter.props.onPress();
+  assert.deepEqual(c.sent, [{ type: 'FIT_NETWORK' }]);
+
+  const btnOcc = c.nodes(first.tree).find(n => n.type === 'TouchableOpacity' && n.props.accessibilityLabel === 'Ocorrências');
+  assert.ok(btnOcc);
+  btnOcc.props.onPress();
+  const opened = c.render();
+  assert.match(c.text(opened.tree), /Nova Ocorrência/);
+  assert.match(c.text(opened.tree), /Visualizar/);
+
+  const optVisualizar = c.nodes(opened.tree).find(n => n.type === 'TouchableOpacity' && c.text(n).includes('Visualizar'));
+  optVisualizar.props.onPress();
+  assert.equal(alternou, 1);
+
+  const optNova = c.nodes(opened.tree).find(n => n.type === 'TouchableOpacity' && c.text(n).includes('Nova Ocorrência'));
+  optNova.props.onPress();
+  assert.equal(iniciou, 1);
+  const afterNova = c.render();
+  assert.doesNotMatch(c.text(afterNova.tree), /Nova Ocorrência/);
 });
