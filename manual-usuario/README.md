@@ -52,7 +52,7 @@ Um guia bem simples, passo a passo, para usar o aplicativo **SIGA APP** (rotas a
 1. **Entender o desenho:** o círculo **A** é a saída e a chegada; **B** e **C** são as paradas. A linha forte mostra a ida e a linha tracejada mostra a volta para **A**.
 2. **Abrir e fechar a Legenda:** toque em **`Legenda`** para abrir o quadro no lugar do botão. Para fechar, toque em cima do próprio quadro.
 3. **Ver a rota inteira (`Rota`):** se mexer o mapa sem querer, toque em **`Rota`** para centralizar o caminho todo na tela.
-4. **Ligar o GPS na rua:** ative a localização do celular e toque em **`Iniciar GPS real`**. Mantenha o aplicativo aberto para ele mostrar a distância e o caminho enquanto você anda.
+4. **Ligar o GPS na rua:** ative a localização do celular e toque em **`Iniciar GPS real`**. O aplicativo continua gravando o seu caminho mesmo se você minimizar ou usar outro aplicativo, até tocar em **Pausar** ou **Encerrar**.
 
 ---
 

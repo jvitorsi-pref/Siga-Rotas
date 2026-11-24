@@ -14,7 +14,7 @@ export function NavigationPanel({ estado, controller, podeIniciar, onCenter, onS
   if (!estado) return (
     <View style={styles.block}>
       <Text style={styles.titulo}>Navegação</Text>
-      <Text style={styles.texto}>GPS real usa a localização do aparelho somente enquanto o aplicativo está aberto. Simulação usa posições fictícias sobre a rota.</Text>
+      <Text style={styles.texto}>GPS real continua registrando sua rota mesmo com o aplicativo minimizado ou usando outro app, até você pausar ou encerrar. Simulação usa posições fictícias sobre a rota.</Text>
       <View style={styles.row}>
         <Botao disabled={solicitando} onPress={() => setModo('gps')}>{modo === 'gps' ? '● ' : '○ '}GPS real</Botao>
         <Botao disabled={solicitando} onPress={() => setModo('simulacao')}>{modo === 'simulacao' ? '● ' : '○ '}Simulação</Botao>
@@ -32,7 +32,7 @@ export function NavigationPanel({ estado, controller, podeIniciar, onCenter, onS
   return (
     <View style={styles.block}>
       <Text style={styles.titulo}>Navegação · {simulado ? 'MODO DE TESTE' : 'GPS real'}</Text>
-      <View style={styles.aviso}><Text style={styles.verde}>{simulado ? 'POSIÇÃO SIMULADA — não é GPS real' : 'GPS REAL — pausa ao sair do aplicativo'}</Text></View>
+      <View style={styles.aviso}><Text style={styles.verde}>{simulado ? 'POSIÇÃO SIMULADA — não é GPS real' : estado.segundoPlanoAtivo === false ? 'GPS REAL — apenas com o aplicativo aberto' : 'GPS REAL — grava em segundo plano até você encerrar'}</Text></View>
       <Text style={styles.texto}>{estado.instrucao?.principal}</Text>
       <Text style={styles.texto}>{estado.instrucao?.secundario}</Text>
       <Text style={styles.texto}>{estado.execucao} · {Math.round(estado.progresso * 100)}% · faltam {metros(estado.distanciaRestante)}</Text>

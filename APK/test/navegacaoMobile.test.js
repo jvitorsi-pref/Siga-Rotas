@@ -125,13 +125,27 @@ test('GPS: resultado atrasado da permissão não pausa a sessão retomada', asyn
  const opening=nav.iniciar(rota(),'gps');assert.equal(nav.estado.iniciando,true);nav.pausar();await nav.retomar();
  resolver({ok:false,message:'negação antiga'});assert.equal((await opening).cancelado,true);assert.equal(nav.estado.execucao,'ativo');nav.descartar();
 });
-test('GPS: erro de sinal mantém última posição e background pausa sem retomar sozinho',async()=>{
+test('GPS: erro de sinal mantém última posição e segundo plano grava até o usuário pausar ou encerrar', async () => {
  let handlers;
- const nav=criarNavegacaoMobile({criarFonteGPS:opts=>{handlers=opts;return {iniciar:async()=>({ok:true}),retomar:async()=>({ok:true}),pausar(){},parar(){}};}});
- await nav.iniciar(rota(),'gps');handlers.aoAtualizar(pos(100,0,{simulado:false}));
+ const nav=criarNavegacaoMobile({criarFonteGPS:opts=>{handlers=opts;return {iniciar:async()=>({ok:true,segundoPlano:true}),retomar:async()=>({ok:true,segundoPlano:true}),pausar(){},parar(){}};}});
+ await nav.iniciar(rota(),'gps');
+ assert.equal(nav.estado.segundoPlanoAtivo, true);
+ assert.match(nav.estado.aviso, /segundo plano/);
+ handlers.aoAtualizar(pos(100,0,{simulado:false}));
  handlers.aoErro({codigo:'TIMEOUT',mensagem:'Sinal perdido'});assert.equal(nav.estado.sinalPerdido,true);assert.ok(nav.estado.posicao);
- handlers.aoInterromper('Aplicativo em segundo plano');assert.equal(nav.estado.execucao,'pausado');
- await nav.retomar();handlers.aoAtualizar(pos(120,0,{simulado:false}));assert.equal(nav.estado.sinalPerdido,false);nav.descartar();
+ handlers.aoAtualizar(pos(120,0,{simulado:false}));assert.equal(nav.estado.sinalPerdido,false);
+ assert.equal(nav.estado.execucao,'ativo');
+ nav.pausar();assert.equal(nav.estado.execucao,'pausado');
+ await nav.retomar();assert.equal(nav.estado.execucao,'ativo');
+ handlers.aoInterromper('Interrupção explícita');assert.equal(nav.estado.execucao,'pausado');
+ nav.descartar();
+});
+test('GPS: informa explicitamente quando segundo plano estiver indisponível', async () => {
+ const nav=criarNavegacaoMobile({criarFonteGPS:()=>({iniciar:async()=>({ok:true,segundoPlano:false}),retomar:async()=>({ok:true,segundoPlano:false}),pausar(){},parar(){}})});
+ await nav.iniciar(rota(),'gps');
+ assert.equal(nav.estado.segundoPlanoAtivo, false);
+ assert.match(nav.estado.aviso, /aplicativo aberto/);
+ nav.descartar();
 });
 test('GPS: sem adaptador nativo não cai silenciosamente para a simulação',()=>{
  const {nav}=setup();assert.equal(nav.iniciar(rota(),'gps').ok,false);assert.equal(nav.estado,null);nav.descartar();
