@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "savedAt": "2026-11-23T19:59:03.516Z",
+  "ocorrencias": [
+    {
+      "id": "occ_mwnt02nj_d5jcx6",
+      "categoria": "alagamento",
+      "classificacao": "evita",
+      "temporalidade": "temporaria",
+      "descricao": "",
+      "status": "expirada",
+      "localizacao": {
+        "latitude": -23.711224718561777,
+        "longitude": -46.497800505407234,
+        "featureId": 460,
+        "partId": 6425,
+        "codLog": 69610,
+        "logradouro": "RUA DOS VICENTINOS",
+        "oficial": true,
+        "segmentoAssinatura": "460:6425:347307:7376942",
+        "fracaoNoEixo": 0.292,
+        "distanciaAoEixoM": 0
+      },
+      "penalidadeMetros": 450,
+      "criadoPor": "web_b7add551-57ed-4bc3-b68d-f2c8b13eb681",
+      "criadoEm": "2026-11-19T17:07:59.215Z",
+      "ultimaConfirmacaoEm": "2026-11-19T17:07:59.215Z",
+      "expiraEm": "2026-11-21T17:07:59.215Z",
+      "contadores": {
+        "confirmacoes": 1,
+        "resolvida": 0,
+        "contestacoes": 0
+      },
+      "interacoes": [
+        {
+          "usuarioId": "web_b7add551-57ed-4bc3-b68d-f2c8b13eb681",
+          "tipo": "confirmar",
+          "em": "2026-11-19T17:07:59.215Z"
+        }
+      ]
+    },
+    {
+      "id": "occ_mwnq69zk_cwcltb",
+      "categoria": "rua_ingreme",
+      "classificacao": "penaliza",
+      "temporalidade": "permanente",
+      "descricao": "",
+      "status": "ativa",
+      "localizacao": {
+        "latitude": -23.711098178627115,
+        "longitude": -46.4970019283543,
+        "featureId": 3817,
+        "partId": 5765,
+        "codLog": 63280,
+        "logradouro": "RUA SALESIANA",
+        "oficial": true,
+        "segmentoAssinatura": "3817:5765:347389:7376956",
+        "fracaoNoEixo": 0.311,
+        "distanciaAoEixoM": 0
+      },
+      "penalidadeMetros": 180,
+      "criadoPor": "web_b7add551-57ed-4bc3-b68d-f2c8b13eb681",
+      "criadoEm": "2026-11-19T15:48:49.808Z",
+      "ultimaConfirmacaoEm": "2026-11-19T15:48:49.808Z",
+      "expiraEm": null,
+      "contadores": {
+        "confirmacoes": 1,
+        "resolvida": 0,
+        "contestacoes": 0
+      },
+      "interacoes": [
+        {
+          "usuarioId": "web_b7add551-57ed-4bc3-b68d-f2c8b13eb681",
+          "tipo": "confirmar",
+          "em": "2026-11-19T15:48:49.808Z"
+        }
+      ]
+    },
+    {
+      "id": "occ_mwnpjen2_3qe5qb",
+      "categoria": "escadaria",
+      "classificacao": "penaliza",
+      "temporalidade": "permanente",
+      "descricao": "",
+      "status": "ativa",
+      "localizacao": {
+        "latitude": -23.711436164877,
+        "longitude": -46.49577936505982,
+        "featureId": 4929,
+        "partId": 38,
+        "codLog": 0,
+        "logradouro": "RUA NÃO OFICIALIZADA",
+        "oficial": false,
+        "segmentoAssinatura": "4929:38:347514:7376920",
+        "fracaoNoEixo": 0.357,
+        "distanciaAoEixoM": 0
+      },
+      "penalidadeMetros": 220,
+      "criadoPor": "web_b7add551-57ed-4bc3-b68d-f2c8b13eb681",
+      "criadoEm": "2026-11-19T15:31:02.750Z",
+      "ultimaConfirmacaoEm": "2026-11-19T15:31:02.750Z",
+      "expiraEm": null,
+      "contadores": {
+        "confirmacoes": 0,
+        "resolvida": 1,
+        "contestacoes": 0
+      },
+      "interacoes": [
+        {
+          "usuarioId": "web_b7add551-57ed-4bc3-b68d-f2c8b13eb681",
+          "tipo": "resolver",
+          "em": "2026-11-19T15:32:35.947Z"
+        }
+      ]
+    }
+  ]
+}

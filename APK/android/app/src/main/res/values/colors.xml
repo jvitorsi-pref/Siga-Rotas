@@ -3,4 +3,5 @@
   <color name="colorPrimary">#045127</color>
   <color name="colorPrimaryDark">#ffffff</color>
   <color name="activityBackground">#ffffff</color>
+  <color name="iconBackground">#ffffff</color>
 </resources>

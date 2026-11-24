@@ -21,7 +21,7 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
   }
 }
 
-rootProject.name = 'Roteamento Santo André'
+rootProject.name = 'SIGA APP'
 
 dependencyResolutionManagement {
   versionCatalogs {
