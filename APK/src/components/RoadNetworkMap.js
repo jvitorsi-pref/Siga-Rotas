@@ -31,6 +31,30 @@ import { MAP_HTML } from '../map/mapHtml.js';
 import { CAMADA_PADRAO, CAMADA_SATELITE, opcoesCamadasBase, normalizarCamadaBase } from '../map/camadaBase.js';
 const MAP_SOURCE = { html: MAP_HTML };
 
+function WarningIcon({ active = false }) {
+  const triangleColor = active ? COLORS.white : COLORS.accent;
+  const markColor = active ? COLORS.accent : COLORS.white;
+  return (
+    <View style={styles.warnIconBox} accessible={false}>
+      <View style={[styles.warnTriangle, { borderBottomColor: triangleColor }]} />
+      <Text style={[styles.warnExclamation, { color: markColor }]}>!</Text>
+    </View>
+  );
+}
+
+function CenterIcon({ color = COLORS.accent }) {
+  return (
+    <View style={styles.centerIconBox} accessible={false}>
+      <View style={[styles.centerIconRing, { borderColor: color }]} />
+      <View style={[styles.centerIconDot, { backgroundColor: color }]} />
+      <View style={[styles.centerTickTop, { backgroundColor: color }]} />
+      <View style={[styles.centerTickBottom, { backgroundColor: color }]} />
+      <View style={[styles.centerTickLeft, { backgroundColor: color }]} />
+      <View style={[styles.centerTickRight, { backgroundColor: color }]} />
+    </View>
+  );
+}
+
 export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
   {
     features,
@@ -75,7 +99,8 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
   const syncRef = useRef(null);
   const [mapReady, setMapReady] = useState(false);
   const [mapSession, setMapSession] = useState(0);
-  const [showLegend, setShowLegend] = useState(true);
+  const [showLegend, setShowLegend] = useState(false);
+  const [occMenuOpen, setOccMenuOpen] = useState(false);
   const [basemapStatus, setBasemapStatus] = useState(null);
   const modoBaseAtivo = normalizarCamadaBase(basemapMode);
   const opcoesBase = opcoesCamadasBase();
@@ -113,6 +138,12 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
     }
   }, [modoBaseAtivo]);
 
+  useEffect(() => {
+    if (!visible) {
+      setOccMenuOpen(false);
+    }
+  }, [visible]);
+
   const handleWebViewMessage = (event) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
@@ -126,12 +157,16 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
           setBasemapStatus(null);
         }
       } else if (data.type === 'OCC_CLICK') {
+        setOccMenuOpen(false);
         if (onOccurrenceClick) onOccurrenceClick(data.id);
       } else if (data.type === 'ROUTE_OBS_CLICK') {
+        setOccMenuOpen(false);
         if (onRouteObservationClick) onRouteObservationClick(data.idCliente);
       } else if (data.type === 'ALT_ROUTE_CLICK') {
+        setOccMenuOpen(false);
         if (onAltRouteClick) onAltRouteClick(data.id);
       } else if (data.type === 'MAP_CLICK') {
+        setOccMenuOpen(false);
         // Com a seleção de ponto, observação ou ocorrência ativa, o toque define o alvo.
         if (pickingPoint && onMapPickCoordinate) {
           onMapPickCoordinate({ lon: data.lon, lat: data.lat });
@@ -257,110 +292,193 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
         </View>
       )}
 
-      {/* Controles flutuantes rápidos do mapa */}
-      <View style={styles.quickControls}>
-        {typeof onStartPickOccurrence === 'function' && (
-          <TouchableOpacity
-            style={[styles.controlBtn, pickingOccurrence && styles.controlBtnActive]}
-            accessibilityRole="button"
-            onPress={() => (pickingOccurrence ? onCancelPickOccurrence?.() : onStartPickOccurrence())}
-          >
-            <Text style={[styles.controlBtnText, pickingOccurrence && styles.controlBtnTextActive]}>
-              ⚠ Ocorrência
-            </Text>
-          </TouchableOpacity>
-        )}
-        {typeof onToggleOccurrences === 'function' && (
-          <TouchableOpacity
-            style={styles.controlBtn}
-            accessibilityRole="button"
-            onPress={onToggleOccurrences}
-          >
-            <Text style={styles.controlBtnText}>
-              {showOccurrences !== false ? '👁 Alertas' : '🚫 Alertas'}
-            </Text>
-          </TouchableOpacity>
-        )}
+      {occMenuOpen && (
         <TouchableOpacity
-          style={styles.controlBtn}
-          onPress={() => sendMessageToMap({ type: 'FIT_NETWORK' })}
+          style={styles.popoverBackdrop}
+          activeOpacity={1}
+          accessibilityRole="button"
+          accessibilityLabel="Fechar menu de ocorrências"
+          onPress={() => setOccMenuOpen(false)}
+        />
+      )}
+
+      {/* Controles flutuantes rápidos do mapa (alinhados no canto inferior direito) */}
+      <View style={styles.quickControls}>
+        {occMenuOpen && (typeof onStartPickOccurrence === 'function' || typeof onToggleOccurrences === 'function') && (
+          <View style={styles.occPopover} accessibilityRole="menu">
+            {typeof onStartPickOccurrence === 'function' && (
+              <TouchableOpacity
+                style={[styles.popoverItem, pickingOccurrence && styles.popoverItemActive]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: !!pickingOccurrence }}
+                onPress={() => {
+                  setOccMenuOpen(false);
+                  if (pickingOccurrence) onCancelPickOccurrence?.();
+                  else onStartPickOccurrence();
+                }}
+              >
+                <Text style={[styles.popoverItemIcon, pickingOccurrence && styles.popoverItemTextActive]}>
+                  +
+                </Text>
+                <Text style={[styles.popoverItemText, pickingOccurrence && styles.popoverItemTextActive]}>
+                  Nova Ocorrência
+                </Text>
+              </TouchableOpacity>
+            )}
+            {typeof onToggleOccurrences === 'function' && (
+              <TouchableOpacity
+                style={[
+                  styles.popoverItem,
+                  typeof onStartPickOccurrence === 'function' && styles.popoverItemBorder,
+                ]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: showOccurrences !== false }}
+                onPress={onToggleOccurrences}
+              >
+                <Text style={styles.popoverItemIcon}>
+                  {showOccurrences !== false ? '✓' : '○'}
+                </Text>
+                <Text style={styles.popoverItemText}>Visualizar</Text>
+                <View
+                  style={[
+                    styles.popoverBadge,
+                    showOccurrences !== false ? styles.popoverBadgeOn : styles.popoverBadgeOff,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.popoverBadgeText,
+                      showOccurrences !== false ? styles.popoverBadgeTextOn : styles.popoverBadgeTextOff,
+                    ]}
+                  >
+                    {showOccurrences !== false ? 'Ativo' : 'Oculto'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {(typeof onStartPickOccurrence === 'function' || typeof onToggleOccurrences === 'function') && (
+          <TouchableOpacity
+            style={[styles.iconControlBtn, (pickingOccurrence || occMenuOpen) && styles.controlBtnActive]}
+            accessibilityRole="button"
+            accessibilityLabel="Ocorrências"
+            accessibilityState={{ expanded: occMenuOpen }}
+            onPress={() => {
+              setShowLegend(false);
+              setOccMenuOpen((v) => !v);
+            }}
+          >
+            <WarningIcon active={pickingOccurrence || occMenuOpen} />
+          </TouchableOpacity>
+        )}
+
+        <TouchableOpacity
+          style={styles.iconControlBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Centralizar rede no mapa"
+          onPress={() => {
+            setOccMenuOpen(false);
+            sendMessageToMap({ type: 'FIT_NETWORK' });
+          }}
         >
-          <Text style={styles.controlBtnText}>🗺 Rede</Text>
+          <CenterIcon color={COLORS.accent} />
         </TouchableOpacity>
+
         {routeGeometry?.coordinates?.length >= 2 && (
           <TouchableOpacity
             style={styles.controlBtn}
-            onPress={() => sendMessageToMap({ type: 'FIT_ROUTE' })}
+            accessibilityRole="button"
+            accessibilityLabel="Centralizar rota no mapa"
+            onPress={() => {
+              setOccMenuOpen(false);
+              sendMessageToMap({ type: 'FIT_ROUTE' });
+            }}
           >
-            <Text style={styles.controlBtnText}>📍 Rota</Text>
+            <Text style={styles.controlBtnText}>Rota</Text>
           </TouchableOpacity>
         )}
-        <TouchableOpacity
-          style={styles.controlBtn}
-          onPress={() => setShowLegend((v) => !v)}
-        >
-          <Text style={styles.controlBtnText}>{showLegend ? '▾ Legenda' : '▴ Legenda'}</Text>
-        </TouchableOpacity>
-      </View>
 
-      {/* Legenda cartográfica nativa */}
-      {showLegend && (
-        <View style={styles.legend}>
-          <ScrollView style={{ maxHeight: 190 }} contentContainerStyle={{ gap: 4 }}>
-          <View style={styles.legendRow}>
-            <View style={[styles.swatchLine, { backgroundColor: COLORS.axis }]} />
-            <Text style={styles.legendText}>Eixo viário oficial</Text>
+        {!showLegend ? (
+          <TouchableOpacity
+            style={styles.controlBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Abrir legenda"
+            accessibilityState={{ expanded: false }}
+            onPress={() => {
+              setOccMenuOpen(false);
+              setShowLegend(true);
+            }}
+          >
+            <Text style={styles.controlBtnText}>Legenda</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.legend}>
+            <ScrollView style={{ maxHeight: 190 }} contentContainerStyle={{ flexGrow: 1 }}>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                style={styles.legendBody}
+                accessibilityRole="button"
+                accessibilityLabel="Fechar legenda"
+                onPress={() => setShowLegend(false)}
+              >
+                <View style={styles.legendRow}>
+                  <View style={[styles.swatchLine, { backgroundColor: COLORS.axis }]} />
+                  <Text style={styles.legendText}>Eixo viário oficial</Text>
+                </View>
+                <View style={styles.legendRow}>
+                  <View style={[styles.swatchLine, { backgroundColor: COLORS.axisUnofficial }]} />
+                  <Text style={styles.legendText}>Eixo não oficializado</Text>
+                </View>
+                <View style={styles.legendRow}>
+                  <View style={[styles.swatchRoute, { backgroundColor: COLORS.route }]} />
+                  <Text style={styles.legendText}>Rota calculada</Text>
+                </View>
+                <View style={styles.legendRow}>
+                  <View style={[styles.swatchDot, { backgroundColor: COLORS.origin }]} />
+                  <Text style={styles.legendText}>Origem e destino (A)</Text>
+                </View>
+                <View style={styles.legendRow}>
+                  <View style={[styles.swatchDot, { backgroundColor: COLORS.stop }]} />
+                  <Text style={styles.legendText}>Parada intermediária</Text>
+                </View>
+                {!!altRoutes?.length && (
+                  <View style={styles.legendRow}>
+                    <View style={[styles.swatchLine, { backgroundColor: '#64748b' }]} />
+                    <Text style={styles.legendText}>Rota alternativa</Text>
+                  </View>
+                )}
+                {!!occurrences?.length && (
+                  <View style={styles.legendRow}>
+                    <View style={[styles.swatchDot, { backgroundColor: '#d97706' }]} />
+                    <Text style={styles.legendText}>Ocorrências ({occurrences.length})</Text>
+                  </View>
+                )}
+                {!!routeSegments?.length && (
+                  <Text style={styles.legendText}>{routeSegments.filter((t) => t.visivel).length}/{routeSegments.length} trechos visíveis</Text>
+                )}
+                {(routeSegments || []).map((t) => (
+                  <TouchableOpacity key={t.indice} style={styles.legendRow}
+                    accessibilityRole="button" accessibilityLabel={`${t.visivel ? 'Ocultar' : 'Mostrar'} trecho ${t.de} para ${t.para}${t.retorno ? ', retorno à origem' : ''}`}
+                    accessibilityState={{ selected: t.visivel }}
+                    onPress={() => onToggleSegment?.(t.indice)}>
+                    <View style={[styles.swatchLine, { backgroundColor: t.cor, opacity: t.visivel ? 1 : 0.35 }]} />
+                    <Text style={[styles.legendText, !t.visivel && { textDecorationLine: 'line-through' }]}>
+                      {t.de} → {t.para}{t.retorno ? ' · retorno' : ''}{t.visivel ? '' : ' · oculto'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                {(routeSegments || []).some((t) => !t.visivel) && (
+                  <TouchableOpacity accessibilityRole="button" onPress={onRestoreSegments}>
+                    <Text style={[styles.legendText, { color: COLORS.accent }]}>Mostrar todos os trechos</Text>
+                  </TouchableOpacity>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
           </View>
-          <View style={styles.legendRow}>
-            <View style={[styles.swatchLine, { backgroundColor: COLORS.axisUnofficial }]} />
-            <Text style={styles.legendText}>Eixo não oficializado</Text>
-          </View>
-          <View style={styles.legendRow}>
-            <View style={[styles.swatchRoute, { backgroundColor: COLORS.route }]} />
-            <Text style={styles.legendText}>Rota calculada</Text>
-          </View>
-          <View style={styles.legendRow}>
-            <View style={[styles.swatchDot, { backgroundColor: COLORS.origin }]} />
-            <Text style={styles.legendText}>Origem e destino (A)</Text>
-          </View>
-          <View style={styles.legendRow}>
-            <View style={[styles.swatchDot, { backgroundColor: COLORS.stop }]} />
-            <Text style={styles.legendText}>Parada intermediária</Text>
-          </View>
-          {!!altRoutes?.length && (
-            <View style={styles.legendRow}>
-              <View style={[styles.swatchLine, { backgroundColor: '#64748b' }]} />
-              <Text style={styles.legendText}>Rota alternativa</Text>
-            </View>
-          )}
-          {!!occurrences?.length && (
-            <View style={styles.legendRow}>
-              <View style={[styles.swatchDot, { backgroundColor: '#d97706' }]} />
-              <Text style={styles.legendText}>Ocorrências ({occurrences.length})</Text>
-            </View>
-          )}
-          {!!routeSegments?.length && (
-            <Text style={styles.legendText}>{routeSegments.filter((t) => t.visivel).length}/{routeSegments.length} trechos visíveis</Text>
-          )}
-          {(routeSegments || []).map((t) => (
-            <TouchableOpacity key={t.indice} style={styles.legendRow}
-              accessibilityRole="button" accessibilityLabel={`${t.visivel ? 'Ocultar' : 'Mostrar'} trecho ${t.de} para ${t.para}${t.retorno ? ', retorno à origem' : ''}`}
-              accessibilityState={{ selected: t.visivel }}
-              onPress={() => onToggleSegment?.(t.indice)}>
-              <View style={[styles.swatchLine, { backgroundColor: t.cor, opacity: t.visivel ? 1 : 0.35 }]} />
-              <Text style={[styles.legendText, !t.visivel && { textDecorationLine: 'line-through' }]}>
-                {t.de} → {t.para}{t.retorno ? ' · retorno' : ''}{t.visivel ? '' : ' · oculto'}
-              </Text>
-            </TouchableOpacity>
-          ))}
-          {(routeSegments || []).some((t) => !t.visivel) && (
-            <TouchableOpacity accessibilityRole="button" onPress={onRestoreSegments}>
-              <Text style={[styles.legendText, { color: COLORS.accent }]}>Mostrar todos os trechos</Text>
-            </TouchableOpacity>
-          )}
-          </ScrollView>
-        </View>
-      )}
+        )}
+      </View>
     </View>
   );
 });
@@ -487,23 +605,51 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontSize: 11.5,
   },
+  popoverBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 5,
+  },
   quickControls: {
     position: 'absolute',
-    bottom: 48,
+    bottom: 12,
     right: 12,
     flexDirection: 'row',
     flexWrap: 'wrap',
+    alignItems: 'flex-end',
     justifyContent: 'flex-end',
-    maxWidth: '92%',
+    maxWidth: '94%',
     gap: 6,
+    zIndex: 6,
   },
-  controlBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+  iconControlBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
     borderColor: COLORS.border,
     borderWidth: 1,
     borderRadius: 7,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  controlBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 7,
+    height: 36,
+    paddingHorizontal: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
   },
   controlBtnActive: {
     backgroundColor: COLORS.accent,
@@ -511,24 +657,172 @@ const styles = StyleSheet.create({
   },
   controlBtnText: {
     color: COLORS.accent,
-    fontSize: 11.5,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
   },
   controlBtnTextActive: {
     color: '#ffffff',
   },
-  legend: {
+  warnIconBox: {
+    width: 18,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  warnTriangle: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 9,
+    borderRightWidth: 9,
+    borderBottomWidth: 16,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderStyle: 'solid',
+  },
+  warnExclamation: {
     position: 'absolute',
-    left: 12,
-    bottom: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    top: 4,
+    fontSize: 10,
+    fontWeight: '800',
+    lineHeight: 11,
+    textAlign: 'center',
+  },
+  centerIconBox: {
+    width: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  centerIconRing: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 1.8,
+  },
+  centerIconDot: {
+    position: 'absolute',
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+  },
+  centerTickTop: {
+    position: 'absolute',
+    top: 0,
+    width: 2,
+    height: 3,
+    borderRadius: 1,
+  },
+  centerTickBottom: {
+    position: 'absolute',
+    bottom: 0,
+    width: 2,
+    height: 3,
+    borderRadius: 1,
+  },
+  centerTickLeft: {
+    position: 'absolute',
+    left: 0,
+    width: 3,
+    height: 2,
+    borderRadius: 1,
+  },
+  centerTickRight: {
+    position: 'absolute',
+    right: 0,
+    width: 3,
+    height: 2,
+    borderRadius: 1,
+  },
+  occPopover: {
+    position: 'absolute',
+    bottom: 44,
+    right: 0,
+    width: 205,
+    backgroundColor: 'rgba(255, 255, 255, 0.98)',
     borderColor: COLORS.border,
     borderWidth: 1,
     borderRadius: 8,
+    overflow: 'hidden',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    zIndex: 8,
+  },
+  popoverItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 11,
+    gap: 8,
+    backgroundColor: '#ffffff',
+  },
+  popoverItemBorder: {
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  popoverItemActive: {
+    backgroundColor: COLORS.accent,
+  },
+  popoverItemIcon: {
+    width: 16,
+    textAlign: 'center',
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.accent,
+  },
+  popoverItemText: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: COLORS.text,
+  },
+  popoverItemTextActive: {
+    color: COLORS.white,
+  },
+  popoverBadge: {
+    borderRadius: 999,
+    paddingVertical: 2,
+    paddingHorizontal: 7,
+    borderWidth: 1,
+  },
+  popoverBadgeOn: {
+    backgroundColor: 'rgba(4, 81, 39, 0.1)',
+    borderColor: 'rgba(4, 81, 39, 0.35)',
+  },
+  popoverBadgeOff: {
+    backgroundColor: COLORS.panel2,
+    borderColor: COLORS.border,
+  },
+  popoverBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  popoverBadgeTextOn: {
+    color: COLORS.accent,
+  },
+  popoverBadgeTextOff: {
+    color: COLORS.muted,
+  },
+  legend: {
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 8,
+    maxWidth: 225,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.14,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  legendBody: {
     paddingVertical: 8,
     paddingHorizontal: 10,
     gap: 4,
-    maxWidth: '68%',
   },
   legendRow: {
     flexDirection: 'row',

@@ -24,49 +24,41 @@ export const MAP_HTML = `<!DOCTYPE html>
   .basemap-satellite {
     opacity: 1;
   }
+  .ol-control.ol-zoom,
   .ol-zoom {
-    top: 12px;
-    right: 12px;
-    left: auto;
+    top: 12px !important;
+    right: 12px !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 6px !important;
+    background: transparent !important;
+    background-color: transparent !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
   }
+  .ol-control.ol-zoom button,
   .ol-zoom button {
-    background: #ffffff !important;
-    color: #045127 !important;
-    border: 1px solid #d0d7de !important;
+    background: #045127 !important;
+    background-color: #045127 !important;
+    color: #ffffff !important;
+    border: 1px solid #045127 !important;
     width: 36px !important;
     height: 36px !important;
     font-size: 18px !important;
+    font-weight: 700 !important;
+    line-height: 1 !important;
     border-radius: 6px !important;
-    margin-bottom: 4px !important;
-  }
-  .ol-attribution {
-    right: 8px !important;
-    bottom: 6px !important;
-    left: auto !important;
-    max-width: 205px !important;
-    background: rgba(255, 255, 255, 0.92) !important;
-    border: 1px solid #d0d7de !important;
-    border-radius: 6px !important;
-    padding: 2px 6px !important;
-    font-size: 9.5px !important;
-    line-height: 1.2 !important;
-    color: #374151 !important;
-    z-index: 4 !important;
-  }
-  .ol-attribution ul {
     margin: 0 !important;
     padding: 0 !important;
-    font-size: 9.5px !important;
-    color: #374151 !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .18) !important;
   }
-  .ol-attribution a {
-    color: #045127 !important;
-    text-decoration: underline !important;
-  }
-  .ol-attribution button {
-    color: #045127 !important;
-    background: transparent !important;
-    font-weight: 700 !important;
+  .ol-attribution {
+    display: none !important;
   }
   #fallback-canvas {
     display: none;
@@ -81,19 +73,24 @@ export const MAP_HTML = `<!DOCTYPE html>
     right: 12px;
     z-index: 2;
     flex-direction: column;
+    gap: 6px;
+    background: transparent;
+    padding: 0;
   }
   #fallback-zoom[hidden] { display: none !important; }
   #fallback-zoom button {
-    background: #ffffff;
-    color: #045127;
-    border: 1px solid #d0d7de;
+    background: #045127;
+    color: #ffffff;
+    border: 1px solid #045127;
     width: 36px;
     height: 36px;
     font-size: 18px;
+    font-weight: 700;
     line-height: 1;
     border-radius: 6px;
-    margin-bottom: 4px;
+    margin: 0;
     padding: 0;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .18);
   }
 </style>
 </head>
@@ -197,7 +194,7 @@ export const MAP_HTML = `<!DOCTYPE html>
       : null;
 
     var baseLayers = satLayer ? [osmLayer, satLayer] : [osmLayer];
-    var map = new ol.Map({
+    var mapOpts = {
       target: document.getElementById('map'),
       layers: baseLayers,
       view: new ol.View({
@@ -206,7 +203,11 @@ export const MAP_HTML = `<!DOCTYPE html>
         minZoom: 5,
         maxZoom: 22
       })
-    });
+    };
+    if (ol.control && ol.control.defaults && typeof ol.control.defaults.defaults === 'function') {
+      mapOpts.controls = ol.control.defaults.defaults({ attribution: false });
+    }
+    var map = new ol.Map(mapOpts);
 
     var errosSatelite = 0;
     var satCarregado = false;
@@ -1250,7 +1251,10 @@ export const MAP_HTML = `<!DOCTYPE html>
     script.onload = script.onerror = null;
     if (window.ol) {
       var css = document.createElement('link'); css.rel = 'stylesheet';
-      css.href = 'https://cdn.jsdelivr.net/npm/ol@v10.2.1/ol.css'; document.head.appendChild(css);
+      css.href = 'https://cdn.jsdelivr.net/npm/ol@v10.2.1/ol.css';
+      var styleEl = document.head && document.head.querySelector ? document.head.querySelector('style') : null;
+      if (styleEl && document.head.insertBefore) document.head.insertBefore(css, styleEl);
+      else document.head.appendChild(css);
     }
     iniciarMapa();
   }

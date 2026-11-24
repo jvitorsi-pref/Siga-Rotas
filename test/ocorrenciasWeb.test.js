@@ -81,9 +81,14 @@ test('Web/PWA/WebForms markup, sw.js e app.js integram preferências, ocorrênci
   const sw = readFileSync(path.join(ROOT, 'public', 'sw.js'), 'utf8');
   const app = readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
 
-  for (const id of ['prefs-box', 'route-alternatives', 'route-occurrences', 'occ-map-toggle', 'occ-modal', 'occ-detail-modal']) {
+  for (const id of ['prefs-box', 'route-alternatives', 'route-occurrences', 'occ-menu-btn', 'occ-popover', 'occ-map-add', 'occ-map-toggle', 'fit-network-btn', 'legend-toggle-btn', 'legend-box', 'occ-modal', 'occ-detail-modal']) {
     assert.ok(html.includes(`id="${id}"`), `index.html deve conter #${id}`);
   }
+  assert.match(html, /Nova Ocorrência/);
+  assert.match(html, /Visualizar/);
+  assert.match(html, /id="legend-box"[^>]*hidden/);
+  assert.match(app, /abrirLegenda/);
+  assert.match(app, /fecharLegenda/);
   assert.match(sw, /\/ocorrenciasUI\.js/);
   assert.match(sw, /\/ocorrencias\/catalogo\.js/);
   assert.match(sw, /\/ocorrencias\/preferencias\.js/);

@@ -291,12 +291,21 @@ test('Canvas: clique informa o zoom para a tolerância do toque no trecho', () =
   assert.match(MAP_HTML, /zoom: map\.getView\(\)\.getZoom\(\)/);
 });
 
-test('APK mapa: OpenLayers alcança zoom 22 com tiles OSM em 19, atribuição visível e filtro sem brilho estourado', () => {
+test('APK mapa: OpenLayers alcança zoom 22 com tiles OSM em 19, zoom verde à direita, sem atribuição OSM e filtro sem brilho estourado', () => {
   assert.match(MAP_HTML, /source:\s*new ol\.source\.OSM\(\{\s*maxZoom:\s*19,\s*interpolate:\s*true/s);
   assert.match(MAP_HTML, /minZoom:\s*5,\s*maxZoom:\s*22/);
   const attrCss = MAP_HTML.match(/\.ol-attribution\s*\{[^}]*\}/)?.[0] || '';
-  assert.ok(attrCss.length > 0);
-  assert.doesNotMatch(attrCss, /display:\s*none/);
+  assert.match(attrCss, /display:\s*none/);
+  const zoomCss = MAP_HTML.match(/\.ol-control\.ol-zoom,\s*\.ol-zoom\s*\{[^}]*\}/)?.[0] || '';
+  assert.match(zoomCss, /right:\s*12px\s*!important/);
+  assert.match(zoomCss, /left:\s*auto\s*!important/);
+  assert.match(zoomCss, /background:\s*transparent\s*!important/);
+  const zoomBtnCss = MAP_HTML.match(/\.ol-control\.ol-zoom button,\s*\.ol-zoom button\s*\{[^}]*\}/)?.[0] || '';
+  assert.match(zoomBtnCss, /background:\s*#045127\s*!important/);
+  assert.match(zoomBtnCss, /color:\s*#ffffff\s*!important/);
+  const fallbackBtnCss = MAP_HTML.match(/#fallback-zoom button\s*\{[^}]*\}/)?.[0] || '';
+  assert.match(fallbackBtnCss, /background:\s*#045127/);
+  assert.match(fallbackBtnCss, /color:\s*#ffffff/);
   const basemapCss = MAP_HTML.match(/\.basemap\s*\{[^}]*\}/)?.[0] || '';
   assert.doesNotMatch(basemapCss, /brightness\(1\.19\)/);
   assert.match(basemapCss, /grayscale\(0\.75\)/);

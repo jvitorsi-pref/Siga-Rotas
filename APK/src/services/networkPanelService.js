@@ -13,7 +13,7 @@ export function criarPainelRede({ service, aoMudar = () => {} }) {
     if (!['carregar', 'verificar', 'baixar'].includes(acao)) return { ok: false, codigo: 'ACAO_INVALIDA' };
     if (operacao) return { ok: false, ocupado: true };
     operacao = acao;
-    feedback = { kind: 'busy', text: acao === 'carregar' ? 'Carregando a rede viária…' : acao === 'verificar' ? 'Verificando o conteúdo da rede no WFS…' : 'Baixando a rede do GeoServer…' };
+    feedback = { kind: 'busy', text: acao === 'carregar' ? 'Carregando a rede viária…' : acao === 'verificar' ? 'Verificando o conteúdo da rede no WFS…' : 'Atualizando as ruas…' };
     emitir();
     try {
       let resultado;

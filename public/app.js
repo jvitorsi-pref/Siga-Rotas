@@ -180,9 +180,16 @@ import {
     prefsSummaryText: $('#prefs-summary-text'),
     prefsEvitarList: $('#prefs-evitar-list'),
     btnNovaOcorrencia: $('#btn-nova-ocorrencia'),
+    occMenuWrap: $('#occ-menu-wrap'),
+    occMenuBtn: $('#occ-menu-btn'),
+    occPopover: $('#occ-popover'),
     occMapToggle: $('#occ-map-toggle'),
+    occToggleStatus: $('#occ-toggle-status'),
     occMapAdd: $('#occ-map-add'),
     occCount: $('#occ-count'),
+    fitNetworkBtn: $('#fit-network-btn'),
+    legendToggleBtn: $('#legend-toggle-btn'),
+    legendBox: $('#legend-box'),
     legendAlt: $('#legend-alt'),
     routeAlternatives: $('#route-alternatives'),
     routeOccurrences: $('#route-occurrences'),
@@ -284,6 +291,9 @@ import {
   const map = new ol.Map({
     target: els.map,
     layers: [osmLayer, satLayer],
+    controls: ol.control && ol.control.defaults && typeof ol.control.defaults.defaults === 'function'
+      ? ol.control.defaults.defaults({ attribution: false })
+      : undefined,
     view: new ol.View({
       center: ol.proj.fromLonLat(MAP_VIEW.center),
       zoom: MAP_VIEW.zoom,
@@ -1084,6 +1094,12 @@ import {
     stopPicking();
     stopPickingRouteObs();
     fecharDetalheOcorrencia();
+    if (els.occPopover) els.occPopover.hidden = true;
+    if (els.occMenuBtn) {
+      els.occMenuBtn.setAttribute('aria-expanded', 'false');
+      els.occMenuBtn.classList.add('is-active');
+    }
+    if (els.occMapAdd) els.occMapAdd.classList.add('is-picking');
     state.pickingOccurrence = true;
     els.pickLabel.textContent = 'local da ocorrência na via';
     els.pickBanner.hidden = false;
@@ -1094,6 +1110,8 @@ import {
 
   function stopPickingOccurrence() {
     state.pickingOccurrence = false;
+    if (els.occMenuBtn) els.occMenuBtn.classList.remove('is-active');
+    if (els.occMapAdd) els.occMapAdd.classList.remove('is-picking');
     if (!state.picking && !state.pickingRouteObs) {
       els.pickBanner.hidden = true;
       els.map.classList.remove('map--picking');
@@ -1730,17 +1748,96 @@ import {
     }
   }
 
+  function fecharMenuOcorrencias() {
+    if (els.occPopover) els.occPopover.hidden = true;
+    if (els.occMenuBtn) els.occMenuBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  function abrirLegenda() {
+    fecharMenuOcorrencias();
+    if (els.legendToggleBtn) {
+      els.legendToggleBtn.hidden = true;
+      els.legendToggleBtn.setAttribute('aria-expanded', 'true');
+    }
+    if (els.legendBox) els.legendBox.hidden = false;
+  }
+
+  function fecharLegenda() {
+    if (els.legendBox) els.legendBox.hidden = true;
+    if (els.legendToggleBtn) {
+      els.legendToggleBtn.hidden = false;
+      els.legendToggleBtn.setAttribute('aria-expanded', 'false');
+    }
+  }
+
   if (els.btnNovaOcorrencia) {
     els.btnNovaOcorrencia.addEventListener('click', startPickingOccurrence);
   }
+  if (els.occMenuBtn && els.occPopover) {
+    els.occMenuBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const abrir = els.occPopover.hidden;
+      if (abrir) fecharLegenda();
+      els.occPopover.hidden = !abrir;
+      els.occMenuBtn.setAttribute('aria-expanded', String(abrir));
+    });
+  }
+  if (els.occPopover) {
+    els.occPopover.addEventListener('click', (ev) => ev.stopPropagation());
+  }
+  document.addEventListener('click', (ev) => {
+    if (els.occPopover && !els.occPopover.hidden && els.occMenuWrap && !els.occMenuWrap.contains(ev.target)) {
+      fecharMenuOcorrencias();
+    }
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && els.occPopover && !els.occPopover.hidden) {
+      fecharMenuOcorrencias();
+    }
+  });
   if (els.occMapAdd) {
-    els.occMapAdd.addEventListener('click', startPickingOccurrence);
+    els.occMapAdd.addEventListener('click', () => {
+      fecharMenuOcorrencias();
+      if (state.pickingOccurrence) {
+        stopPickingOccurrence();
+        setStatus('Pronto', 'idle');
+      } else {
+        startPickingOccurrence();
+      }
+    });
   }
   if (els.occMapToggle) {
     els.occMapToggle.addEventListener('click', () => {
       state.mostrarOcorrenciasMapa = !state.mostrarOcorrenciasMapa;
       els.occMapToggle.setAttribute('aria-pressed', String(state.mostrarOcorrenciasMapa));
+      els.occMapToggle.setAttribute('aria-checked', String(state.mostrarOcorrenciasMapa));
+      els.occMapToggle.classList.toggle('is-active', state.mostrarOcorrenciasMapa);
+      if (els.occToggleStatus) {
+        els.occToggleStatus.textContent = state.mostrarOcorrenciasMapa ? 'Ativo' : 'Oculto';
+      }
       occClusterLayer.setVisible(state.mostrarOcorrenciasMapa);
+    });
+  }
+  if (els.fitNetworkBtn) {
+    els.fitNetworkBtn.addEventListener('click', () => {
+      fecharMenuOcorrencias();
+      const extent = axisSource.getExtent();
+      if (!isEmpty(extent)) {
+        map.getView().fit(extent, {
+          padding: [40, 40, 40, 40],
+          duration: 250,
+          maxZoom: 15,
+        });
+      }
+    });
+  }
+  if (els.legendToggleBtn) {
+    els.legendToggleBtn.addEventListener('click', abrirLegenda);
+  }
+  if (els.legendBox) {
+    els.legendBox.addEventListener('click', (ev) => {
+      if (ev.target.closest('button, a, input, summary')) return;
+      fecharLegenda();
     });
   }
   if (els.occModalFechar) els.occModalFechar.addEventListener('click', fecharModalRegistroOcorrencia);
