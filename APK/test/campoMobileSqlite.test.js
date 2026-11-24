@@ -440,6 +440,8 @@ test('APK SQLite real (PRAGMA foreign_keys = ON): exclusão individual de observ
   assert.match(savedSecSrc, /Excluir/);
   assert.match(obsSecSrc, /Salvar rotas offline/);
   assert.match(appMobileSrc, /ConfirmActionModal/);
+  assert.match(appMobileSrc, /ocorrenciasServiceRef\.current\?\.limparDadosLocais\?\.\(\)/);
+  assert.match(appMobileSrc, /setOcorrencias\(\[\]\)/);
   assert.doesNotMatch(appMobileSrc, /origemSalvamento:\s*'auto'/);
 
   await driver.close();

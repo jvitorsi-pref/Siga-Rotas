@@ -45,10 +45,14 @@ const rotaExemplo = () => ({
   ],
 });
 
-test('APK GPX: utilitário compartilhado gera GPX 1.1 válido e nome determinístico', () => {
+test('APK GPX: utilitário compartilhado gera GPX 1.1 válido com <rte>/<rtept> e nome determinístico', () => {
   const xml = gerarGpxRota(rotaExemplo());
   assert.match(xml, /<gpx version="1\.1"/);
+  assert.equal((xml.match(/<rte>/g) || []).length, 1);
+  assert.equal((xml.match(/<rtept /g) || []).length, 3);
+  assert.ok(xml.indexOf('<rte>') < xml.indexOf('<trk>'));
   assert.equal((xml.match(/<trkseg>/g) || []).length, 2);
+  assert.equal((xml.match(/<trkpt /g) || []).length, 4);
   const nome = nomeArquivoGpx(rotaExemplo(), new Date(2026, 10, 16, 14, 22));
   assert.equal(nome, 'siga-rota-A-B-A-2026-11-16_14-22.gpx');
 });
@@ -224,7 +228,13 @@ test('APK GPX Cenário B (ZIP em Base64), Cenário C (somente GPS), simulação 
   const arquivos = lerZipStore(zipBuffer);
   assert.ok(arquivos[nomeCalcZip]);
   assert.ok(arquivos[nomeGpsZip]);
-  assert.match(decodificarUtf8(arquivos[nomeGpsZip]), /<time>2023-11-14T22:13:20\.000Z<\/time>/);
+  const xmlCalcZip = decodificarUtf8(arquivos[nomeCalcZip]);
+  const xmlGpsZip = decodificarUtf8(arquivos[nomeGpsZip]);
+  assert.equal((xmlCalcZip.match(/<rte>/g) || []).length, 1);
+  assert.equal((xmlCalcZip.match(/<rtept /g) || []).length, 3);
+  assert.equal((xmlGpsZip.match(/<rte>/g) || []).length, 1);
+  assert.equal((xmlGpsZip.match(/<rtept /g) || []).length, 2);
+  assert.match(xmlGpsZip, /<time>2023-11-14T22:13:20\.000Z<\/time>/);
 
   // Cenário C no SAF: somente GPS real sem rota calculada
   const chamadasC = [];
@@ -254,6 +264,8 @@ test('APK GPX Cenário B (ZIP em Base64), Cenário C (somente GPS), simulação 
   assert.match(resC.arquivo, /^rota_percorrida_\d{8}_\d{6}\.gpx$/);
   assert.equal(chamadasC[0].mime, 'application/gpx+xml');
   assert.deepEqual(chamadasC[1].opts, { encoding: 'utf8' });
+  assert.equal((chamadasC[1].conteudo.match(/<rte>/g) || []).length, 1);
+  assert.equal((chamadasC[1].conteudo.match(/<rtept /g) || []).length, 2);
 
   // Bloqueio durante navegação em andamento não abre SAF
   let abriuSaf = false;

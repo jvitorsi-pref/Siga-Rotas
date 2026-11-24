@@ -1354,6 +1354,7 @@ export default function App() {
         'Todas as rotas salvas offline;',
         'Todos os percursos GPS gravados e pontos de trilha locais;',
         'Todas as observações de campo e históricos locais;',
+        'Todas as ocorrências locais (cache e fila pendente de envio);',
         'Registros temporários e fila pendente de sincronização local.',
       ],
       alertText:
@@ -1367,6 +1368,7 @@ export default function App() {
             navigationRef.current.encerrar();
           }
           await campoServiceRef.current.limparDadosLocais({ forcarInterrupcaoNavegacao: true });
+          await ocorrenciasServiceRef.current?.limparDadosLocais?.();
           plannedRouteOriginalRef.current = null;
           lastGpsExecutionIdRef.current = null;
           setGpsRecordForExport(null);
@@ -1382,6 +1384,18 @@ export default function App() {
           setRouteObservations([]);
           setSavedRoutes([]);
           setPendingRecovery([]);
+          setOcorrencias([]);
+          ocorrenciasRef.current = [];
+          setPickingOccurrence(false);
+          setOccModal({
+            visible: false,
+            mode: 'detail',
+            segmentoPreview: null,
+            coordinate: null,
+            ocorrencia: null,
+            submitting: false,
+            errorText: null,
+          });
           setRouteObsModal((prev) => ({ ...prev, visible: false, observacao: null }));
           setConfirmModal((prev) => ({ ...prev, visible: false, submitting: false, onConfirm: null }));
           await refreshCampoUi();

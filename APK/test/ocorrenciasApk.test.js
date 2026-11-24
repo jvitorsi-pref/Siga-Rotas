@@ -452,3 +452,70 @@ test('OcorrenciasMobileService opera via proxy WebForms ApiProxy.ashx e respeita
   assert.ok(urlsChamadas.some((u) => u.includes('endpoint=%2Fapi%2Focorrencias')));
   assert.ok(urlsChamadas.some((u) => u.includes('endpoint=%2Fapi%2Focorrencias%2Finteragir')));
 });
+
+test('OcorrenciasMobileService.limparDadosLocais remove cache e fila pendente preservando usuarioId e preferencias', async () => {
+  const { snapshot, coord } = criarRedeTeste();
+  const remocoes = [];
+  const storageComRemove = {
+    map: new Map(),
+    async getItem(k) { return this.map.has(k) ? this.map.get(k) : null; },
+    async setItem(k, v) { this.map.set(k, String(v)); },
+    async removeItem(k) { remocoes.push(k); this.map.delete(k); },
+  };
+  const net = new MobileNetworkServiceCore({
+    storage: storageComRemove,
+    embeddedSnapshot: snapshot,
+    allowWfs: false,
+    autoUpdate: { enabled: false },
+    fetchImpl: async () => { throw new Error('offline'); },
+  });
+  const svc = new OcorrenciasMobileService({ storage: storageComRemove, networkService: net });
+  const uid = await svc.obterOuCriarUsuarioId();
+  const prefs = await svc.salvarPreferencias({ modo: 'ignorar', evitarCategorias: ['alagamento'] });
+  const pontoSul = coord(100, 0);
+  const seg = await svc.associarSegmento({ latitude: pontoSul[1], longitude: pontoSul[0] });
+  const reg = await svc.registrar({
+    categoria: 'alagamento',
+    classificacao: 'evita',
+    temporalidade: 'temporaria',
+    latitude: pontoSul[1],
+    longitude: pontoSul[0],
+    featureIdPreferido: seg.principal.featureId,
+  }, { usuarioId: uid });
+  assert.equal(reg.ok, true);
+  assert.equal((await svc.listarAtivas()).length, 1);
+  assert.equal(svc.pendentes.length, 1);
+
+  await svc.limparDadosLocais();
+  assert.equal(svc.ocorrencias.length, 0);
+  assert.equal(svc.pendentes.length, 0);
+  assert.equal((await svc.listarAtivas()).length, 0);
+  assert.ok(remocoes.includes('@santo_andre_routing:ocorrencias_cache_v1'));
+  assert.ok(remocoes.includes('@santo_andre_routing:ocorrencias_pendentes_v1'));
+  assert.equal(await svc.obterOuCriarUsuarioId(), uid);
+  assert.deepEqual(await svc.carregarPreferencias(), prefs);
+
+  // Também funciona em storage sem removeItem (fallback para '[]')
+  const storageSemRemove = criarStorageMemoria();
+  const net2 = new MobileNetworkServiceCore({
+    storage: storageSemRemove,
+    embeddedSnapshot: snapshot,
+    allowWfs: false,
+    autoUpdate: { enabled: false },
+    fetchImpl: async () => { throw new Error('offline'); },
+  });
+  const svc2 = new OcorrenciasMobileService({ storage: storageSemRemove, networkService: net2 });
+  await svc2.registrar({
+    categoria: 'alagamento',
+    classificacao: 'evita',
+    temporalidade: 'temporaria',
+    latitude: pontoSul[1],
+    longitude: pontoSul[0],
+    featureIdPreferido: seg.principal.featureId,
+  }, { usuarioId: 'apk-u-sem-rem' });
+  assert.equal((await svc2.listarAtivas()).length, 1);
+  await svc2.limparDadosLocais();
+  assert.equal((await svc2.listarAtivas()).length, 0);
+  assert.equal(storageSemRemove.map.get('@santo_andre_routing:ocorrencias_cache_v1'), '[]');
+  assert.equal(storageSemRemove.map.get('@santo_andre_routing:ocorrencias_pendentes_v1'), '[]');
+});

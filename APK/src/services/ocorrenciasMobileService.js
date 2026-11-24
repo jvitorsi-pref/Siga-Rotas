@@ -122,6 +122,29 @@ export class OcorrenciasMobileService {
     }
   }
 
+  /**
+   * Remove do dispositivo apenas o cache local de ocorrências e a fila local
+   * pendente de envio, preservando identificação do usuário, preferências do
+   * trajeto e dados já existentes no servidor remoto.
+   */
+  async limparDadosLocais() {
+    this.ocorrencias = [];
+    this.pendentes = [];
+    this.carregado = true;
+    for (const chave of [STORAGE_KEY_OCORRENCIAS_CACHE, STORAGE_KEY_OCORRENCIAS_PENDENTES]) {
+      try {
+        if (typeof this.storage?.removeItem === 'function') {
+          await this.storage.removeItem(chave);
+        } else if (typeof this.storage?.setItem === 'function') {
+          await this.storage.setItem(chave, '[]');
+        }
+      } catch {
+        /* ignora falha ao remover armazenamento local */
+      }
+    }
+    return { ok: true };
+  }
+
   _filtrarAtivas(lista) {
     return (lista || []).filter(
       (o) =>
