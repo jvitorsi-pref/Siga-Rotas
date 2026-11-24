@@ -408,7 +408,7 @@ export default function App() {
     });
     const appStateSub = AppState?.addEventListener?.('change', (nextState) => {
       if (nextState === 'active') {
-        void mobileNetworkService.syncWithServer().then(() => {
+        void mobileNetworkService.checkForChanges({ deep: false }).then(() => {
           void svcOcc.listarAtivas().then((ativas) => setOcorrencias(ativas)).catch(() => {});
           void svcCampo.sincronizarPendentes().catch(() => {});
         }).catch(() => {});

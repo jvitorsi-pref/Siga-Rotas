@@ -736,9 +736,12 @@ export class MobileNetworkServiceCore {
         maxRetries: this.options.autoUpdate.checkMaxRetries,
       });
       serverTotal = check.serverTotal;
-      changed = check.changed;
+      const emSnapshotInicial = this.state?.source === 'snapshot';
+      changed = check.changed || emSnapshotInicial;
       if (changed) {
-        reason = `total de feições alterado (${known} → ${serverTotal})`;
+        reason = check.changed
+          ? `total de feições alterado (${known} → ${serverTotal})`
+          : 'rede sincronizada automaticamente com o GeoServer WFS';
         await this.refreshFromWfs();
       } else {
         reason = 'total de feições inalterado';
@@ -764,6 +767,9 @@ export class MobileNetworkServiceCore {
     if (this.timers.length) return;
 
     const { checkIntervalMs, deepCheckIntervalMs } = this.options.autoUpdate;
+
+    // Dispara verificação imediata em segundo plano logo após a abertura do app
+    this.checkForChanges({ deep: false }).catch(() => {});
 
     this.timers.push(
       setInterval(() => {
