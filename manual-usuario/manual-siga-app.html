@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manual Rápido — SIGA APP</title>
+  <style>
+    :root {
+      --bg: #f4f7f5;
+      --card: #ffffff;
+      --text: #1f2328;
+      --muted: #475569;
+      --border: #d0d7de;
+      --accent: #045127;
+      --accent-soft: #e6f4ea;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      font-size: 16px;
+    }
+    .page {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 24px 18px 48px;
+      display: grid;
+      gap: 20px;
+    }
+    .cover {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-top: 6px solid var(--accent);
+      border-radius: 14px;
+      padding: 22px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .cover img { height: 48px; width: auto; }
+    .cover h1 { margin: 0 0 6px; font-size: 28px; color: #0f172a; }
+    .cover p { margin: 0; color: var(--muted); font-size: 16.5px; }
+    .print-btn {
+      background: var(--accent);
+      color: #ffffff;
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px 22px;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .step-badge {
+      display: inline-block;
+      background: var(--accent);
+      color: #ffffff;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      padding: 4px 12px;
+      border-radius: 999px;
+      margin-bottom: 8px;
+    }
+    h2 { margin: 0 0 12px; font-size: 22px; color: #0f172a; }
+    .shot {
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      display: block;
+      margin: 10px 0 14px;
+    }
+    ol.steps {
+      margin: 0;
+      padding-left: 22px;
+      display: grid;
+      gap: 8px;
+    }
+    ol.steps li { font-size: 16px; }
+    .icons-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .icon-item {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      background: #f8fafc;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .icon-pill {
+      min-width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      color: var(--accent);
+      flex: none;
+    }
+    .icon-pill--green {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #ffffff;
+    }
+    .faq {
+      display: grid;
+      gap: 10px;
+    }
+    .faq-item {
+      background: var(--accent-soft);
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      padding: 10px 14px;
+    }
+    .note {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      color: var(--muted);
+      font-size: 15px;
+    }
+    @media print {
+      body { background: #ffffff; font-size: 14px; }
+      .page { max-width: none; padding: 0; gap: 14px; }
+      .print-btn { display: none; }
+      .card, .cover { border-color: #cbd5e1; box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="cover">
+      <div>
+        <img src="data:image/png;base64," alt="SIGA APP — Santo André">
+        <h1>Manual Rápido de Uso</h1>
+        <p>Guia simples e visual para montar rotas a pé pelas ruas de Santo André.</p>
+      </div>
+      <button type="button" class="print-btn" onclick="window.print()">Imprimir / Salvar PDF</button>
+    </header>
+
+    <section class="note">
+      <strong>Funciona no celular e no computador:</strong> as imagens abaixo mostram a tela do celular, mas no navegador do computador os ícones do mapa têm o mesmo desenho e fazem a mesma coisa.
+    </section>
+
+    <section class="card">
+      <h2>O que faz cada botão do mapa?</h2>
+      <div class="icons-grid">
+        <div class="icon-item">
+          <div class="icon-pill icon-pill--green">+ −</div>
+          <div><strong>Zoom</strong><br>Aproxima (<strong>+</strong>) ou afasta (<strong>−</strong>) as ruas do mapa.</div>
+        </div>
+        <div class="icon-item">
+          <div class="icon-pill" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+          <div><strong>Ocorrências</strong><br>Abre as opções <strong>Nova Ocorrência</strong> (avisar problema) e <strong>Visualizar</strong> (mostrar/esconder avisos).</div>
+        </div>
+        <div class="icon-item">
+          <div class="icon-pill" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>
+          </div>
+          <div><strong>Centralizar rede</strong><br>Volta o mapa para mostrar todas as ruas da cidade.</div>
+        </div>
+        <div class="icon-item">
+          <div class="icon-pill" style="padding:0 8px;font-size:11px;">Legenda</div>
+          <div><strong>Legenda das cores</strong><br>Mostra o significado das linhas e pontos. Toque no quadro para fechar.</div>
+        </div>
+        <div class="icon-item">
+          <div class="icon-pill" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><polygon points="1,3 5,1 10,3 15,1 15,12 10,14 5,12 1,14"/><line x1="5" y1="1" x2="5" y2="12"/><line x1="10" y1="3" x2="10" y2="14"/></svg>
+          </div>
+          <div><strong>Marcar no mapa</strong><br>Deixa você escolher o endereço tocando direto na rua.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <span class="step-badge">PASSO 1 DE 5</span>
+      <h2>Conhecer a tela e mexer no mapa</h2>
+      <img class="shot" src="imagens/01-tela-inicial-mapa.png" alt="Passo 1: Conhecer a tela inicial e os botões do mapa">
+      <ol class="steps">
+        <li><strong>Escolher o tamanho da tela:</strong> toque em <strong>Dividido</strong> (mapa e botões juntos), <strong>Mapa</strong> (mapa grande) ou <strong>Painel</strong> (só a lista).</li>
+        <li><strong>Trocar desenho por foto:</strong> toque em <strong>Mapa padrão</strong> (desenho das ruas) ou <strong>Satélite</strong> (foto aérea, precisa de internet).</li>
+        <li><strong>Aproximar ou afastar:</strong> toque no <strong>+</strong> para chegar perto ou no <strong>−</strong> para afastar.</li>
+        <li><strong>Centralizar e ver cores:</strong> use a <strong>mira</strong> para voltar às ruas da cidade, <strong>Legenda</strong> para ver as cores e o <strong>triângulo</strong> para alertas.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <span class="step-badge">PASSO 2 DE 5</span>
+      <h2>Escolher os lugares e calcular a rota</h2>
+      <img class="shot" src="imagens/02-escolher-pontos-e-calcular.png" alt="Passo 2: Escolher os lugares e calcular a rota">
+      <ol class="steps">
+        <li><strong>Marcar no mapa (mais fácil):</strong> toque no <strong>ícone de mapa</strong> ao lado do ponto <strong>A</strong> (ou <strong>B</strong>) e toque direto na rua no mapa. O ponto <strong>A</strong> é sempre sua saída e sua volta.</li>
+        <li><strong>Colocar mais paradas:</strong> toque em <strong>+ Adicionar parada</strong> para incluir outros lugares (B, C…).</li>
+        <li><strong>Calcular o caminho:</strong> <strong>Calcular rota</strong> segue a ordem que você colocou; <strong>Calcular rota otimizada</strong> organiza na sequência mais curta.</li>
+        <li><strong>Recomeçar:</strong> toque em <strong>Limpar</strong> para apagar os endereços e começar outra rota.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <span class="step-badge">PASSO 3 DE 5</span>
+      <h2>Ver a rota, abrir a legenda e ligar o GPS</h2>
+      <img class="shot" src="imagens/03-ver-rota-legenda-e-gps.png" alt="Passo 3: Ver a rota no mapa, abrir a legenda e iniciar GPS">
+      <ol class="steps">
+        <li><strong>Entender o desenho:</strong> <strong>A</strong> é onde sai e volta; <strong>B</strong> e <strong>C</strong> são as paradas. A linha forte é a ida e a linha tracejada é o retorno.</li>
+        <li><strong>Abrir e fechar a Legenda:</strong> toque em <strong>Legenda</strong> para abrir este quadro explicativo no lugar do botão; toque nele de novo para fechar.</li>
+        <li><strong>Centralizar o trajeto:</strong> toque em <strong>Rota</strong> para ajustar o zoom mostrando todo o caminho na tela.</li>
+        <li><strong>Ligar o GPS na rua:</strong> ative a localização do aparelho e toque em <strong>Iniciar GPS real</strong>, mantendo o aplicativo aberto durante a caminhada.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <span class="step-badge">PASSO 4 DE 5</span>
+      <h2>Ver e avisar problemas na rua</h2>
+      <img class="shot" src="imagens/04-ocorrencias-ver-e-avisar.png" alt="Passo 4: Abrir menu de ocorrências para visualizar ou avisar problema na via">
+      <ol class="steps">
+        <li><strong>Abrir o menu de alertas:</strong> toque no ícone do <strong>triângulo</strong> no canto inferior direito do mapa.</li>
+        <li><strong>Nova Ocorrência:</strong> toque aqui e depois toque na rua com buraco, obra, alagamento ou bloqueio.</li>
+        <li><strong>Visualizar:</strong> toque para mostrar (<strong>Ativo</strong>) ou esconder (<strong>Oculto</strong>) os avisos no mapa. Toque numa bolinha para ler detalhes.</li>
+        <li><strong>Registrar na via:</strong> escolha o tipo de problema e toque no botão verde <strong>Registrar na via</strong>.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <span class="step-badge">PASSO 5 DE 5</span>
+      <h2>Usar sem internet e atualizar as ruas</h2>
+      <img class="shot" src="imagens/05-salvar-offline-e-atualizar-ruas.png" alt="Passo 5: Salvar rotas offline, exportar GPX e atualizar ruas">
+      <ol class="steps">
+        <li><strong>Guardar para usar sem internet:</strong> depois de calcular, toque no botão verde <strong>Salvar rotas offline</strong>.</li>
+        <li><strong>Abrir rota salva:</strong> toque em <strong>Rotas salvas</strong> e escolha a rota guardada no aparelho.</li>
+        <li><strong>Exportar GPX:</strong> salva o arquivo do caminho no aparelho para guardar ou enviar a outra pessoa.</li>
+        <li><strong>Atualizar ruas:</strong> em <strong>Rede viária</strong>, toque em <strong>Atualizar ruas</strong> quando estiver no Wi-Fi para baixar ruas novas.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>Ajuda rápida — &ldquo;E se acontecer isso?&rdquo;</h2>
+      <div class="faq">
+        <div class="faq-item"><strong>Não sei digitar código ou coordenada:</strong> toque no ícone de mapa ao lado do ponto e toque direto na rua no mapa.</div>
+        <div class="faq-item"><strong>O mapa foi parar longe ou sumiu:</strong> toque na mira (centralizar) para voltar a Santo André, ou em <strong>Rota</strong> para enquadrar seu caminho.</div>
+        <div class="faq-item"><strong>Estou na rua sem internet:</strong> as rotas guardadas em <strong>Salvar rotas offline</strong> e o cálculo pelas ruas salvas continuam funcionando.</div>
+        <div class="faq-item"><strong>Quero fazer outro caminho do zero:</strong> toque em <strong>Limpar</strong> para apagar os pontos atuais.</div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
