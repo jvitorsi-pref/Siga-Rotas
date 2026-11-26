@@ -18,7 +18,7 @@ export function criarNavegacaoMobile({
   let controlador = null, fonte = null, resposta = null;
   let geracao = 0, descartada = false, velocidade = 5, aviso = '', concluida = false;
   let recalculo = null, revisaoRecalculo = 0, revisaoAtivacao = 0, modo = 'simulacao', iniciando = false;
-  let execucaoCampoAtiva = false;
+  let execucaoCampoAtiva = false, segundoPlanoAtivo = null;
 
   function snapshot() {
     const e = controlador?.estado;
@@ -26,7 +26,7 @@ export function criarNavegacaoMobile({
       ...e, posicao: e.posicao ? { ...e.posicao } : null,
       paradasConcluidas: [...e.paradasConcluidas],
       instrucao: instrucaoAtual(controlador.plano, e),
-      modo, iniciando, aviso, concluida, velocidadeSim: velocidade,
+      modo, iniciando, segundoPlanoAtivo, aviso, concluida, velocidadeSim: velocidade,
       sinal: fonte?.sinal !== false,
       inicios: controlador.plano.pernas.map((p, i) => ({
         titulo: `${p.de} → ${p.para}`, metros: controlador.plano.cum[controlador.plano.limites[i]] || 0,
@@ -82,7 +82,16 @@ export function criarNavegacaoMobile({
       if (resultado?.cancelado) return resultado;
       iniciando = false;
       if (resultado?.ok === false) {
-        ctrl.pausar(); aviso = resultado.message || 'Não foi possível iniciar a fonte de posição.';
+        ctrl.pausar();
+        segundoPlanoAtivo = null;
+        aviso = resultado.message || 'Não foi possível iniciar a fonte de posição.';
+      } else if (modo === 'gps') {
+        segundoPlanoAtivo = resultado?.segundoPlano ?? fonte?.segundoPlanoAtivo ?? null;
+        if (segundoPlanoAtivo === false) {
+          aviso = 'GPS real — ativo somente com o aplicativo aberto (segundo plano indisponível).';
+        } else if (segundoPlanoAtivo === true) {
+          aviso = 'GPS real ativo — continua registrando sua rota mesmo em segundo plano até você pausar ou encerrar.';
+        }
       }
       emitir(); return resultado?.ok === false ? resultado : { ok: true };
     };
@@ -101,7 +110,7 @@ export function criarNavegacaoMobile({
       if (!plano.total || plano.xy.length < 4 || plano.xy.some(n => !Number.isFinite(n))) return { ok: false, message: 'Rota sem geometria válida.' };
       if (!['gps', 'simulacao'].includes(modoSolicitado)) return { ok: false, message: 'Fonte de posição inválida.' };
       if (modoSolicitado === 'gps' && !criarFonteGPS) return { ok: false, message: 'Fonte GPS nativa indisponível.' };
-      cancelarRecalculo(); pararFonte(); modo = modoSolicitado; iniciando = false;
+      cancelarRecalculo(); pararFonte(); modo = modoSolicitado; iniciando = false; segundoPlanoAtivo = null;
       if (execucaoCampoAtiva) {
         execucaoCampoAtiva = false;
         aoEncerrarExecucao?.({ concluida: false });
@@ -155,7 +164,7 @@ export function criarNavegacaoMobile({
       return ativarFonte(true);
     },
     encerrar() {
-      cancelarRecalculo(); pararFonte(); iniciando = false;
+      cancelarRecalculo(); pararFonte(); iniciando = false; segundoPlanoAtivo = null;
       if (execucaoCampoAtiva) {
         execucaoCampoAtiva = false;
         aoEncerrarExecucao?.({ concluida: false });

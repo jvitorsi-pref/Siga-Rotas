@@ -247,7 +247,7 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
 
       {(isSimulating || isGPS) && (
         <View pointerEvents="none" style={{ position: 'absolute', top: 50, left: 12, right: 58, padding: 7, borderWidth: 1, borderColor: COLORS.accent, backgroundColor: COLORS.panel, borderRadius: 7 }}>
-          <Text style={{ color: COLORS.accent, fontSize: 11, fontWeight: '700' }}>{isSimulating ? 'MODO DE TESTE — posição simulada, não é GPS real' : 'GPS real — navegação em primeiro plano'}</Text>
+          <Text style={{ color: COLORS.accent, fontSize: 11, fontWeight: '700' }}>{isSimulating ? 'MODO DE TESTE — posição simulada, não é GPS real' : 'GPS real — grava em segundo plano até encerrar'}</Text>
         </View>
       )}
       {!mapReady && (
