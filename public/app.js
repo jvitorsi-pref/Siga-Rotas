@@ -53,6 +53,19 @@ import {
   CLASSIFICACAO_META,
   CLASSIFICACOES,
 } from '../ocorrencias/catalogo.js';
+import {
+  PERIODOS_PLANEJAMENTO,
+  STATUS_VISITA,
+  STATUS_VISITA_META,
+  normalizarPeriodoPlanejamento,
+  normalizarStatusVisita,
+} from '../planejamento/modeloVisitas.js';
+import { gerarModeloPlanilhaVisitasXlsx } from '../planejamento/xlsxCodec.js';
+import { importarPlanilhaVisitas } from '../planejamento/importadorExcel.js';
+import {
+  planejarVisitasPeriodo,
+  sugerirVisitasProximasAoTrajeto,
+} from '../planejamento/planejamentoVisitas.js';
 import { normalizarPreferencias } from '../ocorrencias/preferencias.js';
 import {
   estiloClassificacao,
@@ -79,14 +92,20 @@ import {
   const fetch = (url, init) => clienteRede.fetchApi(url, init);
 
   const ol = window.ol;
-  document.querySelectorAll('[data-layout-mode]').forEach((button) => {
-    button.addEventListener('click', () => {
-      document.querySelector('.app').dataset.layout = button.dataset.layoutMode;
-      document.querySelectorAll('[data-layout-mode]').forEach((item) => {
-        item.setAttribute('aria-pressed', String(item === button));
-      });
-    });
-  });
+  const appEl = document.querySelector('.app');
+  const setSheetState = (next) => {
+    if (!appEl) return;
+    const norm = next === 'collapsed' || next === 'expanded' ? next : 'mid';
+    appEl.dataset.sheetState = norm;
+  };
+  const ehViewportMovel = () => typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 900px)').matches;
+  const obterInsetInferiorMapa = () => {
+    if (!ehViewportMovel() || !appEl) return 0;
+    const st = appEl.dataset.sheetState || 'mid';
+    if (st === 'collapsed') return 80;
+    if (st === 'expanded') return Math.round(window.innerHeight * 0.45);
+    return Math.round(window.innerHeight * 0.48);
+  };
 
   /** Aplica alfa a uma cor hexadecimal (usada no destaque da navegação). */
   function corComAlfa(hex, alfa) {
@@ -130,6 +149,13 @@ import {
     preferencias: lerPreferenciasWeb(window.localStorage),
     ocorrencias: [],
     mostrarOcorrenciasMapa: true,
+    occCategoryFilter: null,
+    localizacaoAtual: null,
+    pacientesTerritorio: [],
+    planoVisitas: null,
+    periodoPlanejamento: PERIODOS_PLANEJAMENTO.SEMANAL,
+    filtroStatusVisitas: 'todos',
+    previewImportacaoPlanilha: null,
     rotasDisponiveis: [],
     rotaSelecionadaId: null,
     comparacaoAlternativas: null,
@@ -186,11 +212,40 @@ import {
     occMapToggle: $('#occ-map-toggle'),
     occToggleStatus: $('#occ-toggle-status'),
     occMapAdd: $('#occ-map-add'),
+    occCatFilters: $('#occ-cat-filters'),
     occCount: $('#occ-count'),
-    fitNetworkBtn: $('#fit-network-btn'),
+    currentLocationBtn: $('#current-location-btn'),
     legendToggleBtn: $('#legend-toggle-btn'),
     legendBox: $('#legend-box'),
     legendAlt: $('#legend-alt'),
+    legendVisits: $('#legend-visits'),
+    sheetHandle: $('#sheet-handle'),
+    sheetSummaryBtn: $('#sheet-summary-btn'),
+    sheetSummaryText: $('#sheet-summary-text'),
+    sheetSummaryBadge: $('#sheet-summary-badge'),
+    sheetCollapseBtn: $('#sheet-collapse-btn'),
+    sheetExpandBtn: $('#sheet-expand-btn'),
+    visitPacientesCount: $('#visit-pacientes-count'),
+    visitSummaryBadge: $('#visit-summary-badge'),
+    visitImportBtn: $('#visit-import-btn'),
+    visitTemplateBtn: $('#visit-template-btn'),
+    visitFileInput: $('#visit-file-input'),
+    visitPlanActions: $('#visit-plan-actions'),
+    visitPlanBtn: $('#visit-plan-btn'),
+    visitApplyRouteBtn: $('#visit-apply-route-btn'),
+    visitFeedback: $('#visit-feedback'),
+    visitSuggestionsBox: $('#visit-suggestions-box'),
+    visitStatusFilters: $('#visit-status-filters'),
+    visitList: $('#visit-list'),
+    visitClearBtn: $('#visit-clear-btn'),
+    visitImportModal: $('#visit-import-modal'),
+    visitImportArquivo: $('#visit-import-arquivo'),
+    visitImportStats: $('#visit-import-stats'),
+    visitImportPreviewLista: $('#visit-import-preview-lista'),
+    visitImportAvisos: $('#visit-import-avisos'),
+    visitImportFechar: $('#visit-import-fechar'),
+    visitImportCancelar: $('#visit-import-cancelar'),
+    visitImportConfirmar: $('#visit-import-confirmar'),
     routeAlternatives: $('#route-alternatives'),
     routeOccurrences: $('#route-occurrences'),
     occModal: $('#occ-modal'),
@@ -687,6 +742,84 @@ import {
     },
   });
 
+  // ── Camada de localização atual (fora de navegação ativa) ──
+  const currentLocSource = new ol.source.Vector({ features: [] });
+  const currentLocLayer = new ol.layer.Vector({
+    source: currentLocSource,
+    zIndex: 29,
+    style: (feature) => {
+      const kind = feature.get('kind');
+      if (kind === 'accuracy') {
+        return new ol.style.Style({
+          fill: new ol.style.Fill({ color: 'rgba(14, 165, 233, 0.14)' }),
+          stroke: new ol.style.Stroke({ color: 'rgba(2, 132, 199, 0.48)', width: 1.5 }),
+        });
+      }
+      return [
+        new ol.style.Style({
+          image: new ol.style.Circle({
+            radius: 15,
+            fill: new ol.style.Fill({ color: 'rgba(14, 165, 233, 0.24)' }),
+          }),
+        }),
+        new ol.style.Style({
+          image: new ol.style.Circle({
+            radius: 8.5,
+            fill: new ol.style.Fill({ color: '#0ea5e9' }),
+            stroke: new ol.style.Stroke({ color: '#ffffff', width: 3 }),
+          }),
+        }),
+      ];
+    },
+  });
+
+  // ── Camada de visitas planejadas e sugestões próximas (ACS) ──
+  const visitSource = new ol.source.Vector({ features: [] });
+  const visitLayer = new ol.layer.Vector({
+    source: visitSource,
+    zIndex: 24,
+    style: (feature) => {
+      const st = feature.get('status');
+      const fill =
+        st === STATUS_VISITA.OPORTUNISTICA_SUGERIDA
+          ? '#7c3aed'
+          : st === STATUS_VISITA.REALIZADA
+            ? '#15803d'
+            : st === STATUS_VISITA.NAO_REALIZADA
+              ? '#dc2626'
+              : '#0f766e';
+      const glyph =
+        st === STATUS_VISITA.OPORTUNISTICA_SUGERIDA
+          ? '+'
+          : st === STATUS_VISITA.REALIZADA
+            ? '✓'
+            : st === STATUS_VISITA.NAO_REALIZADA
+              ? '✕'
+              : 'P';
+      const shape = typeof ol.style.RegularShape === 'function'
+        ? new ol.style.RegularShape({
+            points: 4,
+            radius: 12,
+            angle: 0,
+            fill: new ol.style.Fill({ color: fill }),
+            stroke: new ol.style.Stroke({ color: '#ffffff', width: 2.2 }),
+          })
+        : new ol.style.Circle({
+            radius: 10,
+            fill: new ol.style.Fill({ color: fill }),
+            stroke: new ol.style.Stroke({ color: '#ffffff', width: 2.2 }),
+          });
+      return new ol.style.Style({
+        image: shape,
+        text: new ol.style.Text({
+          text: glyph,
+          font: 'bold 11px sans-serif',
+          fill: new ol.style.Fill({ color: '#ffffff' }),
+        }),
+      });
+    },
+  });
+
   // a casca fica ABAIXO do núcleo da rede, e ambos abaixo da rota
   map.addLayer(axisCasingLayer);
   map.addLayer(axisLayer);
@@ -695,7 +828,9 @@ import {
   map.addLayer(routeLayer);
   map.addLayer(gpsTrailLayer);
   map.addLayer(occClusterLayer);
+  map.addLayer(visitLayer);
   map.addLayer(routeObsLayer);
+  map.addLayer(currentLocLayer);
   map.addLayer(markerLayer);
 
   // ── Arrastar os pontos no mapa ──────────────────────────────────────────
@@ -1203,9 +1338,23 @@ import {
     if (framed) state.userMoved = true;
   });
 
-  // Clique em marcador/cluster de ocorrência, rota alternativa ou trecho da rota
+  // Clique em marcador/cluster de ocorrência, visita planejada, rota alternativa ou trecho da rota
   map.on('click', (evt) => {
     if (state.picking || state.pickingOccurrence || state.pickingRouteObs) return;
+
+    // 0. Visita planejada / sugerida no mapa
+    const visitFeat = map.forEachFeatureAtPixel(
+      evt.pixel,
+      (f) => f,
+      { layerFilter: (l) => l === visitLayer, hitTolerance: 8 },
+    );
+    if (visitFeat && visitFeat.get('visitaId')) {
+      const box = document.getElementById('visit-box');
+      if (box) box.open = true;
+      if (ehViewportMovel()) setSheetState('mid');
+      setStatus(`Visita selecionada: ${visitFeat.get('nome') || visitFeat.get('visitaId')}.`, 'idle');
+      return;
+    }
 
     // 1. Ocorrências no mapa (cluster expande ao clicar; item único abre detalhes)
     if (state.mostrarOcorrenciasMapa) {
@@ -1483,9 +1632,43 @@ import {
     }
   }
 
+  function filtrarOcorrenciasWeb(lista) {
+    const filtro = state.occCategoryFilter;
+    if (!filtro) return lista;
+    return lista.filter((occ) => {
+      if (!occ) return false;
+      if (occ.categoria === filtro) return true;
+      if (filtro === 'escada' && occ.categoria === 'escadaria') return true;
+      return false;
+    });
+  }
+
+  function renderizarFiltrosCategoriaOcorrencia() {
+    if (!els.occCatFilters) return;
+    const botoes = [
+      { id: '', rotulo: 'Todas' },
+      ...CATEGORIAS_OCORRENCIA.map((c) => ({ id: c.id, rotulo: c.icone + ' ' + c.rotulo })),
+    ];
+    els.occCatFilters.innerHTML = botoes
+      .map((b) => {
+        const ativa = (state.occCategoryFilter || '') === b.id;
+        return (
+          '<button type="button" class="occ-cat-filter' +
+          (ativa ? ' is-active' : '') +
+          '" data-occ-cat="' +
+          escapeHtml(b.id) +
+          '">' +
+          escapeHtml(b.rotulo) +
+          '</button>'
+        );
+      })
+      .join('');
+  }
+
   function renderizarOcorrenciasMapa() {
     occSource.clear();
-    const lista = Array.isArray(state.ocorrencias) ? state.ocorrencias : [];
+    const todas = Array.isArray(state.ocorrencias) ? state.ocorrencias : [];
+    const lista = filtrarOcorrenciasWeb(todas);
     if (els.occCount) els.occCount.textContent = String(lista.length);
     for (const occ of lista) {
       const lat = Number(occ?.localizacao?.latitude);
@@ -1499,6 +1682,7 @@ import {
       occSource.addFeature(feat);
     }
     occClusterLayer.setVisible(state.mostrarOcorrenciasMapa);
+    renderizarFiltrosCategoriaOcorrencia();
   }
 
   function destacarSegmentosOcorrencias(lista) {
@@ -1818,18 +2002,102 @@ import {
       occClusterLayer.setVisible(state.mostrarOcorrenciasMapa);
     });
   }
-  if (els.fitNetworkBtn) {
-    els.fitNetworkBtn.addEventListener('click', () => {
-      fecharMenuOcorrencias();
-      const extent = axisSource.getExtent();
-      if (!isEmpty(extent)) {
-        map.getView().fit(extent, {
-          padding: [40, 40, 40, 40],
-          duration: 250,
-          maxZoom: 15,
-        });
+  function centralizarNoPontoComInset(lon, lat, minZoom = 17) {
+    const view = map.getView();
+    const z = Math.max(view.getZoom() || 15, minZoom);
+    const olPt = ol.proj.fromLonLat([lon, lat]);
+    const inset = obterInsetInferiorMapa();
+    let alvo = olPt;
+    if (inset > 0 && typeof view.getResolutionForZoom === 'function') {
+      const res = view.getResolutionForZoom(z);
+      if (Number.isFinite(res)) {
+        alvo = [olPt[0], olPt[1] - (inset / 2) * res];
       }
+    }
+    view.animate({ center: alvo, zoom: z, duration: 450 });
+  }
+
+  function atualizarMarcadorLocalizacaoAtual(pos) {
+    currentLocSource.clear();
+    if (!pos || !Number.isFinite(pos.latitude) || !Number.isFinite(pos.longitude)) return;
+    const coord3857 = ol.proj.fromLonLat([pos.longitude, pos.latitude]);
+    if (Number.isFinite(pos.precisao) && pos.precisao > 0 && ol.geom && typeof ol.geom.Circle === 'function') {
+      const raio3857 = Math.min(350, pos.precisao) / Math.max(0.25, Math.cos((pos.latitude * Math.PI) / 180));
+      currentLocSource.addFeature(
+        new ol.Feature({
+          geometry: new ol.geom.Circle(coord3857, raio3857),
+          kind: 'accuracy',
+        }),
+      );
+    }
+    currentLocSource.addFeature(
+      new ol.Feature({
+        geometry: new ol.geom.Point(coord3857),
+        kind: 'dot',
+      }),
+    );
+  }
+
+  function solicitarLocalizacaoAtualWeb() {
+    fecharMenuOcorrencias();
+    if (typeof navigator === 'undefined' || !navigator.geolocation || typeof navigator.geolocation.getCurrentPosition !== 'function') {
+      setStatus('Geolocalização não suportada neste navegador ou contexto.', 'err');
+      return;
+    }
+    if (els.currentLocationBtn) {
+      els.currentLocationBtn.disabled = true;
+      els.currentLocationBtn.classList.add('is-locating');
+    }
+    setStatus('Obtendo localização GPS atual…', 'busy');
+    navigator.geolocation.getCurrentPosition(
+      (geo) => {
+        if (els.currentLocationBtn) {
+          els.currentLocationBtn.disabled = false;
+          els.currentLocationBtn.classList.remove('is-locating');
+        }
+        const latitude = geo?.coords?.latitude;
+        const longitude = geo?.coords?.longitude;
+        const precisao = geo?.coords?.accuracy ?? null;
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+          setStatus('Não foi possível interpretar sua posição GPS.', 'err');
+          return;
+        }
+        state.localizacaoAtual = { latitude, longitude, precisao };
+        atualizarMarcadorLocalizacaoAtual(state.localizacaoAtual);
+        if (ehViewportMovel() && appEl?.dataset.sheetState === 'expanded') {
+          setSheetState('mid');
+        }
+        centralizarNoPontoComInset(longitude, latitude, 17);
+        const precTxt = Number.isFinite(precisao) ? ` (±${Math.round(precisao)} m)` : '';
+        setStatus(`Mapa centralizado na sua localização atual${precTxt}.`, 'ok');
+      },
+      (err) => {
+        if (els.currentLocationBtn) {
+          els.currentLocationBtn.disabled = false;
+          els.currentLocationBtn.classList.remove('is-locating');
+        }
+        let msg = 'Não foi possível obter sua localização atual.';
+        if (err?.code === 1) msg = 'Permissão de localização negada. Libere o acesso ao GPS no navegador.';
+        else if (err?.code === 2) msg = 'GPS ou sinal de localização indisponível no momento.';
+        else if (err?.code === 3) msg = 'Tempo esgotado ao buscar o sinal GPS atual.';
+        setStatus(msg, 'err');
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 },
+    );
+  }
+
+  if (els.occCatFilters) {
+    els.occCatFilters.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-occ-cat]');
+      if (!btn) return;
+      const cat = btn.dataset.occCat || null;
+      state.occCategoryFilter = state.occCategoryFilter === cat ? null : cat;
+      renderizarOcorrenciasMapa();
     });
+  }
+
+  if (els.currentLocationBtn) {
+    els.currentLocationBtn.addEventListener('click', solicitarLocalizacaoAtualWeb);
   }
   if (els.legendToggleBtn) {
     els.legendToggleBtn.addEventListener('click', abrirLegenda);
@@ -2820,6 +3088,8 @@ import {
 
     // desenha a rota (no circuito, o retorno à origem vai tracejado)
     desenharRota(data, opcoes);
+    if (typeof atualizarResumoSheetWeb === 'function') atualizarResumoSheetWeb();
+    if (typeof renderizarPlanejamentoVisitasWeb === 'function') renderizarPlanejamentoVisitasWeb();
 
     // Salvamento offline acontece EXCLUSIVAMENTE quando o usuário clicar em "Salvar rotas offline"
     if (els.saveRouteOffline) {
@@ -3153,6 +3423,8 @@ import {
     routeSource.clear();
     altRouteSource.clear();
     occSegmentHighlightSource.clear();
+    if (typeof atualizarResumoSheetWeb === 'function') atualizarResumoSheetWeb();
+    if (typeof renderizarPlanejamentoVisitasWeb === 'function') renderizarPlanejamentoVisitasWeb();
     setStatus('Pronto', 'idle');
   });
 
@@ -3895,6 +4167,591 @@ import {
     });
   }
 
+  /* ─────────────── Planejamento de visitas (ACS) & bottom sheet móvel ─────────────── */
+
+  function atualizarResumoSheetWeb() {
+    if (!els.sheetSummaryText) return;
+    if (state.rotaAtual && state.rotaAtual.distance != null) {
+      const d = formatDistance(state.rotaAtual.distance);
+      els.sheetSummaryText.textContent = `Rota · ${d.v} ${d.u}`;
+    } else if (state.planoVisitas?.visitas?.length) {
+      els.sheetSummaryText.textContent = `Planejamento · ${state.planoVisitas.visitas.length} visita(s)`;
+    } else {
+      els.sheetSummaryText.textContent = 'Planejamento e trajeto';
+    }
+    if (els.sheetSummaryBadge) {
+      if (state.rotaAtual) {
+        els.sheetSummaryBadge.hidden = false;
+        els.sheetSummaryBadge.textContent = `${state.lista.pontos.length} ponto(s)`;
+      } else if (state.pacientesTerritorio.length) {
+        els.sheetSummaryBadge.hidden = false;
+        els.sheetSummaryBadge.textContent = `${state.pacientesTerritorio.length} pac.`;
+      } else {
+        els.sheetSummaryBadge.hidden = true;
+      }
+    }
+  }
+
+  function mostrarFeedbackVisitas(msg, tipo = 'ok') {
+    if (!els.visitFeedback) return;
+    if (!msg) {
+      els.visitFeedback.hidden = true;
+      els.visitFeedback.textContent = '';
+      return;
+    }
+    els.visitFeedback.hidden = false;
+    els.visitFeedback.className = 'gpx-feedback gpx-feedback--' + (tipo === 'err' ? 'err' : 'ok');
+    els.visitFeedback.textContent = msg;
+  }
+
+  async function persistirPlanejamentoWeb() {
+    const payload = {
+      pacientes: state.pacientesTerritorio,
+      plano: state.planoVisitas,
+      periodo: state.periodoPlanejamento,
+      atualizadoEm: new Date().toISOString(),
+    };
+    try {
+      window.localStorage.setItem('siga_rotas_planejamento_visitas_v1', JSON.stringify(payload));
+    } catch {
+      /* ignora quota localStorage */
+    }
+    try {
+      const drv = campoWeb?.repositorio?.driver;
+      if (drv?.savePlanoVisitas) await drv.savePlanoVisitas(payload);
+    } catch {
+      /* mantém localStorage */
+    }
+  }
+
+  async function carregarPlanejamentoWeb() {
+    let carregado = null;
+    try {
+      const drv = campoWeb?.repositorio?.driver;
+      if (drv?.getPlanoVisitas) carregado = await drv.getPlanoVisitas();
+    } catch {
+      carregado = null;
+    }
+    if (!carregado) {
+      try {
+        const raw = window.localStorage.getItem('siga_rotas_planejamento_visitas_v1');
+        if (raw) carregado = JSON.parse(raw);
+      } catch {
+        carregado = null;
+      }
+    }
+    if (carregado && Array.isArray(carregado.pacientes)) {
+      state.pacientesTerritorio = carregado.pacientes;
+      state.periodoPlanejamento = normalizarPeriodoPlanejamento(carregado.periodo || 'semanal');
+      state.planoVisitas = carregado.plano || (carregado.pacientes.length
+        ? planejarVisitasPeriodo(carregado.pacientes, { periodo: state.periodoPlanejamento })
+        : null);
+    }
+    document.querySelectorAll('input[name="visit_periodo"]').forEach((r) => {
+      r.checked = r.value === state.periodoPlanejamento;
+    });
+    renderizarPlanejamentoVisitasWeb();
+    atualizarResumoSheetWeb();
+  }
+
+  function calcularSugestoesVisitasWeb() {
+    if (!state.rotaAtual?.geometry || !state.pacientesTerritorio.length) return [];
+    return sugerirVisitasProximasAoTrajeto({
+      pacientes: state.pacientesTerritorio,
+      visitasPlanejadas: state.planoVisitas?.visitas || [],
+      routeGeometry: state.rotaAtual.geometry,
+      raioMetros: 220,
+      limite: 5,
+    });
+  }
+
+  function renderizarMarcadoresVisitasMapa(visitasPlano, sugestoes) {
+    visitSource.clear();
+    const mapa = new Map();
+    for (const v of visitasPlano || []) {
+      if (v?.latitude != null && v?.longitude != null) mapa.set(v.pacienteId || v.id, v);
+    }
+    for (const s of sugestoes || []) {
+      const key = s.pacienteId || s.id;
+      if (!mapa.has(key) && s.latitude != null && s.longitude != null) {
+        mapa.set(key, { ...s, status: STATUS_VISITA.OPORTUNISTICA_SUGERIDA });
+      }
+    }
+    const lista = [...mapa.values()];
+    if (els.legendVisits) els.legendVisits.hidden = lista.length === 0;
+    for (const v of lista) {
+      visitSource.addFeature(
+        new ol.Feature({
+          geometry: new ol.geom.Point(ol.proj.fromLonLat([v.longitude, v.latitude])),
+          visitaId: v.id,
+          status: v.status,
+          nome: v.nome,
+        }),
+      );
+    }
+  }
+
+  function incluirVisitasNoTrajetoWeb(visitas) {
+    const validas = (visitas || []).filter((v) => v?.latitude != null && v?.longitude != null);
+    if (!validas.length) return;
+    for (const v of validas) {
+      const jaExiste = state.lista.pontos.some(
+        (p) =>
+          p.latitude != null &&
+          p.longitude != null &&
+          Math.abs(p.latitude - v.latitude) < 0.00005 &&
+          Math.abs(p.longitude - v.longitude) < 0.00005,
+      );
+      if (jaExiste) continue;
+      const vazio = state.lista.pontos.find((p) => p.latitude == null && p.tipo !== TIPOS.DESTINO);
+      const patch = {
+        latitude: v.latitude,
+        longitude: v.longitude,
+        enderecoDigital: v.enderecoDigital || '',
+        status: STATUS.CONVERTIDO,
+        origem: v.enderecoDigital ? 'codigo' : 'coordenada',
+        mensagem: `Visita: ${v.nome}`,
+      };
+      if (vazio) {
+        atualizarPonto(state.lista, vazio.id, patch);
+      } else {
+        adicionarPonto(state.lista, patch);
+      }
+    }
+    renderizarPontos();
+    atualizarMarcadores();
+    const msg =
+      validas.length === 1
+        ? `Visita "${validas[0].nome}" incluída no trajeto.`
+        : `${validas.length} visita(s) aplicada(s) ao trajeto.`;
+    mostrarFeedbackVisitas(msg, 'ok');
+    setStatus(msg, 'ok');
+    atualizarResumoSheetWeb();
+  }
+
+  function renderizarPlanejamentoVisitasWeb() {
+    const pacientes = state.pacientesTerritorio || [];
+    const visitasPlano = Array.isArray(state.planoVisitas?.visitas) ? state.planoVisitas.visitas : [];
+    const sugestoes = calcularSugestoesVisitasWeb();
+    const realizadas = visitasPlano.filter((v) => v.status === STATUS_VISITA.REALIZADA).length;
+    const planejadas = visitasPlano.filter((v) => v.status === STATUS_VISITA.PLANEJADA).length;
+
+    if (els.visitPacientesCount) els.visitPacientesCount.textContent = String(pacientes.length);
+    if (els.visitSummaryBadge) {
+      els.visitSummaryBadge.textContent = `${realizadas}/${visitasPlano.length} concluídas`;
+    }
+    if (els.visitPlanActions) els.visitPlanActions.hidden = pacientes.length === 0;
+    if (els.visitApplyRouteBtn) {
+      els.visitApplyRouteBtn.hidden = planejadas === 0;
+      els.visitApplyRouteBtn.textContent = `Aplicar à rota (${planejadas})`;
+    }
+    if (els.visitClearBtn) els.visitClearBtn.hidden = pacientes.length === 0;
+
+    renderizarMarcadoresVisitasMapa(visitasPlano, sugestoes);
+
+    if (els.visitSuggestionsBox) {
+      if (!sugestoes.length) {
+        els.visitSuggestionsBox.hidden = true;
+        els.visitSuggestionsBox.innerHTML = '';
+      } else {
+        els.visitSuggestionsBox.hidden = false;
+        els.visitSuggestionsBox.innerHTML =
+          '<div class="visit-suggestions__title">Sugestões próximas ao trajeto (' +
+          sugestoes.length +
+          ')</div>' +
+          sugestoes
+            .map(
+              (s) =>
+                '<div class="visit-suggestion-item">' +
+                '<div><b>' +
+                escapeHtml(s.nome) +
+                '</b><br /><small>' +
+                Math.round(s.distanciaTrajetoMetros || 0) +
+                ' m da rota · Prioridade ' +
+                Math.round(s.pontuacaoPrioridade || 0) +
+                '</small></div>' +
+                '<button type="button" class="mini mini--accent" data-visit-add-route="' +
+                escapeHtml(s.id) +
+                '">+ Rota</button>' +
+                '</div>',
+            )
+            .join('');
+      }
+    }
+
+    const combinados = [
+      ...visitasPlano,
+      ...sugestoes.filter((s) => !visitasPlano.some((v) => v.pacienteId === s.pacienteId)),
+    ];
+    if (els.visitStatusFilters) {
+      els.visitStatusFilters.hidden = combinados.length === 0;
+      els.visitStatusFilters.querySelectorAll('[data-visit-filter]').forEach((btn) => {
+        btn.classList.toggle('is-active', btn.dataset.visitFilter === state.filtroStatusVisitas);
+      });
+    }
+
+    if (els.visitList) {
+      if (!combinados.length) {
+        els.visitList.innerHTML =
+          '<p class="campo-vazio">Importe uma planilha Excel (.xlsx) com pacientes da área para gerar o cronograma diário, semanal ou mensal.</p>';
+        return;
+      }
+      const filtrados =
+        state.filtroStatusVisitas === 'todos'
+          ? combinados
+          : combinados.filter((v) => v.status === state.filtroStatusVisitas);
+      if (!filtrados.length) {
+        els.visitList.innerHTML = '<p class="campo-vazio">Nenhuma visita com este filtro.</p>';
+        return;
+      }
+      els.visitList.innerHTML = filtrados
+        .map((v) => {
+          const meta = STATUS_VISITA_META[v.status] || STATUS_VISITA_META[STATUS_VISITA.PLANEJADA];
+          const localTxt = v.enderecoDigital || `${Number(v.latitude).toFixed(5)}, ${Number(v.longitude).toFixed(5)}`;
+          const motivos = Array.isArray(v.motivosPrioridade) && v.motivosPrioridade.length
+            ? '<div class="visit-card__reasons">' + escapeHtml(v.motivosPrioridade.join(' · ')) + '</div>'
+            : '';
+          return (
+            '<div class="visit-card" data-visit-id="' +
+            escapeHtml(v.id) +
+            '">' +
+            '<div class="visit-card__top">' +
+            '<button type="button" class="visit-card__name" data-visit-focus="' +
+            escapeHtml(v.id) +
+            '">' +
+            escapeHtml(v.nome) +
+            '</button>' +
+            '<span class="campo-badge" style="color:' +
+            meta.cor +
+            ';background:' +
+            meta.fundo +
+            ';border-color:' +
+            meta.cor +
+            '">' +
+            escapeHtml(meta.rotulo) +
+            '</span></div>' +
+            '<div class="visit-card__meta">Prioridade ' +
+            Math.round(v.pontuacaoPrioridade || 0) +
+            ' · ' +
+            escapeHtml(localTxt) +
+            '</div>' +
+            motivos +
+            '<div class="visit-card__actions">' +
+            (v.status !== STATUS_VISITA.REALIZADA
+              ? '<button type="button" class="mini" data-visit-status="realizada">✓ Realizada</button>'
+              : '') +
+            (v.status !== STATUS_VISITA.NAO_REALIZADA
+              ? '<button type="button" class="mini" data-visit-status="nao_realizada">✕ Não realizada</button>'
+              : '') +
+            (v.status !== STATUS_VISITA.PLANEJADA
+              ? '<button type="button" class="mini" data-visit-status="planejada">Replanejar</button>'
+              : '') +
+            '<button type="button" class="mini" data-visit-add-route="' +
+            escapeHtml(v.id) +
+            '">+ Rota</button>' +
+            '</div></div>'
+          );
+        })
+        .join('');
+    }
+  }
+
+  function abrirModalImportacaoPlanilha(nomeArquivo, preview) {
+    state.previewImportacaoPlanilha = { arquivo: nomeArquivo, preview };
+    if (els.visitImportArquivo) els.visitImportArquivo.textContent = 'Arquivo: ' + nomeArquivo;
+    const regs = preview.registros || [];
+    const dups = preview.duplicadosIgnorados || [];
+    const errs = preview.erros || [];
+    const avisos = preview.avisos || [];
+    if (els.visitImportStats) {
+      els.visitImportStats.innerHTML =
+        `<div class="visit-import-stat"><b>${regs.length}</b><span>Válidos</span></div>` +
+        `<div class="visit-import-stat"><b>${dups.length}</b><span>Duplicados</span></div>` +
+        `<div class="visit-import-stat"><b>${errs.length}</b><span>Com erro</span></div>`;
+    }
+    if (els.visitImportPreviewLista) {
+      if (!regs.length) {
+        els.visitImportPreviewLista.innerHTML = '<p class="campo-vazio">Nenhum registro válido encontrado nesta planilha.</p>';
+      } else {
+        els.visitImportPreviewLista.innerHTML = regs
+          .slice(0, 8)
+          .map(
+            (r) =>
+              '<div class="visit-import-row"><b>' +
+              escapeHtml(r.nome) +
+              '</b> · ' +
+              escapeHtml(r.prioridadeLabel) +
+              '<br /><small>' +
+              escapeHtml(r.enderecoDigital || `${r.latitude.toFixed(5)}, ${r.longitude.toFixed(5)}`) +
+              ' · ' +
+              escapeHtml(r.frequenciaAlvo) +
+              '</small></div>',
+          )
+          .join('') +
+          (regs.length > 8
+            ? `<div class="visit-card__meta">+ ${regs.length - 8} registro(s) adicional(is).</div>`
+            : '');
+      }
+    }
+    if (els.visitImportAvisos) {
+      const linhas = [
+        ...avisos.slice(0, 4).map((a) => `Aviso linha ${a.linha}: ${a.mensagem}`),
+        ...errs.slice(0, 5).map((e) => `Erro linha ${e.linha}: ${e.mensagem}`),
+      ];
+      if (linhas.length) {
+        els.visitImportAvisos.hidden = false;
+        els.visitImportAvisos.innerHTML = linhas.map((l) => '<div>• ' + escapeHtml(l) + '</div>').join('');
+      } else {
+        els.visitImportAvisos.hidden = true;
+        els.visitImportAvisos.innerHTML = '';
+      }
+    }
+    if (els.visitImportConfirmar) els.visitImportConfirmar.disabled = regs.length === 0;
+    if (els.visitImportModal) els.visitImportModal.hidden = false;
+  }
+
+  function fecharModalImportacaoPlanilha() {
+    state.previewImportacaoPlanilha = null;
+    if (els.visitImportModal) els.visitImportModal.hidden = true;
+    if (els.visitFileInput) els.visitFileInput.value = '';
+  }
+
+  if (els.visitTemplateBtn) {
+    els.visitTemplateBtn.addEventListener('click', () => {
+      try {
+        const bytes = gerarModeloPlanilhaVisitasXlsx();
+        const blob = new Blob([bytes], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'modelo-visitas-siga.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        mostrarFeedbackVisitas('Modelo modelo-visitas-siga.xlsx baixado.', 'ok');
+      } catch (err) {
+        mostrarFeedbackVisitas('Falha ao gerar modelo: ' + err.message, 'err');
+      }
+    });
+  }
+
+  if (els.visitImportBtn && els.visitFileInput) {
+    els.visitImportBtn.addEventListener('click', () => els.visitFileInput.click());
+    els.visitFileInput.addEventListener('change', async () => {
+      const file = els.visitFileInput.files?.[0];
+      if (!file) return;
+      try {
+        const buf = await file.arrayBuffer();
+        const preview = importarPlanilhaVisitas(new Uint8Array(buf), { origemArquivo: file.name });
+        abrirModalImportacaoPlanilha(file.name, preview);
+      } catch (err) {
+        mostrarFeedbackVisitas('Não foi possível ler a planilha: ' + err.message, 'err');
+        if (els.visitFileInput) els.visitFileInput.value = '';
+      }
+    });
+  }
+
+  if (els.visitImportFechar) els.visitImportFechar.addEventListener('click', fecharModalImportacaoPlanilha);
+  if (els.visitImportCancelar) els.visitImportCancelar.addEventListener('click', fecharModalImportacaoPlanilha);
+  if (els.visitImportConfirmar) {
+    els.visitImportConfirmar.addEventListener('click', async () => {
+      const item = state.previewImportacaoPlanilha;
+      if (!item) return;
+      const modoEl = document.querySelector('input[name="visit_import_modo"]:checked');
+      const substituir = modoEl?.value === 'substituir';
+      const base = substituir ? [] : state.pacientesTerritorio;
+      const mapa = new Map();
+      for (const reg of [...base, ...(item.preview.registros || [])]) {
+        if (reg?.id) mapa.set(reg.id, reg);
+      }
+      state.pacientesTerritorio = [...mapa.values()];
+      const origemCoord = state.lista.pontos[0]?.latitude != null ? state.lista.pontos[0] : null;
+      state.planoVisitas = planejarVisitasPeriodo(state.pacientesTerritorio, {
+        periodo: state.periodoPlanejamento,
+        origemCoord,
+        visitasAnteriores: state.planoVisitas?.visitas || [],
+      });
+      fecharModalImportacaoPlanilha();
+      renderizarPlanejamentoVisitasWeb();
+      atualizarResumoSheetWeb();
+      await persistirPlanejamentoWeb();
+      const msg = `${item.preview.registros.length} paciente(s) carregado(s) e ${state.planoVisitas.visitas.length} visita(s) planejada(s).`;
+      mostrarFeedbackVisitas(msg, 'ok');
+      setStatus(msg, 'ok');
+    });
+  }
+
+  document.querySelectorAll('input[name="visit_periodo"]').forEach((radio) => {
+    radio.addEventListener('change', async () => {
+      if (!radio.checked) return;
+      state.periodoPlanejamento = normalizarPeriodoPlanejamento(radio.value);
+      if (state.pacientesTerritorio.length) {
+        state.planoVisitas = planejarVisitasPeriodo(state.pacientesTerritorio, {
+          periodo: state.periodoPlanejamento,
+          origemCoord: state.lista.pontos[0]?.latitude != null ? state.lista.pontos[0] : null,
+          visitasAnteriores: state.planoVisitas?.visitas || [],
+        });
+      }
+      renderizarPlanejamentoVisitasWeb();
+      atualizarResumoSheetWeb();
+      await persistirPlanejamentoWeb();
+    });
+  });
+
+  if (els.visitPlanBtn) {
+    els.visitPlanBtn.addEventListener('click', async () => {
+      if (!state.pacientesTerritorio.length) return;
+      state.planoVisitas = planejarVisitasPeriodo(state.pacientesTerritorio, {
+        periodo: state.periodoPlanejamento,
+        origemCoord: state.lista.pontos[0]?.latitude != null ? state.lista.pontos[0] : null,
+        visitasAnteriores: state.planoVisitas?.visitas || [],
+      });
+      renderizarPlanejamentoVisitasWeb();
+      atualizarResumoSheetWeb();
+      await persistirPlanejamentoWeb();
+      mostrarFeedbackVisitas(`Planejamento atualizado com ${state.planoVisitas.visitas.length} visita(s).`, 'ok');
+    });
+  }
+
+  if (els.visitApplyRouteBtn) {
+    els.visitApplyRouteBtn.addEventListener('click', () => {
+      const pendentes = (state.planoVisitas?.visitas || []).filter(
+        (v) => v.status === STATUS_VISITA.PLANEJADA,
+      );
+      incluirVisitasNoTrajetoWeb(pendentes);
+    });
+  }
+
+  if (els.visitStatusFilters) {
+    els.visitStatusFilters.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-visit-filter]');
+      if (!btn) return;
+      state.filtroStatusVisitas = btn.dataset.visitFilter || 'todos';
+      renderizarPlanejamentoVisitasWeb();
+    });
+  }
+
+  if (els.visitSuggestionsBox) {
+    els.visitSuggestionsBox.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-visit-add-route]');
+      if (!btn) return;
+      const sug = calcularSugestoesVisitasWeb().find((s) => s.id === btn.dataset.visitAddRoute);
+      if (sug) incluirVisitasNoTrajetoWeb([sug]);
+    });
+  }
+
+  if (els.visitList) {
+    els.visitList.addEventListener('click', async (ev) => {
+      const focusBtn = ev.target.closest('[data-visit-focus]');
+      if (focusBtn) {
+        const v = (state.planoVisitas?.visitas || []).find((x) => x.id === focusBtn.dataset.visitFocus);
+        if (v?.latitude != null && v?.longitude != null) {
+          if (ehViewportMovel() && appEl?.dataset.sheetState === 'expanded') setSheetState('mid');
+          centralizarNoPontoComInset(v.longitude, v.latitude, 17);
+        }
+        return;
+      }
+      const addBtn = ev.target.closest('[data-visit-add-route]');
+      if (addBtn) {
+        const id = addBtn.dataset.visitAddRoute;
+        const v =
+          (state.planoVisitas?.visitas || []).find((x) => x.id === id) ||
+          calcularSugestoesVisitasWeb().find((x) => x.id === id);
+        if (v) incluirVisitasNoTrajetoWeb([v]);
+        return;
+      }
+      const statusBtn = ev.target.closest('[data-visit-status]');
+      const card = ev.target.closest('[data-visit-id]');
+      if (statusBtn && card && state.planoVisitas) {
+        const id = card.dataset.visitId;
+        const novo = normalizarStatusVisita(statusBtn.dataset.visitStatus);
+        state.planoVisitas = {
+          ...state.planoVisitas,
+          visitas: state.planoVisitas.visitas.map((v) =>
+            v.id === id ? { ...v, status: novo, atualizadoEm: new Date().toISOString() } : v,
+          ),
+        };
+        if (novo === STATUS_VISITA.REALIZADA) {
+          const alvo = state.planoVisitas.visitas.find((v) => v.id === id);
+          if (alvo) {
+            state.pacientesTerritorio = state.pacientesTerritorio.map((p) =>
+              p.id === alvo.pacienteId ? { ...p, ultimaVisitaEm: new Date().toISOString() } : p,
+            );
+          }
+        }
+        renderizarPlanejamentoVisitasWeb();
+        atualizarResumoSheetWeb();
+        await persistirPlanejamentoWeb();
+      }
+    });
+  }
+
+  if (els.visitClearBtn) {
+    els.visitClearBtn.addEventListener('click', async () => {
+      state.pacientesTerritorio = [];
+      state.planoVisitas = null;
+      renderizarPlanejamentoVisitasWeb();
+      atualizarResumoSheetWeb();
+      mostrarFeedbackVisitas('Planejamento local de visitas removido.', 'ok');
+      try {
+        window.localStorage.removeItem('siga_rotas_planejamento_visitas_v1');
+      } catch {
+        /* ignora */
+      }
+      try {
+        await campoWeb?.repositorio?.driver?.clearPlanoVisitas?.();
+      } catch {
+        /* ignora */
+      }
+    });
+  }
+
+  // Gestos de arraste e botões de snap do bottom sheet responsivo (<= 900px)
+  if (els.sheetCollapseBtn) {
+    els.sheetCollapseBtn.addEventListener('click', () => setSheetState('collapsed'));
+  }
+  if (els.sheetExpandBtn) {
+    els.sheetExpandBtn.addEventListener('click', () => {
+      const atual = appEl?.dataset.sheetState || 'mid';
+      setSheetState(atual === 'expanded' ? 'mid' : 'expanded');
+      if (els.sheetExpandBtn) {
+        els.sheetExpandBtn.textContent = appEl?.dataset.sheetState === 'expanded' ? 'Reduzir' : 'Expandir';
+      }
+    });
+  }
+  if (els.sheetSummaryBtn) {
+    els.sheetSummaryBtn.addEventListener('click', () => {
+      const atual = appEl?.dataset.sheetState || 'mid';
+      const proximo = atual === 'collapsed' ? 'mid' : atual === 'mid' ? 'expanded' : 'mid';
+      setSheetState(proximo);
+    });
+  }
+  if (els.sheetHandle) {
+    let sheetDragY = null;
+    els.sheetHandle.addEventListener('pointerdown', (ev) => {
+      if (ev.target.closest('button')) return;
+      sheetDragY = ev.clientY;
+      try { els.sheetHandle.setPointerCapture(ev.pointerId); } catch {}
+    });
+    els.sheetHandle.addEventListener('pointerup', (ev) => {
+      if (sheetDragY == null) return;
+      const dy = ev.clientY - sheetDragY;
+      sheetDragY = null;
+      const atual = appEl?.dataset.sheetState || 'mid';
+      if (dy <= -45) {
+        setSheetState(atual === 'collapsed' ? 'mid' : 'expanded');
+      } else if (dy >= 45) {
+        setSheetState(atual === 'expanded' ? 'mid' : 'collapsed');
+      }
+    });
+    els.sheetHandle.addEventListener('pointercancel', () => {
+      sheetDragY = null;
+    });
+  }
+
   /* ─────────────── Arranque ─────────────── */
 
   // exposto para automação e depuração no console do navegador
@@ -3914,7 +4771,11 @@ import {
     occSource,
     occClusterSource,
     occSegmentHighlightSource,
+    currentLocSource,
+    visitSource,
     markerSource,
+    setSheetState,
+    solicitarLocalizacaoAtualWeb,
     campo: campoWeb,
     // ganchos usados pela interface de navegação ativa
     showRoute,
@@ -4051,11 +4912,13 @@ import {
 
   inicializarPontos();
   inicializarPreferenciasUI();
+  renderizarFiltrosCategoriaOcorrencia();
   atualizarLegenda();
   setStatus('Carregando a rede viária…', 'busy');
   void campoWeb.inicializar().then(async () => {
     await renderizarRotasSalvasCampo();
     await verificarRecuperacaoGpsCampo();
+    await carregarPlanejamentoWeb();
     if (navigator.onLine !== false) void campoWeb.sincronizarPendentes();
   });
   window.addEventListener('online', () => { void campoWeb.sincronizarPendentes(); });

@@ -7,6 +7,7 @@ import { COLORS } from '../src/theme/colors.js';
 import { MAP_HTML } from '../src/map/mapHtml.js';
 import { criarSincronizacaoMapa } from '../src/map/mapSync.js';
 import * as camadaBase from '../src/map/camadaBase.js';
+import * as catalogo from '../src/ocorrencias/catalogo.js';
 const require=createRequire(new URL('../package.json',import.meta.url));
 const code=require('@babel/core').transformSync(readFileSync(new URL('../src/components/RoadNetworkMap.js',import.meta.url),'utf8'),{babelrc:false,configFile:false,plugins:[require.resolve('@babel/plugin-transform-react-jsx'),require.resolve('@babel/plugin-transform-modules-commonjs')]}).code;
 function setup(initial={}){
@@ -16,7 +17,7 @@ function setup(initial={}){
  useRef:initial=>{const i=index++;return slots[i]??(slots[i]={current:initial});},useState:initial=>{const i=index++;if(!(i in slots))slots[i]=initial;return[slots[i],fn=>{slots[i]=typeof fn==='function'?fn(slots[i]):fn;}];},
  useEffect:(fn,deps)=>{const i=index++,last=slots[i];if(!last||deps.some((d,j)=>d!==last[j]))effects.push(fn);slots[i]=deps;},useImperativeHandle:(r,fn)=>{r.current=fn();}};
  const native=Object.fromEntries(['View','Text','TouchableOpacity','ActivityIndicator','ScrollView'].map(n=>[n,n]));native.StyleSheet={create:s=>s};
- const deps={react:React,'react-native':native,'react-native-webview':{WebView:'WebView'},'../theme/colors':{COLORS},'../map/mapHtml.js':{MAP_HTML},'../map/mapSync.js':{criarSincronizacaoMapa},'../map/camadaBase.js':camadaBase};
+ const deps={react:React,'react-native':native,'react-native-webview':{WebView:'WebView'},'../theme/colors':{COLORS},'../map/mapHtml.js':{MAP_HTML},'../map/mapSync.js':{criarSincronizacaoMapa},'../map/camadaBase.js':camadaBase,'../ocorrencias/catalogo.js':catalogo};
  const module={exports:{}};new Function('require','module','exports',code)(n=>{assert.ok(n in deps,n);return deps[n];},module,module.exports);
  function nodes(n,out=[]){if(Array.isArray(n)){for(const child of n)nodes(child,out);}else if(n&&typeof n==='object'){out.push(n);nodes(n.props?.children,out);}return out;}
  function text(n){if(Array.isArray(n))return n.map(text).join(' ');if(n==null||typeof n==='boolean')return '';return typeof n==='object'?text(n.props?.children):String(n);}
@@ -49,8 +50,12 @@ test('onLayout solicita resize sem reenquadrar e não envia comandos quando mapa
 test('novo MAP_READY repõe camadas após recarga da WebView sem reiniciar legenda',()=>{
  const c=setup(),r=c.ready();c.sent.length=0;r.web.props.onMessage({nativeEvent:{data:'{"type":"MAP_READY"}'}});c.render();assert.ok(c.sent.some(m=>m.type==='SET_NETWORK'));assert.ok(c.sent.some(m=>m.type==='SET_ROUTE'));
 });
-test('App mantém mapa montado, invisível e fora da acessibilidade quando exibe só painel',()=>{
- const app=readFileSync(new URL('../App.js',import.meta.url),'utf8');assert.doesNotMatch(app,/layoutMode !== 'panel' &&/);assert.match(app,/visible=\{layoutMode !== 'panel'\}/);assert.match(app,/no-hide-descendants/);assert.match(app,/mapAreaHidden: \{ position: 'absolute'[\s\S]*?opacity: 0/);
+test('App mantém mapa em tela cheia montado com BottomSheetPanel e sem abas Dividido/Mapa/Painel',()=>{
+ const app=readFileSync(new URL('../App.js',import.meta.url),'utf8');
+ assert.doesNotMatch(app,/\bsetLayoutMode\b|\bmodeSwitch\b|>\s*(Dividido|Painel)\s*</);
+ assert.match(app,/<RoadNetworkMap[\s\S]*visible=\{true\}[\s\S]*bottomInsetPx=\{mapBottomInset\}/);
+ assert.match(app,/<BottomSheetPanel/);
+ assert.match(app,/<VisitPlanningSection/);
 });
 test('seletor Mapa padrão / Satélite alterna camada base sem recriar WebView e trata indisponibilidade',()=>{
  const escolhidos=[];
@@ -94,21 +99,29 @@ test('toque no mapa: com seleção ativa define o ponto; sem seleção alterna o
   assert.deepEqual(cliques, [{ lon: -46.5, lat: -23.7, zoom: 17 }]);
   assert.equal(escolhidos.length, 1);
 });
-test('botão unificado de ocorrências abre popover com Nova Ocorrência e Visualizar; centralizar substitui Rede', () => {
-  let iniciou = 0, alternou = 0;
+test('botão unificado de ocorrências abre popover com filtro de categorias; botão GPS aciona localização atual', () => {
+  let iniciou = 0, alternou = 0, gpsPedidos = 0, filtroEscolhido = null, visitaClicada = null;
   const c = setup({
     showOccurrences: true,
+    occCategoryFilter: null,
+    onChangeOccCategoryFilter: (cat) => { filtroEscolhido = cat; },
     onStartPickOccurrence: () => { iniciou += 1; },
     onToggleOccurrences: () => { alternou += 1; },
+    onRequestCurrentLocation: () => { gpsPedidos += 1; },
+    onVisitMarkerClick: (id) => { visitaClicada = id; },
   });
   const first = c.ready();
   assert.doesNotMatch(c.text(first.tree), /\bRede\b/);
   assert.doesNotMatch(c.text(first.tree), /Nova Ocorrência/);
-  const btnCenter = c.nodes(first.tree).find(n => n.type === 'TouchableOpacity' && n.props.accessibilityLabel === 'Centralizar rede no mapa');
+  const btnCenter = c.nodes(first.tree).find(n => n.type === 'TouchableOpacity' && n.props.accessibilityLabel === 'Centralizar na localização atual');
   assert.ok(btnCenter);
   c.sent.length = 0;
   btnCenter.props.onPress();
-  assert.deepEqual(c.sent, [{ type: 'FIT_NETWORK' }]);
+  assert.equal(gpsPedidos, 1);
+  assert.deepEqual(c.sent, []);
+
+  first.web.props.onMessage({ nativeEvent: { data: JSON.stringify({ type: 'VISIT_CLICK', visitaId: 'v-42' }) } });
+  assert.equal(visitaClicada, 'v-42');
 
   const btnOcc = c.nodes(first.tree).find(n => n.type === 'TouchableOpacity' && n.props.accessibilityLabel === 'Ocorrências');
   assert.ok(btnOcc);
@@ -116,6 +129,12 @@ test('botão unificado de ocorrências abre popover com Nova Ocorrência e Visua
   const opened = c.render();
   assert.match(c.text(opened.tree), /Nova Ocorrência/);
   assert.match(c.text(opened.tree), /Visualizar/);
+  assert.match(c.text(opened.tree), /Escada/);
+  assert.match(c.text(opened.tree), /Animais/);
+
+  const chipEscada = c.nodes(opened.tree).find(n => n.type === 'TouchableOpacity' && c.text(n).includes('Escada'));
+  chipEscada.props.onPress();
+  assert.equal(filtroEscolhido, 'escada');
 
   const optVisualizar = c.nodes(opened.tree).find(n => n.type === 'TouchableOpacity' && c.text(n).includes('Visualizar'));
   optVisualizar.props.onPress();

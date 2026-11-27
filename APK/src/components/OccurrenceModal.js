@@ -15,7 +15,7 @@ import {
   CLASSIFICACAO_META,
   STATUS_OCORRENCIA,
   TEMPORALIDADES,
-  obterCategoria,
+  obterCategoriaExibicao,
 } from '../ocorrencias/catalogo.js';
 import { COLORS } from '../theme/colors';
 
@@ -73,7 +73,7 @@ export function OccurrenceModal({
       (c) => String(c.featureId) === String(featureIdPreferido),
     ) || segmentoPreview?.principal;
 
-  const catInfo = ocorrencia ? obterCategoria(ocorrencia.categoria) : null;
+  const catInfo = ocorrencia ? obterCategoriaExibicao(ocorrencia.categoria) : null;
   const loc = ocorrencia?.localizacao || ocorrencia || {};
   const contadores = ocorrencia?.contadores || {};
   const interacoes = Array.isArray(ocorrencia?.interacoes) ? ocorrencia.interacoes : [];
@@ -269,6 +269,11 @@ export function OccurrenceModal({
                 <Text style={styles.detailTitle}>
                   {catInfo?.rotulo || ocorrencia.categoria}
                 </Text>
+                {!!catInfo?.legado && (
+                  <Text style={styles.streetHint}>
+                    Categoria anterior preservada apenas para consulta histórica.
+                  </Text>
+                )}
                 <Text style={styles.detailStreet}>
                   {loc.logradouro || 'Via da rede municipal'}
                 </Text>

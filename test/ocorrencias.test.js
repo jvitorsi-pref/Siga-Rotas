@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { buildGraph } from '../core/graph.js';
 import {
   ACOES_COLABORATIVAS,
@@ -7,7 +9,10 @@ import {
   CLASSIFICACOES,
   STATUS_OCORRENCIA,
   TEMPORALIDADES,
+  ehCategoriaLegado,
+  normalizarCategoriaLegado,
   obterCategoria,
+  obterCategoriaExibicao,
 } from '../ocorrencias/catalogo.js';
 import {
   ESCALAS_PENALIDADE,
@@ -23,7 +28,8 @@ import {
   localizarArestasDaOcorrencia,
   ocorrenciaInfluenciaCalculo,
 } from '../ocorrencias/regras.js';
-import { feature, official } from './helpers.js';
+import { resumirOcorrencia } from '../ocorrencias/roteamentoAlternativo.js';
+import { ROOT, feature, official } from './helpers.js';
 
 function criarRedeRuasParalelas() {
   // Duas ruas paralelas horizontais separadas por ~18 m em latitude,
@@ -47,36 +53,90 @@ function criarRedeRuasParalelas() {
   ]);
 }
 
-describe('ocorrencias — catálogo e preferências', () => {
-  it('catálogo expõe todas as 10 categorias solicitadas', () => {
-    assert.equal(CATEGORIAS_OCORRENCIA.length, 10);
-    const ids = CATEGORIAS_OCORRENCIA.map((c) => c.id);
-    for (const esperado of [
-      'escadaria',
-      'terreno_irregular',
-      'rua_ingreme',
-      'passagem_estreita',
-      'buracos',
-      'alagamento',
-      'obra_bloqueio',
-      'calcada_inexistente',
-      'obstaculo',
-      'outras',
-    ]) {
-      assert.ok(ids.includes(esperado), `categoria ausente: ${esperado}`);
-      assert.ok(obterCategoria(esperado));
+describe('ocorrencias — catálogo padronizado (5 categorias) e preservação de legado', () => {
+  it('catálogo expõe exatamente as 5 categorias ACS padronizadas e rejeita antigas para novos registros', () => {
+    assert.equal(CATEGORIAS_OCORRENCIA.length, 5);
+    assert.deepEqual(
+      CATEGORIAS_OCORRENCIA.map((c) => c.rotulo),
+      ['Escada', 'Rua íngreme', 'Animais', 'Terreno irregular', 'Obstrução de passagem'],
+    );
+    assert.deepEqual(
+      CATEGORIAS_OCORRENCIA.map((c) => c.id),
+      ['escada', 'rua_ingreme', 'animais', 'terreno_irregular', 'obstrucao_passagem'],
+    );
+    for (const c of CATEGORIAS_OCORRENCIA) {
+      assert.ok(obterCategoria(c.id));
     }
+
+    // Categorias antigas não são aceitas para novos registros
+    for (const antiga of ['escadaria', 'alagamento', 'buracos', 'obra_bloqueio', 'obstaculo', 'outras']) {
+      assert.equal(obterCategoria(antiga), null);
+      assert.equal(ehCategoriaLegado(antiga), true);
+      const exib = obterCategoriaExibicao(antiga);
+      assert.ok(exib && exib.legado === true);
+      assert.match(exib.rotulo, /registro anterior/i);
+    }
+    assert.equal(normalizarCategoriaLegado('escadaria'), 'escada');
+
+    // Rejeita criação com categoria antiga removida
+    const graph = criarRedeRuasParalelas();
+    const negado = criarOcorrencia(
+      { categoria: 'buracos', latitude: -23.68, longitude: -46.4195 },
+      { graph, usuarioId: 'user-1' },
+    );
+    assert.equal(negado.ok, false);
+    assert.equal(negado.reason, 'CATEGORIA_INVALIDA');
   });
 
-  it('normalizarPreferencias aplica defaults seguros e deduplica categorias válidas', () => {
+  it('preserva registros históricos reais de data/ocorrencias.json sem apagar nem quebrar exibição ou roteamento', () => {
+    const graph = criarRedeRuasParalelas();
+    const raw = JSON.parse(readFileSync(path.join(ROOT, 'data', 'ocorrencias.json'), 'utf8'));
+    assert.ok(Array.isArray(raw.ocorrencias) && raw.ocorrencias.length >= 1);
+
+    for (const occ of raw.ocorrencias) {
+      const resumo = resumirOcorrencia(occ);
+      assert.ok(resumo.categoriaLabel && resumo.categoriaLabel.length > 0);
+      const impacto = ocorrenciaInfluenciaCalculo(occ, {
+        modo: MODOS_PREFERENCIA.CONSIDERAR,
+        evitarCategorias: ['escada'],
+      });
+      assert.ok(impacto && typeof impacto.aplica === 'boolean');
+    }
+
+    // Simula interação em ocorrência histórica temporária ('alagamento') sem quebrar
+    const histAlag = {
+      id: 'hist-alag-1',
+      categoria: 'alagamento',
+      classificacao: CLASSIFICACOES.EVITA,
+      temporalidade: TEMPORALIDADES.TEMPORARIA,
+      status: STATUS_OCORRENCIA.ATIVA,
+      localizacao: { latitude: -23.68, longitude: -46.4195, logradouro: 'RUA SUL' },
+      interacoes: [{ usuarioId: 'u0', tipo: ACOES_COLABORATIVAS.CONFIRMAR, em: new Date().toISOString() }],
+      contadores: { confirmacoes: 1, resolvida: 0, contestacoes: 0 },
+    };
+    const conf = aplicarInteracao(histAlag, {
+      tipo: ACOES_COLABORATIVAS.CONFIRMAR,
+      usuarioId: 'u2',
+      agora: Date.UTC(2026, 10, 10, 12, 0, 0),
+    });
+    assert.equal(conf.ok, true);
+    assert.equal(conf.ocorrencia.categoria, 'alagamento');
+    assert.equal(conf.ocorrencia.contadores.confirmacoes, 2);
+
+    const { ocorrencias: aposExp } = atualizarExpiracoes([histAlag], Date.UTC(2026, 10, 10, 12, 0, 0));
+    assert.equal(aposExp[0].id, 'hist-alag-1');
+    assert.ok(graph.edges.length > 0);
+  });
+
+  it('normalizarPreferencias aplica defaults seguros, migra escadaria e descarta categorias removidas', () => {
     const p = normalizarPreferencias({
       modo: 'priorizar_sem_dificuldades',
       penalidadePadrao: 'alta',
-      evitarCategorias: ['escadaria', 'escadaria', 'inexistente', 'alagamento'],
+      evitarCategorias: ['escada', 'escadaria', 'inexistente', 'alagamento', 'animais'],
     });
     assert.equal(p.modo, MODOS_PREFERENCIA.PRIORIZAR_SEM_DIFICULDADES);
     assert.equal(p.penalidadePadrao, 'alta');
-    assert.deepEqual(p.evitarCategorias, ['escadaria', 'alagamento']);
+    assert.deepEqual(p.evitarCategorias, ['escada', 'animais']);
     assert.equal(ESCALAS_PENALIDADE.media, 1);
     assert.equal(preferenciasPadrao().modo, MODOS_PREFERENCIA.CONSIDERAR);
   });
@@ -118,7 +178,7 @@ describe('ocorrencias — associação precisa ao segmento da rede', () => {
     const graph = criarRedeRuasParalelas();
     const criado = criarOcorrencia(
       {
-        categoria: 'buracos',
+        categoria: 'terreno_irregular',
         classificacao: CLASSIFICACOES.PENALIZA,
         latitude: -23.68,
         longitude: -46.4195, // quarteirão oeste da RUA SUL (featureId 101)
@@ -139,7 +199,7 @@ describe('ocorrencias — associação precisa ao segmento da rede', () => {
     const graph = criarRedeRuasParalelas();
     const criado = criarOcorrencia(
       {
-        categoria: 'escadaria',
+        categoria: 'escada',
         latitude: -23.68,
         longitude: -46.4195,
       },
@@ -164,7 +224,7 @@ describe('ocorrencias — colaboração, validação e expiração', () => {
     const baseTime = Date.UTC(2026, 10, 1, 12, 0, 0);
     const { ocorrencia } = criarOcorrencia(
       {
-        categoria: 'alagamento',
+        categoria: 'animais',
         temporalidade: TEMPORALIDADES.TEMPORARIA,
         latitude: -23.68,
         longitude: -46.4195,
@@ -218,7 +278,7 @@ describe('ocorrencias — colaboração, validação e expiração', () => {
 
     const temp = criarOcorrencia(
       {
-        categoria: 'obra_bloqueio',
+        categoria: 'obstrucao_passagem',
         temporalidade: TEMPORALIDADES.TEMPORARIA,
         ttlHoras: 48,
         latitude: -23.68,
@@ -229,7 +289,7 @@ describe('ocorrencias — colaboração, validação e expiração', () => {
 
     const perm = criarOcorrencia(
       {
-        categoria: 'escadaria',
+        categoria: 'escada',
         temporalidade: TEMPORALIDADES.PERMANENTE,
         latitude: -23.67984,
         longitude: -46.4195,
@@ -250,7 +310,7 @@ describe('ocorrencias — colaboração, validação e expiração', () => {
     const graph = criarRedeRuasParalelas();
     const { ocorrencia: escada } = criarOcorrencia(
       {
-        categoria: 'escadaria',
+        categoria: 'escada',
         classificacao: CLASSIFICACOES.PENALIZA,
         penalidadeMetros: 200,
         latitude: -23.68,
@@ -275,7 +335,7 @@ describe('ocorrencias — colaboração, validação e expiração', () => {
 
     const evita = ocorrenciaInfluenciaCalculo(escada, {
       modo: MODOS_PREFERENCIA.CONSIDERAR,
-      evitarCategorias: ['escadaria'],
+      evitarCategorias: ['escada'],
     });
     assert.equal(evita.modoEfeito, CLASSIFICACOES.EVITA);
   });

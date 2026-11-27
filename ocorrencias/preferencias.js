@@ -6,7 +6,7 @@
  *  - A preferência pertence ao USUÁRIO (define como considerar as ocorrências).
  */
 
-import { validarCategoria } from './catalogo.js';
+import { normalizarCategoriaLegado, validarCategoria } from './catalogo.js';
 
 export const MODOS_PREFERENCIA = Object.freeze({
   CONSIDERAR: 'considerar',
@@ -48,8 +48,13 @@ export function normalizarPreferencias(raw) {
   const listaBruta = Array.isArray(raw.evitarCategorias) ? raw.evitarCategorias : [];
   const evitarUnicas = [];
   for (const item of listaBruta) {
-    const id = String(item || '').trim();
-    if (validarCategoria(id) && !evitarUnicas.includes(id)) {
+    const idBruto = String(item || '').trim();
+    const id = validarCategoria(idBruto)
+      ? idBruto
+      : idBruto === 'escadaria'
+        ? normalizarCategoriaLegado(idBruto)
+        : null;
+    if (id && validarCategoria(id) && !evitarUnicas.includes(id)) {
       evitarUnicas.push(id);
     }
   }

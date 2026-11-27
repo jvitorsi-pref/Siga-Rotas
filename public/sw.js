@@ -12,7 +12,7 @@
    esqueleto salvo é usado.
    ========================================================================== */
 
-const CACHE = 'siga-rotas-v19';
+const CACHE = 'siga-rotas-v20';
 
 /** Arquivos do esqueleto do aplicativo. */
 const ESQUELETO = [
@@ -34,6 +34,11 @@ const ESQUELETO = [
   '/resumoRota.js',
   '/navegacaoUI.js',
   '/ocorrenciasUI.js',
+  '/planejamento/modeloVisitas.js',
+  '/planejamento/xlsxCodec.js',
+  '/planejamento/importadorExcel.js',
+  '/planejamento/planejamentoVisitas.js',
+  '/planejamento/vendor/fflate.mjs',
   '/manifest.webmanifest',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

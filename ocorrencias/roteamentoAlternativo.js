@@ -14,7 +14,11 @@
 
 import { buildEdgeIndex } from '../core/graph.js';
 import { calcularRotaComParadas } from '../core/rotaParadas.js';
-import { CLASSIFICACOES, STATUS_OCORRENCIA, obterCategoria } from './catalogo.js';
+import {
+  CLASSIFICACOES,
+  STATUS_OCORRENCIA,
+  obterCategoriaExibicao,
+} from './catalogo.js';
 import { MODOS_PREFERENCIA, normalizarPreferencias } from './preferencias.js';
 import {
   atualizarExpiracoes,
@@ -60,11 +64,12 @@ export function extrairArestasDaRota(rota) {
 }
 
 export function resumirOcorrencia(occ, impacto = null) {
-  const cat = obterCategoria(occ.categoria);
+  const cat = obterCategoriaExibicao(occ.categoria);
   return {
     id: occ.id,
     categoria: occ.categoria,
     categoriaLabel: cat?.rotulo || occ.categoria,
+    categoriaLegado: Boolean(cat?.legado),
     classificacao: occ.classificacao,
     modoEfeito: impacto?.modoEfeito || occ.classificacao,
     penalidadeMetros: impacto?.penalidadeMetros ?? occ.penalidadeMetros ?? 0,

@@ -75,8 +75,8 @@ test('painel permite configurar URL do servidor backend (ApiProxy.ashx ou modo l
  btnLocal.props.onPress();
  assert.deepEqual(saved,['https://portal.sa.gov.br/SigaApp/SigaRotas/ApiProxy.ashx','']);
 });
-test('App monta o painel no ScrollView e conecta os três comandos, URL backend e descarte',()=>{
- const app=readFileSync(new URL('../App.js',import.meta.url),'utf8');assert.match(app,/<NetworkDiagnosticsPanel[\s\S]*?<\/ScrollView>/);for(const name of ['carregar','verificar','baixar'])assert.ok(app.includes(`networkPanelRef.current?.executar('${name}')`));assert.ok(app.includes('networkPanelRef.current?.configurarServidor('));assert.match(app,/painel\.descartar\(\)/);
+test('App monta o painel no BottomSheetPanel com ScrollView e conecta os três comandos, URL backend e descarte',()=>{
+ const app=readFileSync(new URL('../App.js',import.meta.url),'utf8');const sheet=readFileSync(new URL('../src/components/BottomSheetPanel.js',import.meta.url),'utf8');assert.match(app,/<BottomSheetPanel[\s\S]*?<NetworkDiagnosticsPanel[\s\S]*?<\/BottomSheetPanel>/);assert.match(sheet,/<ScrollView[\s\S]*?\{children\}[\s\S]*?<\/ScrollView>/);for(const name of ['carregar','verificar','baixar'])assert.ok(app.includes(`networkPanelRef.current?.executar('${name}')`));assert.ok(app.includes('networkPanelRef.current?.configurarServidor('));assert.match(app,/painel\.descartar\(\)/);
 });
 test('painel exibe botão Atualizar ruas no lugar de Baixar do GeoServer',()=>{
  const c=setup({meta}),txt=c.text(c.render());

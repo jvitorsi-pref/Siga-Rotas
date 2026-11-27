@@ -29,6 +29,7 @@ import { COLORS } from '../theme/colors';
 import { criarSincronizacaoMapa } from '../map/mapSync.js';
 import { MAP_HTML } from '../map/mapHtml.js';
 import { CAMADA_PADRAO, CAMADA_SATELITE, opcoesCamadasBase, normalizarCamadaBase } from '../map/camadaBase.js';
+import { CATEGORIAS_OCORRENCIA } from '../ocorrencias/catalogo.js';
 const MAP_SOURCE = { html: MAP_HTML };
 
 function WarningIcon({ active = false }) {
@@ -59,6 +60,7 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
   {
     features,
     visible = true,
+    bottomInsetPx = 0,
     basemapMode = CAMADA_PADRAO,
     onChangeBasemap,
     markers,
@@ -77,6 +79,10 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
     onMapClick,
     occurrences,
     showOccurrences,
+    occCategoryFilter = null,
+    onChangeOccCategoryFilter,
+    visitMarkers,
+    onVisitMarkerClick,
     altRoutes,
     highlightSegments,
     pickingOccurrence = false,
@@ -86,6 +92,9 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
     onAltRouteClick,
     onToggleOccurrences,
     onStartPickOccurrence,
+    onRequestCurrentLocation,
+    locatingCurrent = false,
+    locationFeedback = null,
     gpsTrailGeometry,
     routeObservations,
     pickingRouteObs = false,
@@ -121,16 +130,19 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
   useEffect(() => {
     syncRef.current.atualizar({ ready: mapReady, session: mapSession, visible,
       basemapMode: modoBaseAtivo,
+      ...(bottomInsetPx > 0 ? { bottomInsetPx } : {}),
       features, markers, routeGeometry, routeSegments, navigationPosition,
       centerRequest, suppressRouteFit,
       ...(occurrences !== undefined ? { occurrences } : {}),
       ...(showOccurrences !== undefined ? { showOccurrences } : {}),
+      ...(occCategoryFilter !== null && occCategoryFilter !== undefined ? { occCategoryFilter } : {}),
+      ...(visitMarkers !== undefined ? { visitMarkers } : {}),
       ...(altRoutes !== undefined ? { altRoutes } : {}),
       ...(highlightSegments !== undefined ? { highlightSegments } : {}),
       ...(gpsTrailGeometry !== undefined ? { gpsTrailGeometry } : {}),
       ...(routeObservations !== undefined ? { routeObservations } : {}),
       ...(pickingPoint || pickingOccurrence || pickingRouteObs ? { picking: true } : occurrences !== undefined ? { picking: false } : {}) });
-  }, [mapReady, mapSession, visible, modoBaseAtivo, features, markers, routeGeometry, routeSegments, navigationPosition, centerRequest, suppressRouteFit, occurrences, showOccurrences, altRoutes, highlightSegments, gpsTrailGeometry, routeObservations, pickingPoint, pickingOccurrence, pickingRouteObs]);
+  }, [mapReady, mapSession, visible, bottomInsetPx, modoBaseAtivo, features, markers, routeGeometry, routeSegments, navigationPosition, centerRequest, suppressRouteFit, occurrences, showOccurrences, occCategoryFilter, visitMarkers, altRoutes, highlightSegments, gpsTrailGeometry, routeObservations, pickingPoint, pickingOccurrence, pickingRouteObs]);
 
   useEffect(() => {
     if (modoBaseAtivo === CAMADA_PADRAO) {
@@ -159,6 +171,9 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
       } else if (data.type === 'OCC_CLICK') {
         setOccMenuOpen(false);
         if (onOccurrenceClick) onOccurrenceClick(data.id);
+      } else if (data.type === 'VISIT_CLICK') {
+        setOccMenuOpen(false);
+        if (onVisitMarkerClick) onVisitMarkerClick(data.visitaId);
       } else if (data.type === 'ROUTE_OBS_CLICK') {
         setOccMenuOpen(false);
         if (onRouteObservationClick) onRouteObservationClick(data.idCliente);
@@ -250,6 +265,13 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
           <Text style={{ color: COLORS.accent, fontSize: 11, fontWeight: '700' }}>{isSimulating ? 'MODO DE TESTE — posição simulada, não é GPS real' : 'GPS real — grava em segundo plano até encerrar'}</Text>
         </View>
       )}
+      {locationFeedback?.message ? (
+        <View style={[styles.basemapNotice, styles.locationBanner]} accessibilityRole="alert">
+          <Text style={[styles.basemapNoticeText, { color: locationFeedback.status === 'error' ? '#b91c1c' : COLORS.warn }]}>
+            {locationFeedback.message}
+          </Text>
+        </View>
+      ) : null}
       {!mapReady && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color={COLORS.accent} />
@@ -302,8 +324,8 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
         />
       )}
 
-      {/* Controles flutuantes rápidos do mapa (alinhados no canto inferior direito) */}
-      <View style={styles.quickControls}>
+      {/* Controles flutuantes rápidos do mapa (alinhados no canto inferior direito, acima do painel retrátil) */}
+      <View style={[styles.quickControls, { bottom: 12 + Math.max(0, Number(bottomInsetPx) || 0) }]}>
         {occMenuOpen && (typeof onStartPickOccurrence === 'function' || typeof onToggleOccurrences === 'function') && (
           <View style={styles.occPopover} accessibilityRole="menu">
             {typeof onStartPickOccurrence === 'function' && (
@@ -356,6 +378,35 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
                 </View>
               </TouchableOpacity>
             )}
+            {typeof onChangeOccCategoryFilter === 'function' && (
+              <View style={styles.occCategorySection}>
+                <Text style={styles.occCategoryTitle}>Filtrar categorias no mapa</Text>
+                <View style={styles.occCategoryWrap}>
+                  <TouchableOpacity
+                    style={[styles.occCategoryChip, !occCategoryFilter && styles.occCategoryChipActive]}
+                    onPress={() => onChangeOccCategoryFilter(null)}
+                  >
+                    <Text style={[styles.occCategoryChipText, !occCategoryFilter && styles.occCategoryChipTextActive]}>
+                      Todas
+                    </Text>
+                  </TouchableOpacity>
+                  {CATEGORIAS_OCORRENCIA.map((cat) => {
+                    const ativa = occCategoryFilter === cat.id;
+                    return (
+                      <TouchableOpacity
+                        key={cat.id}
+                        style={[styles.occCategoryChip, ativa && styles.occCategoryChipActive]}
+                        onPress={() => onChangeOccCategoryFilter(ativa ? null : cat.id)}
+                      >
+                        <Text style={[styles.occCategoryChipText, ativa && styles.occCategoryChipTextActive]}>
+                          {cat.icone} {cat.rotulo}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
           </View>
         )}
 
@@ -375,15 +426,20 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
         )}
 
         <TouchableOpacity
-          style={styles.iconControlBtn}
+          style={[styles.iconControlBtn, locatingCurrent && styles.controlBtnLocating]}
           accessibilityRole="button"
-          accessibilityLabel="Centralizar rede no mapa"
+          accessibilityLabel="Centralizar na localização atual"
+          disabled={locatingCurrent}
           onPress={() => {
             setOccMenuOpen(false);
-            sendMessageToMap({ type: 'FIT_NETWORK' });
+            onRequestCurrentLocation?.();
           }}
         >
-          <CenterIcon color={COLORS.accent} />
+          {locatingCurrent ? (
+            <ActivityIndicator size="small" color="#0284c7" />
+          ) : (
+            <CenterIcon color="#0284c7" />
+          )}
         </TouchableOpacity>
 
         {routeGeometry?.coordinates?.length >= 2 && (
@@ -436,6 +492,10 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
                   <Text style={styles.legendText}>Rota calculada</Text>
                 </View>
                 <View style={styles.legendRow}>
+                  <View style={[styles.swatchDot, { backgroundColor: '#0ea5e9' }]} />
+                  <Text style={styles.legendText}>Sua localização (GPS)</Text>
+                </View>
+                <View style={styles.legendRow}>
                   <View style={[styles.swatchDot, { backgroundColor: COLORS.origin }]} />
                   <Text style={styles.legendText}>Origem e destino (A)</Text>
                 </View>
@@ -443,6 +503,20 @@ export const RoadNetworkMap = forwardRef(function RoadNetworkMap(
                   <View style={[styles.swatchDot, { backgroundColor: COLORS.stop }]} />
                   <Text style={styles.legendText}>Parada intermediária</Text>
                 </View>
+                {!!visitMarkers?.length && (
+                  <>
+                    <View style={styles.legendRow}>
+                      <View style={[styles.swatchDiamond, { backgroundColor: '#0f766e' }]} />
+                      <Text style={styles.legendText}>Visitas planejadas ({visitMarkers.length})</Text>
+                    </View>
+                    {visitMarkers.some((v) => v.status === 'oportunistica_sugerida') && (
+                      <View style={styles.legendRow}>
+                        <View style={[styles.swatchDiamond, { backgroundColor: '#7c3aed' }]} />
+                        <Text style={styles.legendText}>Sugestão próxima ao trajeto</Text>
+                      </View>
+                    )}
+                  </>
+                )}
                 {!!altRoutes?.length && (
                   <View style={styles.legendRow}>
                     <View style={[styles.swatchLine, { backgroundColor: '#64748b' }]} />
@@ -739,7 +813,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 44,
     right: 0,
-    width: 205,
+    width: 245,
     backgroundColor: 'rgba(255, 255, 255, 0.98)',
     borderColor: COLORS.border,
     borderWidth: 1,
@@ -840,6 +914,62 @@ const styles = StyleSheet.create({
     width: 16,
     height: 5,
     borderRadius: 2,
+  },
+  controlBtnLocating: {
+    borderColor: '#0ea5e9',
+    backgroundColor: '#f0f9ff',
+  },
+  locationBanner: {
+    position: 'absolute',
+    top: 52,
+    left: 12,
+    right: 58,
+    zIndex: 9,
+  },
+  occCategorySection: {
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: '#f8fafc',
+    gap: 6,
+  },
+  occCategoryTitle: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: COLORS.muted,
+    textTransform: 'uppercase',
+  },
+  occCategoryWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+  },
+  occCategoryChip: {
+    paddingVertical: 3,
+    paddingHorizontal: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: '#ffffff',
+  },
+  occCategoryChipActive: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
+  },
+  occCategoryChipText: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: COLORS.text,
+  },
+  occCategoryChipTextActive: {
+    color: '#ffffff',
+  },
+  swatchDiamond: {
+    width: 9,
+    height: 9,
+    transform: [{ rotate: '45deg' }],
+    borderRadius: 1.5,
   },
   swatchDot: {
     width: 9,

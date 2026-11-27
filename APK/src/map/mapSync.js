@@ -1,4 +1,4 @@
-/** Sincroniza dados/câmera sem recriar a WebView ao alternar o layout. */
+/** Sincroniza dados/câmera sem recriar a WebView ao alternar estado do mapa/painel. */
 const VAZIO = [];
 export function criarSincronizacaoMapa(enviar) {
   let ultimo = {}, pronto = false, visivel = false, enquadrado = false, pendente = null, comandoPendente = null, origemComando = null;
@@ -14,6 +14,9 @@ export function criarSincronizacaoMapa(enviar) {
     if (ultimo.session !== p.session) { ultimo = {}; enquadrado = false; pendente = null; }
     const features = p.features || VAZIO, geometry = p.routeGeometry || null;
     const modoBase = p.basemapMode === 'satelite' ? 'satelite' : 'osm';
+    if (p.bottomInsetPx !== undefined && ultimo.bottomInsetPx !== p.bottomInsetPx) {
+      enviar({ type: 'SET_VIEWPORT_INSETS', bottomInsetPx: Math.max(0, Math.round(Number(p.bottomInsetPx) || 0)) });
+    }
     if (ultimo.basemapMode !== modoBase) enviar({ type: 'SET_BASEMAP', mode: modoBase });
     if (ultimo.features !== features) {
       enviar({ type: 'SET_NETWORK', features, fit: false });
@@ -29,8 +32,14 @@ export function criarSincronizacaoMapa(enviar) {
     if (p.occurrences !== undefined && ultimo.occurrences !== p.occurrences) {
       enviar({ type: 'SET_OCCURRENCES', occurrences: p.occurrences || VAZIO });
     }
+    if (p.occCategoryFilter !== undefined && ultimo.occCategoryFilter !== p.occCategoryFilter) {
+      enviar({ type: 'SET_OCC_FILTER', categoria: p.occCategoryFilter || null });
+    }
     if (p.showOccurrences !== undefined && ultimo.showOccurrences !== p.showOccurrences) {
       enviar({ type: 'SET_SHOW_OCCURRENCES', show: p.showOccurrences !== false });
+    }
+    if (p.visitMarkers !== undefined && ultimo.visitMarkers !== p.visitMarkers) {
+      enviar({ type: 'SET_VISITS', visits: p.visitMarkers || VAZIO });
     }
     if (p.altRoutes !== undefined && ultimo.altRoutes !== p.altRoutes) {
       enviar({ type: 'SET_ALT_ROUTES', altRoutes: p.altRoutes || VAZIO });

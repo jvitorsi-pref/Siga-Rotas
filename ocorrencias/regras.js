@@ -13,7 +13,9 @@ import {
   CLASSIFICACOES,
   STATUS_OCORRENCIA,
   TEMPORALIDADES,
+  normalizarCategoriaLegado,
   obterCategoria,
+  obterCategoriaExibicao,
   validarClassificacao,
 } from './catalogo.js';
 import {
@@ -451,7 +453,7 @@ export function aplicarInteracao(
   if (acao === ACOES_COLABORATIVAS.CONFIRMAR) {
     ultimaConfirmacaoEm = agoraIso;
     if (ocorrencia.temporalidade === TEMPORALIDADES.TEMPORARIA) {
-      const cat = obterCategoria(ocorrencia.categoria);
+      const cat = obterCategoriaExibicao(ocorrencia.categoria);
       const ttlHoras = cat?.ttlHoras || 7 * 24;
       expiraEm = new Date(agoraMs + ttlHoras * 3600000).toISOString();
     }
@@ -487,7 +489,11 @@ export function ocorrenciaInfluenciaCalculo(occ, preferenciasRaw, agora = Date.n
     return { aplica: false, modoEfeito: 'ignorar', penalidadeMetros: 0 };
   }
 
-  if (preferencias.evitarCategorias.includes(occ.categoria)) {
+  const categoriaEquivalente = normalizarCategoriaLegado(occ.categoria);
+  if (
+    preferencias.evitarCategorias.includes(occ.categoria) ||
+    (categoriaEquivalente && preferencias.evitarCategorias.includes(categoriaEquivalente))
+  ) {
     return { aplica: true, modoEfeito: CLASSIFICACOES.EVITA, penalidadeMetros: Infinity };
   }
 
@@ -498,7 +504,7 @@ export function ocorrenciaInfluenciaCalculo(occ, preferenciasRaw, agora = Date.n
   if (occ.classificacao === CLASSIFICACOES.PENALIZA) {
     const base = Number(occ.penalidadeMetros) > 0
       ? Number(occ.penalidadeMetros)
-      : (obterCategoria(occ.categoria)?.penalidadeMetros || 150);
+      : (obterCategoriaExibicao(occ.categoria)?.penalidadeMetros || 150);
     const escalaUsuario = ESCALAS_PENALIDADE[preferencias.penalidadePadrao] || 1;
     const fatorPerfil =
       preferencias.modo === MODOS_PREFERENCIA.PRIORIZAR_SEM_DIFICULDADES ? 1.5 : 1;

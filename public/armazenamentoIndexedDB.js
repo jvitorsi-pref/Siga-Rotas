@@ -10,7 +10,7 @@
 import { ENTIDADE_SYNC, SYNC_STATUS, TIPO_ROTA } from '../campo/modeloCampo.js';
 
 export const NOME_BANCO_INDEXEDDB = 'siga_rotas_campo_db';
-export const VERSAO_BANCO_INDEXEDDB = 1;
+export const VERSAO_BANCO_INDEXEDDB = 2;
 
 const STORES = Object.freeze({
   ROTAS: 'rotas_campo',
@@ -19,6 +19,7 @@ const STORES = Object.freeze({
   EVENTOS: 'observacoes_eventos',
   SYNC_FILA: 'sync_fila',
   CACHE_REDE: 'cache_rede',
+  PLANEJAMENTO: 'planejamento_visitas',
 });
 
 function reqParaPromise(req) {
@@ -69,6 +70,9 @@ function garantirStores(db) {
   }
   if (!db.objectStoreNames.contains(STORES.CACHE_REDE)) {
     db.createObjectStore(STORES.CACHE_REDE, { keyPath: 'chave' });
+  }
+  if (!db.objectStoreNames.contains(STORES.PLANEJAMENTO)) {
+    db.createObjectStore(STORES.PLANEJAMENTO, { keyPath: 'chave' });
   }
 }
 
@@ -420,6 +424,33 @@ export function criarDriverIndexedDB({
       tx.objectStore(STORES.PONTOS_GPS).clear();
       tx.objectStore(STORES.ROTAS).clear();
       tx.objectStore(STORES.SYNC_FILA).clear();
+      await txParaPromise(tx);
+      return { ok: true };
+    },
+
+    async savePlanoVisitas(plano) {
+      const db = await abrirBanco();
+      const tx = db.transaction([STORES.PLANEJAMENTO], 'readwrite');
+      tx.objectStore(STORES.PLANEJAMENTO).put({
+        chave: 'ativo',
+        payload: plano,
+        atualizadoEm: new Date().toISOString(),
+      });
+      await txParaPromise(tx);
+      return { ok: true };
+    },
+
+    async getPlanoVisitas() {
+      const db = await abrirBanco();
+      const tx = db.transaction([STORES.PLANEJAMENTO], 'readonly');
+      const row = await reqParaPromise(tx.objectStore(STORES.PLANEJAMENTO).get('ativo'));
+      return row?.payload || null;
+    },
+
+    async clearPlanoVisitas() {
+      const db = await abrirBanco();
+      const tx = db.transaction([STORES.PLANEJAMENTO], 'readwrite');
+      tx.objectStore(STORES.PLANEJAMENTO).clear();
       await txParaPromise(tx);
       return { ok: true };
     },

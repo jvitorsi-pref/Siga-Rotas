@@ -124,7 +124,7 @@ test('OcorrenciasMobileService cria offline, calcula rota alternativa local e si
 
   const prefs = await occService.salvarPreferencias({
     modo: preferenciasRoot.MODOS_PREFERENCIA.CONSIDERAR,
-    evitarCategorias: ['escadaria'],
+    evitarCategorias: ['escada'],
   });
   assert.deepEqual(await occService.carregarPreferencias(), prefs);
 
@@ -136,7 +136,7 @@ test('OcorrenciasMobileService cria offline, calcula rota alternativa local e si
 
   const reg = await occService.registrar(
     {
-      categoria: 'escadaria',
+      categoria: 'escada',
       classificacao: catalogoRoot.CLASSIFICACOES.PENALIZA,
       temporalidade: 'permanente',
       latitude: pontoSul[1],
@@ -194,7 +194,7 @@ test('mapSync + mapHtml renderizam ocorrências e rotas alternativas no Canvas e
     markers: [],
     routeGeometry: null,
     routeSegments: [],
-    occurrences: [{ id: 'occ-1', categoria: 'alagamento', classificacao: 'evita', localizacao: { latitude: -23.66, longitude: -46.53 } }],
+    occurrences: [{ id: 'occ-1', categoria: 'obstrucao_passagem', classificacao: 'evita', localizacao: { latitude: -23.66, longitude: -46.53 } }],
     showOccurrences: true,
     altRoutes: [{ id: 'alt-1', geometry: { type: 'LineString', coordinates: [[-46.53, -23.66], [-46.529, -23.66]] } }],
   });
@@ -242,7 +242,7 @@ test('mapSync + mapHtml renderizam ocorrências e rotas alternativas no Canvas e
   window.__handleRNMessage({
     type: 'SET_OCCURRENCES',
     occurrences: [
-      { id: 'occ-1', categoria: 'alagamento', classificacao: 'evita', localizacao: { latitude: -23.665, longitude: -46.525 } },
+      { id: 'occ-1', categoria: 'obstrucao_passagem', classificacao: 'evita', localizacao: { latitude: -23.665, longitude: -46.525 } },
     ],
   });
   assert.ok(fills.some((f) => f.color === '#dc2626'));
@@ -309,7 +309,7 @@ test('Componentes JSX RoutePreferencesSection, OccurrenceModal e RouteResultPane
   assert.match(prefText, /Preferências do trajeto/);
   assert.match(prefText, /Equilibrada/);
 
-  // 2) OccurrenceModal (detail)
+  // 2) OccurrenceModal (detail) — garante compatibilidade com registro histórico legado ('escadaria') e novas categorias
   const modalMod = compilarComponenteJsx('../src/components/OccurrenceModal.js', {
     react: React,
     'react-native': rn,
@@ -333,9 +333,23 @@ test('Componentes JSX RoutePreferencesSection, OccurrenceModal e RouteResultPane
       },
     }),
   );
-  assert.match(modalText, /Escadaria/);
+  assert.match(modalText, /Escadaria \(registro anterior\)/);
+  assert.match(modalText, /Categoria anterior preservada/);
   assert.match(modalText, /Rua Teste/);
   assert.match(modalText, /Já confirmado por você/);
+
+  const createModalText = extrairTexto(
+    modalMod.OccurrenceModal({
+      visible: true,
+      mode: 'create',
+      usuarioId: 'u1',
+      segmentoPreview: { principal: { logradouro: 'Rua Nova', distanciaAoEixoM: 2 } },
+    }),
+  );
+  for (const rotulo of ['Escada', 'Rua íngreme', 'Animais', 'Terreno irregular', 'Obstrução de passagem']) {
+    assert.ok(createModalText.includes(rotulo), `OccurrenceModal create deve conter ${rotulo}`);
+  }
+  assert.doesNotMatch(createModalText, /Alagamento|Buracos|Calçada inexistente|Outras condições/);
 
   // 3) RouteResultPanel com alternativas + erro bloqueadaPorRestricao
   const resultMod = compilarComponenteJsx('../src/components/RouteResultPanel.js', {
@@ -397,7 +411,7 @@ test('OcorrenciasMobileService opera via proxy WebForms ApiProxy.ashx e respeita
   const urlsChamadas = [];
   const ocorrenciaFake = {
     id: 'occ-ashx-1',
-    categoria: 'alagamento',
+    categoria: 'obstrucao_passagem',
     classificacao: 'evita',
     temporalidade: 'temporaria',
     status: 'ativa',
@@ -471,11 +485,11 @@ test('OcorrenciasMobileService.limparDadosLocais remove cache e fila pendente pr
   });
   const svc = new OcorrenciasMobileService({ storage: storageComRemove, networkService: net });
   const uid = await svc.obterOuCriarUsuarioId();
-  const prefs = await svc.salvarPreferencias({ modo: 'ignorar', evitarCategorias: ['alagamento'] });
+  const prefs = await svc.salvarPreferencias({ modo: 'ignorar', evitarCategorias: ['obstrucao_passagem'] });
   const pontoSul = coord(100, 0);
   const seg = await svc.associarSegmento({ latitude: pontoSul[1], longitude: pontoSul[0] });
   const reg = await svc.registrar({
-    categoria: 'alagamento',
+    categoria: 'obstrucao_passagem',
     classificacao: 'evita',
     temporalidade: 'temporaria',
     latitude: pontoSul[1],
@@ -506,7 +520,7 @@ test('OcorrenciasMobileService.limparDadosLocais remove cache e fila pendente pr
   });
   const svc2 = new OcorrenciasMobileService({ storage: storageSemRemove, networkService: net2 });
   await svc2.registrar({
-    categoria: 'alagamento',
+    categoria: 'obstrucao_passagem',
     classificacao: 'evita',
     temporalidade: 'temporaria',
     latitude: pontoSul[1],

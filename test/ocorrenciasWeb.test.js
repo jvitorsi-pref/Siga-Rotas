@@ -57,16 +57,17 @@ test('Web UI helpers persistem usuarioId e preferências e geram opções de cat
   const salvas = salvarPreferenciasWeb(
     {
       modo: MODOS_PREFERENCIA.PRIORIZAR_SEM_DIFICULDADES,
-      evitarCategorias: ['escadaria', 'invalida_ignorada'],
+      evitarCategorias: ['escada', 'invalida_ignorada'],
     },
     storage,
   );
   assert.equal(salvas.modo, MODOS_PREFERENCIA.PRIORIZAR_SEM_DIFICULDADES);
-  assert.deepEqual(salvas.evitarCategorias, ['escadaria']);
+  assert.deepEqual(salvas.evitarCategorias, ['escada']);
   assert.deepEqual(lerPreferenciasWeb(storage), salvas);
 
   const html = gerarHtmlOpcoesCategoriasEvitar(salvas);
-  assert.match(html, /value="escadaria"\s+checked/);
+  assert.match(html, /value="escada"\s+checked/);
+  assert.equal(CATEGORIAS_OCORRENCIA.length, 5);
   for (const cat of CATEGORIAS_OCORRENCIA) {
     assert.ok(html.includes(cat.rotulo), `HTML deve conter ${cat.rotulo}`);
     assert.ok(simboloCategoria(cat.id));
@@ -81,15 +82,22 @@ test('Web/PWA/WebForms markup, sw.js e app.js integram preferências, ocorrênci
   const sw = readFileSync(path.join(ROOT, 'public', 'sw.js'), 'utf8');
   const app = readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
 
-  for (const id of ['prefs-box', 'route-alternatives', 'route-occurrences', 'occ-menu-btn', 'occ-popover', 'occ-map-add', 'occ-map-toggle', 'fit-network-btn', 'legend-toggle-btn', 'legend-box', 'occ-modal', 'occ-detail-modal']) {
+  for (const id of ['prefs-box', 'route-alternatives', 'route-occurrences', 'occ-menu-btn', 'occ-popover', 'occ-map-add', 'occ-map-toggle', 'occ-cat-filters', 'current-location-btn', 'legend-toggle-btn', 'legend-box', 'occ-modal', 'occ-detail-modal', 'visit-planning-block', 'visit-import-modal', 'sheet-handle']) {
     assert.ok(html.includes(`id="${id}"`), `index.html deve conter #${id}`);
   }
+  assert.match(html, /data-sheet-state="mid"/);
+  assert.doesNotMatch(html, /data-layout-mode=/);
   assert.match(html, /Nova Ocorrência/);
   assert.match(html, /Visualizar/);
   assert.match(html, /id="legend-box"[^>]*hidden/);
+  assert.match(html, /swatch--gps/);
+  assert.match(html, /swatch--visit/);
   assert.match(app, /abrirLegenda/);
   assert.match(app, /fecharLegenda/);
+  assert.match(app, /solicitarLocalizacaoAtualWeb/);
   assert.match(sw, /\/ocorrenciasUI\.js/);
+  assert.match(sw, /\/planejamento\/planejamentoVisitas\.js/);
+  assert.match(sw, /\/planejamento\/xlsxCodec\.js/);
   assert.match(sw, /\/ocorrencias\/catalogo\.js/);
   assert.match(sw, /\/ocorrencias\/preferencias\.js/);
   assert.match(sw, /\/ocorrencias\/regras\.js/);
@@ -131,7 +139,7 @@ test('clienteRede em modo fallback cliente suporta todo o ciclo de ocorrências 
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      categoria: 'escadaria',
+      categoria: 'escada',
       classificacao: CLASSIFICACOES.PENALIZA,
       temporalidade: 'permanente',
       latitude: midSul[1],
@@ -151,7 +159,7 @@ test('clienteRede em modo fallback cliente suporta todo o ciclo de ocorrências 
   });
   assert.equal(dupRes.status, 409);
 
-  // Calcula rota com preferências: deve retornar alternativa desviando da escadaria
+  // Calcula rota com preferências: deve retornar alternativa desviando da escada
   const orig = coord(0, 0);
   const dest = coord(200, 0);
   const rotaRes = await cliente.fetchApi('/api/rota-paradas', {
@@ -164,7 +172,7 @@ test('clienteRede em modo fallback cliente suporta todo o ciclo de ocorrências 
       ],
       modo: 'usuario',
       circular: true,
-      preferencias: { modo: MODOS_PREFERENCIA.CONSIDERAR, evitarCategorias: ['escadaria'] },
+      preferencias: { modo: MODOS_PREFERENCIA.CONSIDERAR, evitarCategorias: ['escada'] },
     }),
   });
   assert.equal(rotaRes.status, 200);
@@ -238,7 +246,7 @@ test('clienteRede em iframe WebForms encaminha ocorrências via ApiProxy.ashx ao
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      categoria: 'obra_bloqueio',
+      categoria: 'obstrucao_passagem',
       classificacao: CLASSIFICACOES.EVITA,
       temporalidade: 'temporaria',
       latitude: p[1],

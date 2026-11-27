@@ -1,6 +1,16 @@
 /**
  * Catálogo compartilhado (Node.js, Web e APK) de categorias, classificações,
  * temporalidades e estados das ocorrências colaborativas do SIGA-Rotas.
+ *
+ * Lista padronizada ACS (exatamente 5 categorias para novos registros):
+ *  1. Escada (`escada`)
+ *  2. Rua íngreme (`rua_ingreme`)
+ *  3. Animais (`animais`)
+ *  4. Terreno irregular (`terreno_irregular`)
+ *  5. Obstrução de passagem (`obstrucao_passagem`)
+ *
+ * Registros históricos anteriores permanecem preservados em `CATEGORIAS_LEGADO`
+ * para exibição segura, roteamento e interações sem oferecê-los para novos registros.
  */
 
 export const CLASSIFICACOES = Object.freeze({
@@ -59,30 +69,18 @@ export const CLASSIFICACAO_META = Object.freeze({
 
 export const CATEGORIAS_OCORRENCIA = Object.freeze([
   Object.freeze({
-    id: 'escadaria',
-    rotulo: 'Escadaria',
+    id: 'escada',
+    rotulo: 'Escada',
     grupo: 'acesso',
     icone: '🪜',
     simbolo: 'ESC',
+    glifo: '≡',
     classificacaoPadrao: CLASSIFICACOES.PENALIZA,
     temporalidadePadrao: TEMPORALIDADES.PERMANENTE,
     ttlHoras: null,
     penalidadeMetros: 220,
-    plural: 'escadarias',
-    artigo: 'uma escadaria',
-  }),
-  Object.freeze({
-    id: 'terreno_irregular',
-    rotulo: 'Terreno irregular',
-    grupo: 'superficie',
-    icone: '🪨',
-    simbolo: 'TER',
-    classificacaoPadrao: CLASSIFICACOES.PENALIZA,
-    temporalidadePadrao: TEMPORALIDADES.PERMANENTE,
-    ttlHoras: null,
-    penalidadeMetros: 160,
-    plural: 'trechos com terreno irregular',
-    artigo: 'um trecho com terreno irregular',
+    plural: 'escadas',
+    artigo: 'uma escada',
   }),
   Object.freeze({
     id: 'rua_ingreme',
@@ -90,6 +88,7 @@ export const CATEGORIAS_OCORRENCIA = Object.freeze([
     grupo: 'relevo',
     icone: '⛰️',
     simbolo: 'ING',
+    glifo: '↗',
     classificacaoPadrao: CLASSIFICACOES.PENALIZA,
     temporalidadePadrao: TEMPORALIDADES.PERMANENTE,
     ttlHoras: null,
@@ -98,116 +97,226 @@ export const CATEGORIAS_OCORRENCIA = Object.freeze([
     artigo: 'uma rua íngreme',
   }),
   Object.freeze({
+    id: 'animais',
+    rotulo: 'Animais',
+    grupo: 'seguranca',
+    icone: '🐕',
+    simbolo: 'ANI',
+    glifo: '!',
+    classificacaoPadrao: CLASSIFICACOES.PENALIZA,
+    temporalidadePadrao: TEMPORALIDADES.TEMPORARIA,
+    ttlHoras: 7 * 24,
+    penalidadeMetros: 180,
+    plural: 'locais com animais na via',
+    artigo: 'animais na via',
+  }),
+  Object.freeze({
+    id: 'terreno_irregular',
+    rotulo: 'Terreno irregular',
+    grupo: 'superficie',
+    icone: '🪨',
+    simbolo: 'TER',
+    glifo: '≈',
+    classificacaoPadrao: CLASSIFICACOES.PENALIZA,
+    temporalidadePadrao: TEMPORALIDADES.PERMANENTE,
+    ttlHoras: null,
+    penalidadeMetros: 160,
+    plural: 'trechos com terreno irregular',
+    artigo: 'um trecho com terreno irregular',
+  }),
+  Object.freeze({
+    id: 'obstrucao_passagem',
+    rotulo: 'Obstrução de passagem',
+    grupo: 'interdicao',
+    icone: '🚧',
+    simbolo: 'OBS',
+    glifo: '✕',
+    classificacaoPadrao: CLASSIFICACOES.EVITA,
+    temporalidadePadrao: TEMPORALIDADES.TEMPORARIA,
+    ttlHoras: 14 * 24,
+    penalidadeMetros: 420,
+    plural: 'obstruções de passagem',
+    artigo: 'uma obstrução de passagem',
+  }),
+]);
+
+export const CATEGORIAS_LEGADO = Object.freeze({
+  escadaria: Object.freeze({
+    id: 'escadaria',
+    rotulo: 'Escadaria (registro anterior)',
+    rotuloBase: 'Escadaria',
+    equivalente: 'escada',
+    icone: '🪜',
+    simbolo: 'ESC',
+    glifo: '≡',
+    classificacaoPadrao: CLASSIFICACOES.PENALIZA,
+    temporalidadePadrao: TEMPORALIDADES.PERMANENTE,
+    ttlHoras: null,
+    penalidadeMetros: 220,
+    legado: true,
+  }),
+  passagem_estreita: Object.freeze({
     id: 'passagem_estreita',
-    rotulo: 'Passagem estreita',
-    grupo: 'acesso',
+    rotulo: 'Passagem estreita (registro anterior)',
+    rotuloBase: 'Passagem estreita',
+    equivalente: 'obstrucao_passagem',
     icone: '↔️',
     simbolo: 'EST',
+    glifo: '⇥',
     classificacaoPadrao: CLASSIFICACOES.PENALIZA,
     temporalidadePadrao: TEMPORALIDADES.PERMANENTE,
     ttlHoras: null,
     penalidadeMetros: 150,
-    plural: 'passagens estreitas',
-    artigo: 'uma passagem estreita',
+    legado: true,
   }),
-  Object.freeze({
+  buracos: Object.freeze({
     id: 'buracos',
-    rotulo: 'Buracos',
-    grupo: 'superficie',
+    rotulo: 'Buracos (registro anterior)',
+    rotuloBase: 'Buracos',
+    equivalente: 'terreno_irregular',
     icone: '🕳️',
     simbolo: 'BUR',
+    glifo: '●',
     classificacaoPadrao: CLASSIFICACOES.PENALIZA,
     temporalidadePadrao: TEMPORALIDADES.TEMPORARIA,
     ttlHoras: 14 * 24,
     penalidadeMetros: 140,
-    plural: 'trechos com buracos',
-    artigo: 'um trecho com buracos',
+    legado: true,
   }),
-  Object.freeze({
+  alagamento: Object.freeze({
     id: 'alagamento',
-    rotulo: 'Alagamento',
-    grupo: 'clima',
+    rotulo: 'Alagamento (registro anterior)',
+    rotuloBase: 'Alagamento',
+    equivalente: 'obstrucao_passagem',
     icone: '🌊',
     simbolo: 'ALA',
+    glifo: '∿',
     classificacaoPadrao: CLASSIFICACOES.EVITA,
     temporalidadePadrao: TEMPORALIDADES.TEMPORARIA,
     ttlHoras: 48,
     penalidadeMetros: 450,
-    plural: 'pontos de alagamento',
-    artigo: 'um alagamento',
+    legado: true,
   }),
-  Object.freeze({
+  obra_bloqueio: Object.freeze({
     id: 'obra_bloqueio',
-    rotulo: 'Obra ou bloqueio',
-    grupo: 'interdicao',
+    rotulo: 'Obra ou bloqueio (registro anterior)',
+    rotuloBase: 'Obra ou bloqueio',
+    equivalente: 'obstrucao_passagem',
     icone: '🚧',
     simbolo: 'OBR',
+    glifo: '✕',
     classificacaoPadrao: CLASSIFICACOES.EVITA,
     temporalidadePadrao: TEMPORALIDADES.TEMPORARIA,
     ttlHoras: 30 * 24,
     penalidadeMetros: 500,
-    plural: 'obras ou bloqueios',
-    artigo: 'uma obra ou bloqueio',
+    legado: true,
   }),
-  Object.freeze({
+  calcada_inexistente: Object.freeze({
     id: 'calcada_inexistente',
-    rotulo: 'Calçada inexistente',
-    grupo: 'infraestrutura',
+    rotulo: 'Calçada inexistente (registro anterior)',
+    rotuloBase: 'Calçada inexistente',
+    equivalente: 'terreno_irregular',
     icone: '🚶',
     simbolo: 'CAL',
+    glifo: '!',
     classificacaoPadrao: CLASSIFICACOES.INFORMATIVO,
     temporalidadePadrao: TEMPORALIDADES.PERMANENTE,
     ttlHoras: null,
     penalidadeMetros: 120,
-    plural: 'trechos sem calçada',
-    artigo: 'um trecho sem calçada',
+    legado: true,
   }),
-  Object.freeze({
+  obstaculo: Object.freeze({
     id: 'obstaculo',
-    rotulo: 'Obstáculo',
-    grupo: 'interdicao',
+    rotulo: 'Obstáculo (registro anterior)',
+    rotuloBase: 'Obstáculo',
+    equivalente: 'obstrucao_passagem',
     icone: '⚠️',
     simbolo: 'OBS',
+    glifo: '▲',
     classificacaoPadrao: CLASSIFICACOES.PENALIZA,
     temporalidadePadrao: TEMPORALIDADES.TEMPORARIA,
     ttlHoras: 7 * 24,
     penalidadeMetros: 200,
-    plural: 'obstáculos',
-    artigo: 'um obstáculo',
+    legado: true,
   }),
-  Object.freeze({
+  outras: Object.freeze({
     id: 'outras',
-    rotulo: 'Outras condições',
-    grupo: 'geral',
+    rotulo: 'Outras condições (registro anterior)',
+    rotuloBase: 'Outras condições',
+    equivalente: null,
     icone: '📌',
     simbolo: 'OUT',
+    glifo: '•',
     classificacaoPadrao: CLASSIFICACOES.INFORMATIVO,
     temporalidadePadrao: TEMPORALIDADES.TEMPORARIA,
     ttlHoras: 7 * 24,
     penalidadeMetros: 120,
-    plural: 'ocorrências diversas',
-    artigo: 'uma condição informada',
+    legado: true,
   }),
-]);
+});
 
 export const GRUPOS_CATEGORIA = Object.freeze([
   Object.freeze({ id: 'acesso', rotulo: 'Acessibilidade e passagem' }),
-  Object.freeze({ id: 'superficie', rotulo: 'Pavimento e solo' }),
   Object.freeze({ id: 'relevo', rotulo: 'Inclinação' }),
-  Object.freeze({ id: 'interdicao', rotulo: 'Bloqueios e obstáculos' }),
-  Object.freeze({ id: 'clima', rotulo: 'Clima e água' }),
-  Object.freeze({ id: 'infraestrutura', rotulo: 'Infraestrutura' }),
-  Object.freeze({ id: 'geral', rotulo: 'Outros' }),
+  Object.freeze({ id: 'seguranca', rotulo: 'Segurança em campo' }),
+  Object.freeze({ id: 'superficie', rotulo: 'Pavimento e solo' }),
+  Object.freeze({ id: 'interdicao', rotulo: 'Bloqueios e obstruções' }),
 ]);
 
 const CATEGORIA_MAP = new Map(CATEGORIAS_OCORRENCIA.map((c) => [c.id, c]));
 
+/**
+ * Retorna exclusivamente uma das 5 categorias padronizadas ativas (para validação e novos registros).
+ */
 export function obterCategoria(id) {
   return CATEGORIA_MAP.get(String(id || '').trim()) || null;
 }
 
+/**
+ * Retorna metadados seguros para exibição, roteamento e interação de qualquer categoria
+ * (ativa ou registro histórico legado), sem apagar nem quebrar registros antigos.
+ */
+export function obterCategoriaExibicao(id) {
+  const chave = String(id || '').trim();
+  const ativa = CATEGORIA_MAP.get(chave);
+  if (ativa) return ativa;
+  if (Object.prototype.hasOwnProperty.call(CATEGORIAS_LEGADO, chave)) {
+    return CATEGORIAS_LEGADO[chave];
+  }
+  if (!chave) return null;
+  return {
+    id: chave,
+    rotulo: `${chave} (registro anterior)`,
+    rotuloBase: chave,
+    equivalente: null,
+    icone: '📌',
+    simbolo: 'ANT',
+    glifo: '•',
+    classificacaoPadrao: CLASSIFICACOES.INFORMATIVO,
+    temporalidadePadrao: TEMPORALIDADES.TEMPORARIA,
+    ttlHoras: 7 * 24,
+    penalidadeMetros: 150,
+    legado: true,
+  };
+}
+
 export function validarCategoria(id) {
   return CATEGORIA_MAP.has(String(id || '').trim());
+}
+
+export function ehCategoriaLegado(id) {
+  const chave = String(id || '').trim();
+  return Boolean(chave) && !CATEGORIA_MAP.has(chave);
+}
+
+export function normalizarCategoriaLegado(id) {
+  const chave = String(id || '').trim();
+  if (CATEGORIA_MAP.has(chave)) return chave;
+  return CATEGORIAS_LEGADO[chave]?.equivalente || null;
+}
+
+export function glifoCategoria(id) {
+  return obterCategoriaExibicao(id)?.glifo || '•';
 }
 
 export function validarClassificacao(valor) {

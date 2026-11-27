@@ -20,7 +20,7 @@
 <meta name="theme-color" content="#045127" />
 </head>
 <body>
-<div class="app" data-layout="split">
+<div class="app" data-sheet-state="mid">
   <header class="app-header">
     <img src="logo-siga-app.png" width="163" height="40" alt="SIGA APP" />
     <div class="sync-pill" id="campo-sync-pill" data-sync-state="IDLE" aria-live="polite">
@@ -28,16 +28,79 @@
       <span id="campo-sync-texto">Salvo no dispositivo</span>
       <button type="button" id="campo-sync-retry" class="sync-pill__retry" hidden>Tentar novamente</button>
     </div>
-    <nav class="mode-switch" aria-label="Visualização">
-      <button type="button" data-layout-mode="split" aria-pressed="true">Dividido</button>
-      <button type="button" data-layout-mode="map" aria-pressed="false">Mapa</button>
-      <button type="button" data-layout-mode="panel" aria-pressed="false">Painel</button>
-    </nav>
   </header>
 
-  <!-- ─────────────── Painel lateral ─────────────── -->
-  <aside class="panel">
+  <!-- ─────────────── Painel lateral / bottom-sheet em telas estreitas ─────────────── -->
+  <aside class="panel" id="app-panel">
+    <div class="sheet-handle" id="sheet-handle">
+      <div class="sheet-handle__pill" aria-hidden="true"></div>
+      <div class="sheet-handle__row">
+        <button type="button" class="sheet-handle__title" id="sheet-summary-btn" aria-label="Alternar altura do painel">
+          <span id="sheet-summary-text">Planejamento e trajeto</span>
+          <span class="sheet-handle__badge" id="sheet-summary-badge" hidden></span>
+        </button>
+        <div class="sheet-handle__actions">
+          <button type="button" class="mini" id="sheet-collapse-btn">Mapa</button>
+          <button type="button" class="mini mini--accent" id="sheet-expand-btn">Expandir</button>
+        </div>
+      </div>
+    </div>
 
+    <div class="panel__scroll">
+    <section class="block visit-block" id="visit-planning-block">
+      <details class="visit-box" id="visit-box">
+        <summary class="prefs-box__summary">
+          <span>Planejamento de visitas (<span id="visit-pacientes-count">0</span>)</span>
+          <span class="prefs-box__badge" id="visit-summary-badge">0/0 concluídas</span>
+        </summary>
+        <div class="visit-box__body">
+          <div class="visit-periods" role="radiogroup" aria-label="Período de planejamento">
+            <label class="visit-period-chip">
+              <input type="radio" name="visit_periodo" value="diario" />
+              <span>Diário</span>
+            </label>
+            <label class="visit-period-chip">
+              <input type="radio" name="visit_periodo" value="semanal" checked />
+              <span>Semanal</span>
+            </label>
+            <label class="visit-period-chip">
+              <input type="radio" name="visit_periodo" value="mensal" />
+              <span>Mensal</span>
+            </label>
+          </div>
+
+          <div class="visit-actions-row">
+            <button type="button" id="visit-import-btn" class="btn btn--primary">Importar planilha (.xlsx)</button>
+            <button type="button" id="visit-template-btn" class="btn btn--export">Baixar modelo (.xlsx)</button>
+            <input type="file" id="visit-file-input" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
+          </div>
+
+          <div class="visit-actions-row" id="visit-plan-actions" hidden>
+            <button type="button" id="visit-plan-btn" class="btn btn--ghost">Gerar planejamento</button>
+            <button type="button" id="visit-apply-route-btn" class="btn btn--primary">Aplicar à rota</button>
+          </div>
+
+          <p id="visit-feedback" class="gpx-feedback" role="status" hidden></p>
+
+          <div id="visit-suggestions-box" class="visit-suggestions" hidden></div>
+
+          <div class="visit-filters" id="visit-status-filters" hidden>
+            <button type="button" class="visit-filter-chip is-active" data-visit-filter="todos">Todas</button>
+            <button type="button" class="visit-filter-chip" data-visit-filter="planejada">Planejadas</button>
+            <button type="button" class="visit-filter-chip" data-visit-filter="oportunistica_sugerida">Sugeridas</button>
+            <button type="button" class="visit-filter-chip" data-visit-filter="realizada">Realizadas</button>
+            <button type="button" class="visit-filter-chip" data-visit-filter="nao_realizada">Não realizadas</button>
+          </div>
+
+          <div id="visit-list" class="visit-list">
+            <p class="campo-vazio">Importe uma planilha Excel (.xlsx) com pacientes da área para gerar o cronograma diário, semanal ou mensal.</p>
+          </div>
+
+          <button type="button" id="visit-clear-btn" class="btn btn--danger-outline btn--block" hidden>Limpar planejamento local</button>
+          <p class="visit-clinical-note">Classificação operacional para ordenação em campo; critérios clínicos oficiais são plugáveis via serviço técnico habilitado.</p>
+        </div>
+      </details>
+    </section>
 
     <section class="block">
       <div class="block__title">Pontos do trajeto</div>
@@ -187,6 +250,7 @@
     <footer class="panel__foot">
       <span id="status" class="status status--idle">Pronto</span>
     </footer>
+    </div>
   </aside>
 
   <!-- ─────────────── Mapa ─────────────── -->
@@ -218,6 +282,7 @@
             <span class="occ-popover__label">Visualizar</span>
             <span class="occ-popover__status"><span id="occ-count">0</span> · <span id="occ-toggle-status">Ativo</span></span>
           </button>
+          <div class="occ-popover__cats" id="occ-cat-filters" aria-label="Filtrar ocorrências no mapa"></div>
         </div>
         <button
           type="button"
@@ -238,10 +303,10 @@
 
       <button
         type="button"
-        class="map-action-btn map-action-btn--icon"
-        id="fit-network-btn"
-        aria-label="Centralizar rede no mapa"
-        title="Centralizar rede no mapa"
+        class="map-action-btn map-action-btn--icon map-action-btn--gps"
+        id="current-location-btn"
+        aria-label="Centralizar na localização atual"
+        title="Centralizar na localização atual"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="5" />
@@ -276,9 +341,11 @@
         <div><span class="swatch swatch--route"></span> Rota selecionada</div>
         <div id="legend-alt" hidden><span class="swatch swatch--route-alt"></span> Rota alternativa</div>
         <div id="legend-return"><span class="swatch swatch--route-return"></span> Retorno a A</div>
+        <div><span class="swatch swatch--gps"></span> Sua localização (GPS)</div>
         <div><span class="swatch swatch--origin"></span> Origem e destino (A)</div>
         <div><span class="swatch swatch--stop"></span> Parada intermediária</div>
         <div id="legend-dest" hidden><span class="swatch swatch--dest"></span> Destino</div>
+        <div id="legend-visits" hidden><span class="swatch swatch--visit"></span> Visitas planejadas</div>
         <div class="legend__occ-group" id="legend-occ">
           <div><span class="swatch swatch--occ-info"></span> Informativo</div>
           <div><span class="swatch swatch--occ-penaliza"></span> Custo aumentado</div>
@@ -488,6 +555,38 @@
             <button type="submit" class="btn btn--primary" id="campo-obs-salvar">Salvar no dispositivo</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Modal de pré-visualização da importação de planilha de visitas (.xlsx) -->
+    <div class="occ-modal" id="visit-import-modal" role="dialog" aria-modal="true" aria-labelledby="visit-import-titulo" hidden>
+      <div class="occ-modal__card">
+        <div class="occ-modal__head">
+          <div>
+            <strong id="visit-import-titulo">Pré-visualização da importação</strong>
+            <div class="occ-seg-box__meta" id="visit-import-arquivo"></div>
+          </div>
+          <button type="button" class="occ-modal__close" id="visit-import-fechar" aria-label="Fechar">&#10005;</button>
+        </div>
+        <div class="occ-form">
+          <div class="visit-import-stats" id="visit-import-stats"></div>
+          <div class="occ-temp-row">
+            <label class="occ-chip">
+              <input type="radio" name="visit_import_modo" value="mesclar" checked />
+              <span>Mesclar com atuais</span>
+            </label>
+            <label class="occ-chip">
+              <input type="radio" name="visit_import_modo" value="substituir" />
+              <span>Substituir lista</span>
+            </label>
+          </div>
+          <div id="visit-import-preview-lista" class="visit-import-preview"></div>
+          <div id="visit-import-avisos" class="visit-import-notices" hidden></div>
+          <div class="occ-modal__actions">
+            <button type="button" class="btn btn--ghost" id="visit-import-cancelar">Cancelar</button>
+            <button type="button" class="btn btn--primary" id="visit-import-confirmar">Confirmar importação</button>
+          </div>
+        </div>
       </div>
     </div>
 

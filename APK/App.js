@@ -20,7 +20,6 @@ import {
   View,
   Text,
   Image,
-  ScrollView,
   TouchableOpacity,
   StatusBar,
   SafeAreaView,
@@ -70,6 +69,28 @@ import { SavedRoutesSection } from './src/components/SavedRoutesSection.js';
 import { RouteObservationsSection } from './src/components/RouteObservationsSection.js';
 import { RouteObservationModal } from './src/components/RouteObservationModal.js';
 import { ConfirmActionModal } from './src/components/ConfirmActionModal.js';
+import { BottomSheetPanel } from './src/components/BottomSheetPanel.js';
+import {
+  ESTADOS_SHEET,
+  calcularAlturasSheet,
+  calcularInsetMapaParaSheet,
+} from './src/components/bottomSheetLayout.js';
+import { VisitPlanningSection } from './src/components/VisitPlanningSection.js';
+import { ImportScheduleModal } from './src/components/ImportScheduleModal.js';
+import { obterLocalizacaoAtual } from './src/services/currentLocation.js';
+import {
+  carregarPlanejamentoMobile,
+  exportarModeloPlanilhaMobile,
+  limparPlanejamentoMobile,
+  normalizarPeriodoPlanejamento,
+  normalizarStatusVisita,
+  PERIODOS_PLANEJAMENTO,
+  planejarVisitasPeriodo,
+  salvarPlanejamentoMobile,
+  selecionarELerPlanilhaMobile,
+  STATUS_VISITA,
+  sugerirVisitasProximasAoTrajeto,
+} from './src/services/planejamentoMobileService.js';
 import { COLORS } from './src/theme/colors.js';
 
 export default function App() {
@@ -102,6 +123,21 @@ export default function App() {
   const ocorrenciasRef = useRef(ocorrencias);
   ocorrenciasRef.current = ocorrencias;
   const [showOccurrences, setShowOccurrences] = useState(true);
+  const [occCategoryFilter, setOccCategoryFilter] = useState(null);
+  const [currentLocation, setCurrentLocation] = useState(null);
+  const [locatingCurrent, setLocatingCurrent] = useState(false);
+  const [locationFeedback, setLocationFeedback] = useState(null);
+
+  // Estado de planejamento de visitas ACS (offline-first via SQLite)
+  const [pacientesTerritorio, setPacientesTerritorio] = useState([]);
+  const [planoVisitas, setPlanoVisitas] = useState(null);
+  const [periodoPlanejamento, setPeriodoPlanejamento] = useState(PERIODOS_PLANEJAMENTO.SEMANAL);
+  const [visitFeedback, setVisitFeedback] = useState(null);
+  const [importPreviewModal, setImportPreviewModal] = useState({
+    visible: false,
+    arquivo: '',
+    preview: null,
+  });
   const [occModal, setOccModal] = useState({
     visible: false,
     mode: 'create',
@@ -294,10 +330,20 @@ export default function App() {
     kind: 'busy',
   });
 
-  // Modo de layout mobile: 'split' (mapa + painel), 'map' (mapa expandido), 'panel' (painel expandido)
-  const [layoutMode, setLayoutMode] = useState('split');
+  // Bottom sheet retrátil em 3 estágios (collapsed | mid | expanded) sobre o mapa em tela cheia
+  const [sheetState, setSheetState] = useState(ESTADOS_SHEET.MID);
+  const [mapStageHeight, setMapStageHeight] = useState(700);
   const [basemapMode, setBasemapMode] = useState(CAMADA_PADRAO);
   const basemapTouchedRef = useRef(false);
+
+  const mapBottomInset = useMemo(() => {
+    const alturas = calcularAlturasSheet(mapStageHeight);
+    return calcularInsetMapaParaSheet(sheetState, alturas);
+  }, [mapStageHeight, sheetState]);
+
+  const garantirMapaVisivel = useCallback(() => {
+    setSheetState((prev) => (prev === ESTADOS_SHEET.EXPANDED ? ESTADOS_SHEET.MID : prev));
+  }, []);
 
   const setStatus = useCallback((text, kind = 'idle') => {
     setStatusInfo({ text, kind });
@@ -383,7 +429,17 @@ export default function App() {
     });
     void svcOcc.carregarPreferencias().then((pref) => setPreferencias(pref));
     void svcOcc.listarAtivas().then((ativas) => setOcorrencias(ativas)).catch(() => {});
-    void svcCampo.inicializar().then(() => refreshCampoUi());
+    void svcCampo.inicializar().then(async () => {
+      await refreshCampoUi();
+      const carregado = await carregarPlanejamentoMobile(svcCampo.repositorio?.driver);
+      setPacientesTerritorio(carregado.pacientes || []);
+      setPeriodoPlanejamento(carregado.periodo || PERIODOS_PLANEJAMENTO.SEMANAL);
+      if (carregado.plano) {
+        setPlanoVisitas(carregado.plano);
+      } else if (carregado.pacientes?.length) {
+        setPlanoVisitas(planejarVisitasPeriodo(carregado.pacientes, { periodo: carregado.periodo }));
+      }
+    });
 
     const painel = criarPainelRede({ service: mobileNetworkService, aoMudar: (estado) => {
       setNetworkPanel(estado);
@@ -567,9 +623,7 @@ export default function App() {
     }
     const ponto = lista.pontos.find((p) => p.id === id);
     setPickingId(id);
-    if (layoutMode === 'panel') {
-      setLayoutMode('split');
-    }
+    setSheetState(ESTADOS_SHEET.COLLAPSED);
     setStatus(
       `Toque no mapa para definir o ponto ${ponto ? ponto.rotulo : ''}.`,
       'busy'
@@ -614,6 +668,7 @@ export default function App() {
       return cloneLista(copia);
     });
     setPickingId(null);
+    setSheetState(ESTADOS_SHEET.MID);
     if (resolvido?.naRegiao) {
       setStatus(`Ponto definido no mapa (${resolvido.enderecoDigital}).`, 'ok');
     } else if (resolvido) {
@@ -626,7 +681,7 @@ export default function App() {
   const handleFocusMap = (ponto) => {
     Keyboard.dismiss();
     if (!ponto || ponto.latitude == null || ponto.longitude == null) return;
-    if (layoutMode === 'panel') setLayoutMode('split');
+    garantirMapaVisivel();
     mapRef.current?.centerPoint(ponto.longitude, ponto.latitude);
   };
 
@@ -922,6 +977,7 @@ export default function App() {
       setRouteResult(escolhida.rota || data);
       const d = formatDistanceParts(escolhida.distance ?? data.distance);
       const qtdAlts = data.rotas.length;
+      garantirMapaVisivel();
       setStatus(
         qtdAlts > 1
           ? `Rota calculada (${qtdAlts} opções): ${d.v} ${d.u}.`
@@ -934,6 +990,7 @@ export default function App() {
     setSelectedRouteId(null);
     setComparacaoAlternativas(null);
     setRouteResult(data);
+    garantirMapaVisivel();
     const d = formatDistanceParts(data.distance);
     setStatus(`Rota calculada: ${d.v} ${d.u}.`, 'ok');
   };
@@ -951,7 +1008,7 @@ export default function App() {
     Keyboard.dismiss();
     setPickingId(null);
     setPickingOccurrence(true);
-    if (layoutMode === 'panel') setLayoutMode('split');
+    setSheetState(ESTADOS_SHEET.COLLAPSED);
     setStatus('Toque sobre uma rua no mapa para registrar uma ocorrência.', 'busy');
   };
 
@@ -1536,7 +1593,7 @@ export default function App() {
     setPickingId(null);
     setPickingOccurrence(false);
     setPickingRouteObs(true);
-    if (layoutMode === 'panel') setLayoutMode('split');
+    setSheetState(ESTADOS_SHEET.COLLAPSED);
     setStatus('Toque no mapa para marcar o local da observação da rota.', 'busy');
   };
 
@@ -1660,12 +1717,251 @@ export default function App() {
     }
   };
 
+  // Centralização em localização real do GPS (nunca faz fallback para FIT_NETWORK)
+  const handleRequestCurrentLocation = async () => {
+    if (locatingCurrent) return;
+    Keyboard.dismiss();
+    setLocatingCurrent(true);
+    setLocationFeedback(null);
+    setStatus('Obtendo localização GPS atual…', 'busy');
+    try {
+      const res = await obterLocalizacaoAtual();
+      const posRaw = res?.position || res?.posicao;
+      if (!res?.ok || !posRaw) {
+        const msg = res?.message || res?.mensagem || 'Não foi possível obter sua localização atual.';
+        setLocationFeedback({ status: 'error', message: msg });
+        setStatus(msg, 'err');
+        return;
+      }
+      const pos = { ...posRaw, simulado: false };
+      setCurrentLocation(pos);
+      setNavigationCenter({ latitude: pos.latitude, longitude: pos.longitude, ts: Date.now() });
+      garantirMapaVisivel();
+      const precTxt = pos.precisao != null ? ` (±${Math.round(pos.precisao)} m)` : '';
+      setStatus(`Mapa centralizado na sua localização atual${precTxt}.`, 'ok');
+    } finally {
+      setLocatingCurrent(false);
+    }
+  };
+
+  // Sugestões oportunísticas e marcadores do planejamento de visitas
+  const sugestoesProximas = useMemo(() => {
+    if (!routeResult?.ok || !routeResult?.geometry || !pacientesTerritorio.length) return [];
+    return sugerirVisitasProximasAoTrajeto({
+      pacientes: pacientesTerritorio,
+      visitasPlanejadas: planoVisitas?.visitas || [],
+      routeGeometry: routeResult.geometry,
+      raioMetros: 220,
+      limite: 5,
+    });
+  }, [routeResult, pacientesTerritorio, planoVisitas]);
+
+  const visitMarkers = useMemo(() => {
+    const mapa = new Map();
+    for (const v of planoVisitas?.visitas || []) {
+      if (v && v.latitude != null && v.longitude != null) {
+        mapa.set(v.pacienteId || v.id, {
+          id: v.id,
+          nome: v.nome,
+          latitude: v.latitude,
+          longitude: v.longitude,
+          status: v.status,
+        });
+      }
+    }
+    for (const s of sugestoesProximas) {
+      const key = s.pacienteId || s.id;
+      if (!mapa.has(key) && s.latitude != null && s.longitude != null) {
+        mapa.set(key, {
+          id: s.id,
+          nome: s.nome,
+          latitude: s.latitude,
+          longitude: s.longitude,
+          status: STATUS_VISITA.OPORTUNISTICA_SUGERIDA,
+        });
+      }
+    }
+    return [...mapa.values()];
+  }, [planoVisitas, sugestoesProximas]);
+
+  const persistirPlanejamento = useCallback(async (pacientesAtualizados, planoAtualizado, periodoAtual = periodoPlanejamento) => {
+    await salvarPlanejamentoMobile({
+      pacientes: pacientesAtualizados,
+      plano: planoAtualizado,
+      periodo: periodoAtual,
+      sqlite: campoServiceRef.current?.repositorio?.driver,
+    });
+  }, [periodoPlanejamento]);
+
+  const handleDownloadTemplatePlanilha = async () => {
+    const res = await exportarModeloPlanilhaMobile();
+    if (res?.ok) {
+      setVisitFeedback({ status: 'ok', message: res.mensagem });
+      setStatus(res.mensagem, 'ok');
+    } else if (!res?.cancelado) {
+      setVisitFeedback({ status: 'error', message: res?.mensagem || 'Não foi possível salvar a planilha modelo.' });
+    }
+  };
+
+  const handlePickImportPlanilha = async () => {
+    setVisitFeedback(null);
+    const res = await selecionarELerPlanilhaMobile();
+    if (!res?.ok) {
+      if (!res?.cancelado) {
+        setVisitFeedback({ status: 'error', message: res?.mensagem || 'Falha ao importar planilha.' });
+      }
+      return;
+    }
+    setImportPreviewModal({
+      visible: true,
+      arquivo: res.arquivo,
+      preview: res.preview,
+    });
+  };
+
+  const handleConfirmImportPlanilha = async ({ registros, substituir }) => {
+    const base = substituir ? [] : pacientesTerritorio;
+    const mapa = new Map();
+    for (const item of [...base, ...(registros || [])]) {
+      if (item?.id) mapa.set(item.id, item);
+    }
+    const listaFinal = [...mapa.values()];
+    const novoPlano = planejarVisitasPeriodo(listaFinal, {
+      periodo: periodoPlanejamento,
+      origemCoord: lista.pontos[0]?.latitude != null ? lista.pontos[0] : null,
+      visitasAnteriores: planoVisitas?.visitas || [],
+    });
+    setPacientesTerritorio(listaFinal);
+    setPlanoVisitas(novoPlano);
+    setImportPreviewModal({ visible: false, arquivo: '', preview: null });
+    await persistirPlanejamento(listaFinal, novoPlano, periodoPlanejamento);
+    const msg = `${registros.length} paciente(s) carregado(s) e ${novoPlano.visitas.length} visita(s) planejada(s).`;
+    setVisitFeedback({ status: 'ok', message: msg });
+    setStatus(msg, 'ok');
+  };
+
+  const handleChangePeriodoPlanejamento = async (novoPeriodo) => {
+    const norm = normalizarPeriodoPlanejamento(novoPeriodo);
+    setPeriodoPlanejamento(norm);
+    const novoPlano = pacientesTerritorio.length
+      ? planejarVisitasPeriodo(pacientesTerritorio, {
+          periodo: norm,
+          origemCoord: lista.pontos[0]?.latitude != null ? lista.pontos[0] : null,
+          visitasAnteriores: planoVisitas?.visitas || [],
+        })
+      : null;
+    setPlanoVisitas(novoPlano);
+    await persistirPlanejamento(pacientesTerritorio, novoPlano, norm);
+  };
+
+  const handleGenerateVisitPlan = async () => {
+    if (!pacientesTerritorio.length) return;
+    const novoPlano = planejarVisitasPeriodo(pacientesTerritorio, {
+      periodo: periodoPlanejamento,
+      origemCoord: lista.pontos[0]?.latitude != null ? lista.pontos[0] : null,
+      visitasAnteriores: planoVisitas?.visitas || [],
+    });
+    setPlanoVisitas(novoPlano);
+    await persistirPlanejamento(pacientesTerritorio, novoPlano, periodoPlanejamento);
+    setVisitFeedback({ status: 'ok', message: `Planejamento atualizado com ${novoPlano.visitas.length} visita(s).` });
+  };
+
+  const handleUpdateVisitStatus = async (visitaId, novoStatus) => {
+    const statusNorm = normalizarStatusVisita(novoStatus);
+    const visitasAtualizadas = (planoVisitas?.visitas || []).map((v) =>
+      v.id === visitaId ? { ...v, status: statusNorm, atualizadoEm: new Date().toISOString() } : v,
+    );
+    const pacientesAtualizados = pacientesTerritorio.map((p) => {
+      const visitaAlvo = visitasAtualizadas.find((v) => v.id === visitaId && v.pacienteId === p.id);
+      if (!visitaAlvo) return p;
+      return {
+        ...p,
+        ultimaVisitaEm: statusNorm === STATUS_VISITA.REALIZADA ? new Date().toISOString() : p.ultimaVisitaEm,
+      };
+    });
+    const novoPlano = planoVisitas ? { ...planoVisitas, visitas: visitasAtualizadas } : null;
+    setPacientesTerritorio(pacientesAtualizados);
+    setPlanoVisitas(novoPlano);
+    await persistirPlanejamento(pacientesAtualizados, novoPlano, periodoPlanejamento);
+  };
+
+  const adicionarVisitasAoTrajeto = useCallback((visitasAlvo) => {
+    const validas = (visitasAlvo || []).filter((v) => v && v.latitude != null && v.longitude != null);
+    if (!validas.length) return;
+    setLista((atual) => {
+      const copia = cloneLista(atual);
+      for (const v of validas) {
+        const jaExiste = copia.pontos.some(
+          (p) => p.latitude != null && p.longitude != null &&
+            Math.abs(p.latitude - v.latitude) < 0.00005 &&
+            Math.abs(p.longitude - v.longitude) < 0.00005,
+        );
+        if (jaExiste) continue;
+        // Preenche origem A caso esteja vazia, senão adiciona parada intermediária
+        const vazio = copia.pontos.find((p) => p.latitude == null && p.tipo !== 'destino');
+        if (vazio) {
+          atualizarPonto(copia, vazio.id, {
+            latitude: v.latitude,
+            longitude: v.longitude,
+            enderecoDigital: v.enderecoDigital || '',
+            status: STATUS.CONVERTIDO,
+            origem: v.enderecoDigital ? 'codigo' : 'coordenada',
+            mensagem: `Visita: ${v.nome}`,
+          });
+        } else {
+          const criado = adicionarPonto(copia, {
+            latitude: v.latitude,
+            longitude: v.longitude,
+            enderecoDigital: v.enderecoDigital || '',
+            status: STATUS.CONVERTIDO,
+            origem: v.enderecoDigital ? 'codigo' : 'coordenada',
+            mensagem: `Visita: ${v.nome}`,
+          });
+          if (!criado) break;
+        }
+      }
+      return cloneLista(copia);
+    });
+    const msg = validas.length === 1
+      ? `Visita "${validas[0].nome}" incluída no trajeto.`
+      : `${validas.length} visita(s) aplicada(s) como paradas do trajeto.`;
+    setVisitFeedback({ status: 'ok', message: msg });
+    setStatus(msg, 'ok');
+  }, [setStatus]);
+
+  const handleClearVisits = async () => {
+    setPacientesTerritorio([]);
+    setPlanoVisitas(null);
+    setVisitFeedback({ status: 'ok', message: 'Planejamento local de visitas removido.' });
+    await limparPlanejamentoMobile(campoServiceRef.current?.repositorio?.driver);
+  };
+
+  const sheetSummaryTitle = routeResult?.ok
+    ? `Rota · ${(() => { const d = formatDistanceParts(routeResult.distance); return `${d.v} ${d.u}`; })()}`
+    : planoVisitas?.visitas?.length
+      ? `Planejamento · ${planoVisitas.visitas.length} visita(s)`
+      : 'Planejamento e trajeto';
+  const sheetSummaryBadge = routeResult?.ok
+    ? `${lista.pontos.length} ponto(s)`
+    : pacientesTerritorio.length > 0
+      ? `${pacientesTerritorio.length} paciente(s)`
+      : '';
+
+  const handleVisitMarkerClick = (visitaId) => {
+    const visita =
+      (planoVisitas?.visitas || []).find((v) => v.id === visitaId) ||
+      sugestoesProximas.find((s) => s.id === visitaId);
+    if (!visita) return;
+    setSheetState(ESTADOS_SHEET.MID);
+    setStatus(`Visita selecionada: ${visita.nome}`, 'idle');
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
 
       <View style={styles.root}>
-        {/* Cabeçalho compacto com logo SIGA APP e alternador de visualização */}
+        {/* Cabeçalho compacto com logo SIGA APP (sem abas antigas Dividido/Mapa/Painel) */}
         <View style={styles.header}>
           <View style={styles.headerLogoWrap}>
             <Image
@@ -1675,135 +1971,113 @@ export default function App() {
               accessibilityLabel="SIGA APP"
             />
           </View>
-
-          <View style={styles.modeSwitch}>
-            <TouchableOpacity
-              style={[
-                styles.modeBtn,
-                layoutMode === 'split' && styles.modeBtnActive,
-              ]}
-              onPress={() => {
-                Keyboard.dismiss();
-                setLayoutMode('split');
-              }}
-            >
-              <Text
-                style={[
-                  styles.modeBtnText,
-                  layoutMode === 'split' && styles.modeBtnTextActive,
-                ]}
-              >
-                Dividido
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.modeBtn,
-                layoutMode === 'map' && styles.modeBtnActive,
-              ]}
-              onPress={() => {
-                Keyboard.dismiss();
-                setLayoutMode('map');
-              }}
-            >
-              <Text
-                style={[
-                  styles.modeBtnText,
-                  layoutMode === 'map' && styles.modeBtnTextActive,
-                ]}
-              >
-                Mapa
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.modeBtn,
-                layoutMode === 'panel' && styles.modeBtnActive,
-              ]}
-              onPress={() => {
-                Keyboard.dismiss();
-                setLayoutMode('panel');
-              }}
-            >
-              <Text
-                style={[
-                  styles.modeBtnText,
-                  layoutMode === 'panel' && styles.modeBtnTextActive,
-                ]}
-              >
-                Painel
-              </Text>
-            </TouchableOpacity>
+          <View style={styles.headerMetaPill}>
+            <Text style={styles.headerMetaText}>
+              {planoVisitas?.visitas?.length
+                ? `${planoVisitas.visitas.length} visita(s)`
+                : `${lista.pontos.length} ponto(s)`}
+            </Text>
           </View>
         </View>
 
-        {/* Área do Mapa Cartográfico */}
-          <View
-            pointerEvents={layoutMode === 'panel' ? 'none' : 'auto'}
-            accessibilityElementsHidden={layoutMode === 'panel'}
-            importantForAccessibility={layoutMode === 'panel' ? 'no-hide-descendants' : 'auto'}
-            style={[
-              styles.mapArea,
-              layoutMode === 'panel' && styles.mapAreaHidden,
-              layoutMode === 'map' ? styles.mapAreaFull : styles.mapAreaSplit,
-            ]}
-          >
-            <RoadNetworkMap
-              ref={mapRef}
-              visible={layoutMode !== 'panel'}
-              basemapMode={basemapMode}
-              onChangeBasemap={handleChangeBasemap}
-              features={networkFeatures}
-              markers={lista.pontos}
-              routeGeometry={activeRouteGeometry}
-              routeSegments={routeSegments}
-              navigationPosition={navigation?.posicao}
-              centerRequest={navigationCenter}
-              isSimulating={navigation?.modo === 'simulacao'}
-              isGPS={navigation?.modo === 'gps'}
-              suppressRouteFit={!!navigation}
-              onToggleSegment={toggleSegment}
-              onRestoreSegments={restoreSegments}
-              pickingPoint={pickingPoint}
-              onCancelPick={() => {
-                setPickingId(null);
-                setStatus('Pronto', 'idle');
-              }}
-              onMapPickCoordinate={handleMapPickCoordinate}
-              onMapClick={handleMapClick}
-              occurrences={ocorrencias}
-              showOccurrences={showOccurrences}
-              altRoutes={altRoutesMap}
-              highlightSegments={highlightSegmentsMap}
-              pickingOccurrence={pickingOccurrence}
-              onStartPickOccurrence={handleStartPickOccurrence}
-              onCancelPickOccurrence={() => {
-                setPickingOccurrence(false);
-                setStatus('Pronto', 'idle');
-              }}
-              onMapPickOccurrence={handleMapPickOccurrence}
-              onOccurrenceClick={handleOpenOccurrenceDetail}
-              onAltRouteClick={(altId) => selecionarAlternativa(altId)}
-              onToggleOccurrences={() => setShowOccurrences((v) => !v)}
-              gpsTrailGeometry={gpsTrailGeometry}
-              routeObservations={routeObservations}
-              pickingRouteObs={pickingRouteObs}
-              onCancelPickRouteObs={() => {
-                setPickingRouteObs(false);
-                setStatus('Pronto', 'idle');
-              }}
-              onMapPickRouteObs={handleMapPickRouteObs}
-              onRouteObservationClick={handleOpenRouteObservationDetail}
-            />
-          </View>
+        {/* Área principal: mapa em tela cheia + painel inferior retrátil em 3 estágios */}
+        <View
+          style={styles.mapStage}
+          onLayout={(e) => {
+            const h = e?.nativeEvent?.layout?.height;
+            if (h > 0) setMapStageHeight(h);
+          }}
+        >
+          <RoadNetworkMap
+            ref={mapRef}
+            visible={true}
+            bottomInsetPx={mapBottomInset}
+            basemapMode={basemapMode}
+            onChangeBasemap={handleChangeBasemap}
+            features={networkFeatures}
+            markers={lista.pontos}
+            routeGeometry={activeRouteGeometry}
+            routeSegments={routeSegments}
+            navigationPosition={navigation?.posicao || currentLocation}
+            centerRequest={navigationCenter}
+            isSimulating={navigation?.modo === 'simulacao'}
+            isGPS={navigation?.modo === 'gps'}
+            suppressRouteFit={!!navigation}
+            onToggleSegment={toggleSegment}
+            onRestoreSegments={restoreSegments}
+            pickingPoint={pickingPoint}
+            onCancelPick={() => {
+              setPickingId(null);
+              setStatus('Pronto', 'idle');
+            }}
+            onMapPickCoordinate={handleMapPickCoordinate}
+            onMapClick={handleMapClick}
+            occurrences={ocorrencias}
+            showOccurrences={showOccurrences}
+            occCategoryFilter={occCategoryFilter}
+            onChangeOccCategoryFilter={setOccCategoryFilter}
+            visitMarkers={visitMarkers}
+            onVisitMarkerClick={handleVisitMarkerClick}
+            altRoutes={altRoutesMap}
+            highlightSegments={highlightSegmentsMap}
+            pickingOccurrence={pickingOccurrence}
+            onStartPickOccurrence={handleStartPickOccurrence}
+            onCancelPickOccurrence={() => {
+              setPickingOccurrence(false);
+              setStatus('Pronto', 'idle');
+            }}
+            onMapPickOccurrence={handleMapPickOccurrence}
+            onOccurrenceClick={handleOpenOccurrenceDetail}
+            onAltRouteClick={(altId) => selecionarAlternativa(altId)}
+            onToggleOccurrences={() => setShowOccurrences((v) => !v)}
+            onRequestCurrentLocation={handleRequestCurrentLocation}
+            locatingCurrent={locatingCurrent}
+            locationFeedback={locationFeedback}
+            gpsTrailGeometry={gpsTrailGeometry}
+            routeObservations={routeObservations}
+            pickingRouteObs={pickingRouteObs}
+            onCancelPickRouteObs={() => {
+              setPickingRouteObs(false);
+              setStatus('Pronto', 'idle');
+            }}
+            onMapPickRouteObs={handleMapPickRouteObs}
+            onRouteObservationClick={handleOpenRouteObservationDetail}
+          />
 
-        {/* Painel de Controle e Resultados */}
-        {layoutMode !== 'map' && (
-          <ScrollView
-            style={styles.panelScroll}
-            contentContainerStyle={styles.panelContent}
-            keyboardShouldPersistTaps="handled"
+          <BottomSheetPanel
+            sheetState={sheetState}
+            onChangeSheetState={setSheetState}
+            containerHeight={mapStageHeight}
+            summaryTitle={sheetSummaryTitle}
+            summaryBadge={sheetSummaryBadge}
           >
+            <VisitPlanningSection
+              pacientes={pacientesTerritorio}
+              plano={planoVisitas}
+              periodo={periodoPlanejamento}
+              sugestoesProximas={sugestoesProximas}
+              feedback={visitFeedback}
+              onChangePeriodo={handleChangePeriodoPlanejamento}
+              onPickImport={handlePickImportPlanilha}
+              onDownloadTemplate={handleDownloadTemplatePlanilha}
+              onGeneratePlan={handleGenerateVisitPlan}
+              onApplyToRoute={() => {
+                const pendentes = (planoVisitas?.visitas || []).filter(
+                  (v) => v.status === STATUS_VISITA.PLANEJADA,
+                );
+                adicionarVisitasAoTrajeto(pendentes);
+              }}
+              onAddVisitToRoute={(visita) => adicionarVisitasAoTrajeto([visita])}
+              onUpdateVisitStatus={handleUpdateVisitStatus}
+              onFocusVisit={(visita) => {
+                if (visita?.latitude != null && visita?.longitude != null) {
+                  garantirMapaVisivel();
+                  mapRef.current?.centerPoint(visita.longitude, visita.latitude);
+                }
+              }}
+              onClearVisits={handleClearVisits}
+            />
+
             <View style={styles.block}>
               <Text style={styles.blockTitle}>Pontos do trajeto</Text>
               {!!networkCacheWarning && <Text accessibilityRole="alert" style={styles.cacheWarning}>{networkCacheWarning}</Text>}
@@ -1910,7 +2184,7 @@ export default function App() {
               onCenter={() => {
                 if (navigation?.posicao) {
                   setNavigationCenter({ ...navigation.posicao });
-                  if (layoutMode === 'panel') setLayoutMode('split');
+                  garantirMapaVisivel();
                 }
               }} />
 
@@ -1949,7 +2223,7 @@ export default function App() {
                 const match = ocorrencias.find((o) => o.id === oc.id);
                 if (match) {
                   const loc = match.localizacao || match;
-                  if (layoutMode === 'panel') setLayoutMode('split');
+                  garantirMapaVisivel();
                   if (loc.longitude != null && loc.latitude != null) {
                     mapRef.current?.centerPoint(loc.longitude, loc.latitude);
                   }
@@ -1964,45 +2238,6 @@ export default function App() {
               }}
             />
 
-            <OccurrenceModal
-              visible={occModal.visible}
-              mode={occModal.mode}
-              segmentoPreview={occModal.segmentoPreview}
-              coordinate={occModal.coordinate}
-              ocorrencia={occModal.ocorrencia}
-              usuarioId={usuarioId}
-              submitting={occModal.submitting}
-              errorText={occModal.errorText}
-              onClose={() => setOccModal((prev) => ({ ...prev, visible: false }))}
-              onSubmitCreate={handleSubmitCreateOccurrence}
-              onInteract={handleInteractOccurrence}
-              onFocusCoordinate={(coord) => {
-                setOccModal((prev) => ({ ...prev, visible: false }));
-                if (layoutMode === 'panel') setLayoutMode('split');
-                mapRef.current?.centerPoint(coord.longitude, coord.latitude);
-              }}
-            />
-
-            <RouteObservationModal
-              visible={routeObsModal.visible}
-              mode={routeObsModal.mode}
-              coordinate={routeObsModal.coordinate}
-              observacao={routeObsModal.observacao}
-              eventos={routeObsModal.eventos}
-              submitting={routeObsModal.submitting}
-              errorText={routeObsModal.errorText}
-              onClose={() => setRouteObsModal((prev) => ({ ...prev, visible: false }))}
-              onSubmitCreate={handleSubmitCreateRouteObs}
-              onSubmitEdit={handleSubmitEditRouteObs}
-              onChangeStatus={handleChangeStatusRouteObs}
-              onDeleteObservation={handleDeleteRouteObservation}
-              onFocusCoordinate={(coord) => {
-                setRouteObsModal((prev) => ({ ...prev, visible: false }));
-                if (layoutMode === 'panel') setLayoutMode('split');
-                mapRef.current?.centerPoint(coord.longitude, coord.latitude);
-              }}
-            />
-
             <NetworkDiagnosticsPanel
               meta={networkPanel.meta} diagnostics={networkPanel.diagnostics}
               syncing={!!networkPanel.operacao} operacao={networkPanel.operacao}
@@ -2012,8 +2247,55 @@ export default function App() {
               onRefreshWfs={() => networkPanelRef.current?.executar('baixar')}
               onSaveApiUrl={handleSaveApiUrl}
             />
-          </ScrollView>
-        )}
+          </BottomSheetPanel>
+        </View>
+
+        <OccurrenceModal
+          visible={occModal.visible}
+          mode={occModal.mode}
+          segmentoPreview={occModal.segmentoPreview}
+          coordinate={occModal.coordinate}
+          ocorrencia={occModal.ocorrencia}
+          usuarioId={usuarioId}
+          submitting={occModal.submitting}
+          errorText={occModal.errorText}
+          onClose={() => setOccModal((prev) => ({ ...prev, visible: false }))}
+          onSubmitCreate={handleSubmitCreateOccurrence}
+          onInteract={handleInteractOccurrence}
+          onFocusCoordinate={(coord) => {
+            setOccModal((prev) => ({ ...prev, visible: false }));
+            garantirMapaVisivel();
+            mapRef.current?.centerPoint(coord.longitude, coord.latitude);
+          }}
+        />
+
+        <RouteObservationModal
+          visible={routeObsModal.visible}
+          mode={routeObsModal.mode}
+          coordinate={routeObsModal.coordinate}
+          observacao={routeObsModal.observacao}
+          eventos={routeObsModal.eventos}
+          submitting={routeObsModal.submitting}
+          errorText={routeObsModal.errorText}
+          onClose={() => setRouteObsModal((prev) => ({ ...prev, visible: false }))}
+          onSubmitCreate={handleSubmitCreateRouteObs}
+          onSubmitEdit={handleSubmitEditRouteObs}
+          onChangeStatus={handleChangeStatusRouteObs}
+          onDeleteObservation={handleDeleteRouteObservation}
+          onFocusCoordinate={(coord) => {
+            setRouteObsModal((prev) => ({ ...prev, visible: false }));
+            garantirMapaVisivel();
+            mapRef.current?.centerPoint(coord.longitude, coord.latitude);
+          }}
+        />
+
+        <ImportScheduleModal
+          visible={importPreviewModal.visible}
+          arquivo={importPreviewModal.arquivo}
+          preview={importPreviewModal.preview}
+          onCancel={() => setImportPreviewModal({ visible: false, arquivo: '', preview: null })}
+          onConfirm={handleConfirmImportPlanilha}
+        />
 
         {/* Rodapé de Status Fixo */}
         <View style={styles.footer}>
@@ -2099,47 +2381,23 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
     aspectRatio: 541 / 133,
   },
-  modeSwitch: {
-    flexDirection: 'row',
-    backgroundColor: COLORS.inputBg,
-    borderRadius: 7,
+  headerMetaPill: {
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: COLORS.border,
-    overflow: 'hidden',
+    backgroundColor: COLORS.panel2,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
   },
-  modeBtn: {
-    paddingVertical: 5,
-    paddingHorizontal: 9,
+  headerMetaText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: COLORS.accent,
   },
-  modeBtnActive: {
-    backgroundColor: COLORS.accentStrong,
-  },
-  modeBtnText: {
-    color: COLORS.muted,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  modeBtnTextActive: {
-    color: COLORS.white,
-  },
-  mapAreaHidden: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0 },
-  mapArea: {
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  mapAreaSplit: {
-    height: '42%',
-    minHeight: 210,
-  },
-  mapAreaFull: {
+  mapStage: {
     flex: 1,
-  },
-  panelScroll: {
-    flex: 1,
-    backgroundColor: COLORS.panel,
-  },
-  panelContent: {
-    paddingBottom: 20,
+    position: 'relative',
+    backgroundColor: COLORS.inputBg,
   },
   block: {
     paddingVertical: 14,

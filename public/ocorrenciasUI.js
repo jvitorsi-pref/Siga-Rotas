@@ -12,7 +12,8 @@ import {
   CLASSIFICACOES,
   STATUS_OCORRENCIA,
   TEMPORALIDADES,
-  obterCategoria,
+  glifoCategoria,
+  obterCategoriaExibicao,
 } from '../ocorrencias/catalogo.js';
 import {
   MODOS_PREFERENCIA,
@@ -119,18 +120,7 @@ export function estiloClassificacao(classificacao) {
 }
 
 export function simboloCategoria(categoriaId) {
-  switch (categoriaId) {
-    case 'escadaria': return '≡';
-    case 'terreno_irregular': return '≈';
-    case 'rua_ingreme': return '↗';
-    case 'passagem_estreita': return '⇥';
-    case 'buracos': return '●';
-    case 'alagamento': return '∿';
-    case 'obra_bloqueio': return '✕';
-    case 'calcada_inexistente': return '!';
-    case 'obstaculo': return '▲';
-    default: return '•';
-  }
+  return glifoCategoria(categoriaId);
 }
 
 export function rotuloStatusOcorrencia(status) {
@@ -162,5 +152,5 @@ export function gerarHtmlOpcoesCategoriasEvitar(preferencias) {
 }
 
 export function obterDetalhesCategoria(id) {
-  return obterCategoria(id);
+  return obterCategoriaExibicao(id);
 }

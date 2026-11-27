@@ -50,7 +50,7 @@ describe('roteamento alternativo colaborativo', () => {
     const graph = criarMalhaComDesvioEBeco();
     const { ocorrencia } = criarOcorrencia(
       {
-        categoria: 'passagem_estreita',
+        categoria: 'animais',
         classificacao: CLASSIFICACOES.INFORMATIVO,
         latitude: -23.68,
         longitude: -46.4189,
@@ -74,7 +74,7 @@ describe('roteamento alternativo colaborativo', () => {
     const graph = criarMalhaComDesvioEBeco();
     const { ocorrencia } = criarOcorrencia(
       {
-        categoria: 'buracos',
+        categoria: 'terreno_irregular',
         classificacao: CLASSIFICACOES.PENALIZA,
         penalidadeMetros: 300, // ~220 + 300 = 520 > ~330 do desvio
         latitude: -23.68,
@@ -110,7 +110,7 @@ describe('roteamento alternativo colaborativo', () => {
     const graph = criarMalhaComDesvioEBeco();
     const { ocorrencia } = criarOcorrencia(
       {
-        categoria: 'obra_bloqueio',
+        categoria: 'obstrucao_passagem',
         classificacao: CLASSIFICACOES.EVITA,
         temporalidade: TEMPORALIDADES.TEMPORARIA,
         latitude: -23.68,
@@ -135,7 +135,7 @@ describe('roteamento alternativo colaborativo', () => {
     const graph = criarMalhaComDesvioEBeco();
     const { ocorrencia } = criarOcorrencia(
       {
-        categoria: 'obra_bloqueio',
+        categoria: 'obstrucao_passagem',
         classificacao: CLASSIFICACOES.EVITA,
         latitude: -23.68,
         longitude: -46.4169, // sobre o BECO SEM SAÍDA (feId 5)
@@ -163,7 +163,7 @@ describe('roteamento alternativo colaborativo', () => {
     const graph = criarMalhaComDesvioEBeco();
     const { ocorrencia } = criarOcorrencia(
       {
-        categoria: 'obra_bloqueio',
+        categoria: 'obstrucao_passagem',
         classificacao: CLASSIFICACOES.EVITA,
         latitude: -23.68,
         longitude: -46.4189,
@@ -181,11 +181,11 @@ describe('roteamento alternativo colaborativo', () => {
     assert.ok(res.distanceMeters < 260);
   });
 
-  it('respeita preferência do usuário para evitar categoria específica (ex.: escadaria)', () => {
+  it('respeita preferência do usuário para evitar categoria específica (ex.: escada)', () => {
     const graph = criarMalhaComDesvioEBeco();
     const { ocorrencia } = criarOcorrencia(
       {
-        categoria: 'escadaria',
+        categoria: 'escada',
         classificacao: CLASSIFICACOES.INFORMATIVO,
         latitude: -23.68,
         longitude: -46.4189,
@@ -197,7 +197,7 @@ describe('roteamento alternativo colaborativo', () => {
       ocorrencias: [ocorrencia],
       preferencias: {
         modo: MODOS_PREFERENCIA.CONSIDERAR,
-        evitarCategorias: ['escadaria'],
+        evitarCategorias: ['escada'],
       },
     });
 
@@ -210,7 +210,7 @@ describe('roteamento alternativo colaborativo', () => {
     const graph = criarMalhaComDesvioEBeco();
     const { ocorrencia } = criarOcorrencia(
       {
-        categoria: 'buracos',
+        categoria: 'terreno_irregular',
         classificacao: CLASSIFICACOES.PENALIZA,
         penalidadeMetros: 300,
         latitude: -23.68,
@@ -259,7 +259,7 @@ describe('roteamento alternativo colaborativo', () => {
     const meioLonLat = coordsRota[Math.floor(coordsRota.length / 2)];
     const criacao = criarOcorrencia(
       {
-        categoria: 'buracos',
+        categoria: 'terreno_irregular',
         classificacao: CLASSIFICACOES.PENALIZA,
         penalidadeMetros: 200,
         latitude: meioLonLat[1],

@@ -133,6 +133,49 @@ CREATE TABLE IF NOT EXISTS cache_rede (
   payload_json TEXT NOT NULL,
   atualizado_em TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS planejamentos_visitas (
+  chave TEXT PRIMARY KEY NOT NULL,
+  id_plano TEXT NOT NULL,
+  titulo TEXT NOT NULL,
+  periodo_json TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  atualizado_em TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pacientes_territorio (
+  id TEXT PRIMARY KEY NOT NULL,
+  chave_deduplicacao TEXT NOT NULL,
+  id_paciente TEXT,
+  nome TEXT NOT NULL,
+  endereco_digital TEXT,
+  codigo_completo TEXT,
+  latitude REAL NOT NULL,
+  longitude REAL NOT NULL,
+  endereco_texto TEXT,
+  microarea TEXT,
+  ultima_visita_em TEXT,
+  observacoes TEXT,
+  atualizado_em TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pacientes_dedup ON pacientes_territorio(chave_deduplicacao);
+
+CREATE TABLE IF NOT EXISTS visitas_planejadas (
+  id TEXT PRIMARY KEY NOT NULL,
+  plano_chave TEXT NOT NULL,
+  paciente_id TEXT NOT NULL,
+  chave_deduplicacao TEXT NOT NULL,
+  data_prevista TEXT,
+  prioridade_cronograma TEXT NOT NULL,
+  planejada INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL,
+  observacoes TEXT,
+  origem TEXT,
+  concluida_em TEXT,
+  atualizado_em TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_visitas_status ON visitas_planejadas(status, data_prevista);
 `;
 
 function safeParse(raw, fallback) {
@@ -791,6 +834,99 @@ export function criarDriverSqliteCore({ sqlite, nomeBanco = NOME_BANCO_SQLITE } 
         await txn.runAsync('DELETE FROM pontos_gps');
         await txn.runAsync('DELETE FROM rotas_campo');
         await txn.runAsync('DELETE FROM sync_fila');
+        return { ok: true };
+      });
+    },
+
+    async savePlanoVisitas(plano) {
+      const db = await abrirBanco();
+      const agoraIso = new Date().toISOString();
+      return executarTransacao(db, async (txn) => {
+        await txn.runAsync('DELETE FROM visitas_planejadas WHERE plano_chave = ?', ['ativo']);
+        await txn.runAsync('DELETE FROM pacientes_territorio');
+        if (!plano) {
+          await txn.runAsync('DELETE FROM planejamentos_visitas WHERE chave = ?', ['ativo']);
+          return { ok: true };
+        }
+        await txn.runAsync(
+          `INSERT OR REPLACE INTO planejamentos_visitas
+           (chave, id_plano, titulo, periodo_json, payload_json, atualizado_em)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            'ativo',
+            String(plano.id || 'plan_ativo'),
+            String(plano.titulo || 'Planejamento Inteligente de Visitas'),
+            JSON.stringify(plano.periodo || {}),
+            JSON.stringify(plano),
+            String(plano.atualizadoEm || agoraIso),
+          ],
+        );
+        for (const p of plano.pacientes || []) {
+          await txn.runAsync(
+            `INSERT OR REPLACE INTO pacientes_territorio
+             (id, chave_deduplicacao, id_paciente, nome, endereco_digital, codigo_completo,
+              latitude, longitude, endereco_texto, microarea, ultima_visita_em, observacoes, atualizado_em)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              String(p.id),
+              String(p.chaveDeduplicacao || ''),
+              p.idPaciente ?? null,
+              String(p.nome || ''),
+              p.enderecoDigital || '',
+              p.codigoCompleto || '',
+              Number(p.latitude),
+              Number(p.longitude),
+              p.enderecoTexto || '',
+              p.microarea || '',
+              p.ultimaVisitaEm ?? null,
+              p.observacoes || '',
+              String(p.atualizadoEm || agoraIso),
+            ],
+          );
+        }
+        for (const v of plano.visitas || []) {
+          await txn.runAsync(
+            `INSERT OR REPLACE INTO visitas_planejadas
+             (id, plano_chave, paciente_id, chave_deduplicacao, data_prevista,
+              prioridade_cronograma, planejada, status, observacoes, origem, concluida_em,
+              atualizado_em, payload_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              String(v.id),
+              'ativo',
+              String(v.pacienteId || ''),
+              String(v.chaveDeduplicacao || ''),
+              v.dataPrevista ?? null,
+              String(v.prioridadeCronograma || 'media'),
+              v.planejada ? 1 : 0,
+              String(v.status || 'planejada'),
+              v.observacoes || '',
+              v.origem || 'excel',
+              v.concluidaEm ?? null,
+              String(v.atualizadoEm || agoraIso),
+              JSON.stringify(v),
+            ],
+          );
+        }
+        return { ok: true };
+      });
+    },
+
+    async getPlanoVisitas() {
+      const db = await abrirBanco();
+      const row = await db.getFirstAsync(
+        'SELECT payload_json FROM planejamentos_visitas WHERE chave = ?',
+        ['ativo'],
+      );
+      return row ? safeParse(row.payload_json, null) : null;
+    },
+
+    async clearPlanoVisitas() {
+      const db = await abrirBanco();
+      return executarTransacao(db, async (txn) => {
+        await txn.runAsync('DELETE FROM visitas_planejadas');
+        await txn.runAsync('DELETE FROM pacientes_territorio');
+        await txn.runAsync('DELETE FROM planejamentos_visitas');
         return { ok: true };
       });
     },

@@ -123,10 +123,33 @@ export function criarInterfaceNavegacao(app) {
     style: (feature) => {
       const rumo = feature.get('rumo');
       const simulado = feature.get('simulado');
+      const precisao = Number(feature.get('precisao'));
+      const centro = feature.getGeometry().getCoordinates();
       const estilos = [];
+      if (!simulado && Number.isFinite(precisao) && precisao > 0) {
+        const lat = feature.get('lat');
+        const cosLat = Number.isFinite(lat) ? Math.max(0.25, Math.cos((lat * Math.PI) / 180)) : 0.91;
+        const raio3857 = Math.min(350, precisao) / cosLat;
+        estilos.push(
+          new ol.style.Style({
+            geometry: new ol.geom.Circle(centro, raio3857),
+            fill: new ol.style.Fill({ color: 'rgba(14, 165, 233, 0.14)' }),
+            stroke: new ol.style.Stroke({ color: 'rgba(2, 132, 199, 0.45)', width: 1.5 }),
+          }),
+        );
+      }
+      if (!simulado) {
+        estilos.push(
+          new ol.style.Style({
+            image: new ol.style.Circle({
+              radius: 15,
+              fill: new ol.style.Fill({ color: 'rgba(14, 165, 233, 0.24)' }),
+            }),
+          }),
+        );
+      }
       // cone de rumo: um triângulo real, desenhado em coordenadas do mapa
       if (rumo != null) {
-        const centro = feature.getGeometry().getCoordinates();
         const raio = 34; // metros
         const ang = (rumo * Math.PI) / 180;
         const meia = 0.42;
@@ -142,7 +165,7 @@ export function criarInterfaceNavegacao(app) {
           new ol.style.Style({
             geometry: new ol.geom.Polygon([[centro, p1, p2, centro]]),
             fill: new ol.style.Fill({
-              color: simulado ? 'rgba(124,58,237,0.28)' : 'rgba(31,111,235,0.28)',
+              color: simulado ? 'rgba(124,58,237,0.28)' : 'rgba(14,165,233,0.28)',
             }),
           }),
         );
@@ -150,8 +173,8 @@ export function criarInterfaceNavegacao(app) {
       estilos.push(
         new ol.style.Style({
           image: new ol.style.Circle({
-            radius: 9,
-            fill: new ol.style.Fill({ color: simulado ? '#7c3aed' : '#1f6feb' }),
+            radius: simulado ? 8 : 9,
+            fill: new ol.style.Fill({ color: simulado ? '#7c3aed' : '#0ea5e9' }),
             stroke: new ol.style.Stroke({ color: '#fff', width: 3 }),
           }),
         }),
@@ -191,6 +214,8 @@ export function criarInterfaceNavegacao(app) {
         geometry: new ol.geom.Point(ol.proj.fromLonLat([p.longitude, p.latitude])),
         rumo: p.rumo ?? null,
         simulado: !!p.simulado,
+        precisao: p.precisao ?? null,
+        lat: p.latitude,
       }),
     );
   }

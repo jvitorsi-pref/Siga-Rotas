@@ -850,7 +850,7 @@ test('Web (IndexedDB + serviço): exclusão individual de observação/rota e li
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      categoria: 'alagamento',
+      categoria: 'obstrucao_passagem',
       classificacao: 'evita',
       temporalidade: 'temporaria',
       latitude: -23.663,

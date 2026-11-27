@@ -85,7 +85,7 @@ describe('OcorrenciasService — persistência atômica e concorrência', () => 
 
       const reg = await svc1.registrar(
         {
-          categoria: 'buracos',
+          categoria: 'terreno_irregular',
           classificacao: 'penaliza',
           descricao: 'Cratera próxima ao meio-fio',
           latitude: -23.68,
@@ -99,11 +99,11 @@ describe('OcorrenciasService — persistência atômica e concorrência', () => 
       // Gravações concorrentes preservam ambas as ocorrências
       await Promise.all([
         svc1.registrar(
-          { categoria: 'escadaria', latitude: -23.6795, longitude: -46.4189 },
+          { categoria: 'escada', latitude: -23.6795, longitude: -46.4189 },
           { graph, usuarioId: 'cidadao-2' },
         ),
         svc1.registrar(
-          { categoria: 'alagamento', latitude: -23.6798, longitude: -46.42 },
+          { categoria: 'obstrucao_passagem', latitude: -23.6798, longitude: -46.42 },
           { graph, usuarioId: 'cidadao-3' },
         ),
       ]);
@@ -162,7 +162,7 @@ describe('API HTTP de ocorrências e rota com alternativas', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        categoria: 'buracos',
+        categoria: 'terreno_irregular',
         classificacao: 'penaliza',
         penalidadeMetros: 300,
         temporalidade: 'temporaria',

@@ -68,7 +68,7 @@ function ambiente(engine, cdn = 'error') {
     style: { Style: Options, Stroke: Options, Fill: Options, Circle: Options, Text: Options },
     proj: { fromLonLat: p=>p, toLonLat: p=>p },
     format: { GeoJSON: class { readFeature(raw) { return feature(raw); } } },
-    geom: { Point: Options }, Feature: Options,
+    geom: { Point: Options }, Feature: class extends Options { get(k) { return this[k]; } },
   };
   const navigator = { onLine: true };
   const window = { innerWidth: 400, innerHeight: 300, devicePixelRatio: 1, addEventListener(name, fn) { windowEvents[name] = fn; },
@@ -188,14 +188,14 @@ for (const engine of ['openlayers', 'canvas']) {
 }
 
 for (const engine of ['openlayers', 'canvas']) {
-  test(`${engine}: GPS real não recebe identificação visual de posição simulada`, () => {
+  test(`${engine}: GPS real utiliza azul/ciano contrastante e halo sem marcação de simulação`, () => {
     const a=ambiente(engine);
-    a.send({type:'SET_POSITION',position:{latitude:-23.7,longitude:-46.5,simulado:false}});
+    a.send({type:'SET_POSITION',position:{latitude:-23.7,longitude:-46.5,precisao:18,simulado:false}});
     if(engine==='openlayers'){
       const f=a.sources[4].features[0];assert.equal(f.get('simulado'),false);
-      assert.equal(a.layers[4].style(f).image.fill.color,'#045127');
+      assert.equal(a.layers[4].style(f).image.fill.color,'#0ea5e9');
     } else {
-      assert.ok(a.fills.some(f=>f.color==='#045127'));
+      assert.ok(a.fills.some(f=>f.color==='#0ea5e9'));
       assert.equal(a.fills.filter(f=>f.color==='#7c3aed').length,0);
     }
   });
@@ -402,3 +402,52 @@ test('APK Canvas offline: SET_BASEMAP preserva câmera e malha vetorial e report
   a.send({ type: 'SET_BASEMAP', mode: 'osm' });
   assert.equal(a.messages.filter((m) => m.type === 'BASEMAP_STATUS').at(-1).status, 'ready');
 });
+
+for (const engine of ['openlayers', 'canvas']) {
+  test(`${engine}: SET_VISITS renderiza pacientes distintos e SET_OCC_FILTER filtra categorias`, () => {
+    const a = ambiente(engine);
+    a.send({
+      type: 'SET_VISITS',
+      visits: [
+        { id: 'v1', nome: 'Maria', latitude: -23.7, longitude: -46.5, status: 'planejada' },
+        { id: 'v2', nome: 'João', latitude: -23.701, longitude: -46.501, status: 'oportunistica_sugerida' },
+      ],
+    });
+    a.send({
+      type: 'SET_OCCURRENCES',
+      occurrences: [
+        { id: 'o1', categoria: 'escada', classificacao: 'penaliza', localizacao: { latitude: -23.7, longitude: -46.5 } },
+        { id: 'o2', categoria: 'animais', classificacao: 'informativo', localizacao: { latitude: -23.702, longitude: -46.502 } },
+      ],
+    });
+    a.send({ type: 'SET_OCC_FILTER', categoria: 'escada' });
+    if (engine === 'openlayers') {
+      const occLayer = a.layers.find((l) => l.zIndex === 23);
+      const visitLayer = a.layers.find((l) => l.zIndex === 24);
+      assert.equal(occLayer.source.features.length, 1);
+      assert.equal(visitLayer.source.features.length, 2);
+      const estiloOcc = occLayer.style(occLayer.source.features[0]);
+      assert.equal(estiloOcc.text.text, '≡');
+    } else {
+      assert.ok(a.fills.some((f) => f.color === '#0f766e'));
+      assert.ok(a.fills.some((f) => f.color === '#7c3aed'));
+      a.send({ type: 'CENTER_POINT', lon: -46.5, lat: -23.7 });
+      a.events.pointerdown({ clientX: 200, clientY: 150 });
+      a.events.pointerup({ clientX: 200, clientY: 150 });
+      const msg = a.messages.at(-1);
+      assert.equal(msg.type, 'VISIT_CLICK');
+      assert.equal(msg.visitaId, 'v1');
+    }
+  });
+}
+
+test('Canvas: SET_VIEWPORT_INSETS desloca centralização para cima do painel inferior', () => {
+  const a = ambiente('canvas');
+  a.send({ type: 'SET_VIEWPORT_INSETS', bottomInsetPx: 120 });
+  a.send({ type: 'CENTER_POINT', lon: -46.5, lat: -23.7 });
+  a.events.pointerdown({ clientX: 200, clientY: 90 });
+  a.events.pointerup({ clientX: 200, clientY: 90 });
+  const cliqueAcima = a.messages.at(-1);
+  assert.ok(Math.abs(cliqueAcima.lat - (-23.7)) < 1e-6);
+});
+
